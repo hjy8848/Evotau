@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
+import inspect
 import json
 import os
 import sys
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .manifest import MechanismManifest
+from .manifest import MechanismManifest, sha256_json
 from .native_runner import _validate_phase0_parent, run_native_phase3
 from .phase0 import load_config
 from .phase0_run import _load_pinned_tasks
@@ -31,12 +34,18 @@ class ProviderPluginError(ValueError):
     """The explicitly selected provider plugin does not meet the callback contract."""
 
 
+@dataclass(frozen=True, slots=True)
+class LoadedProviderBundle:
+    callbacks: dict[str, Callable[..., Any]]
+    provenance: dict[str, Any]
+
+
 def load_provider_bundle(
     specification: str,
     *,
     config: Mapping[str, Any],
     manifest: MechanismManifest,
-) -> dict[str, Callable[..., Any]]:
+) -> LoadedProviderBundle:
     """Load a caller-selected `module:factory` returning native runner callbacks."""
 
     module_name, separator, attribute = specification.partition(":")
@@ -82,7 +91,75 @@ def load_provider_bundle(
         raise ProviderPluginError(
             "provider plugin must return service_transition or both Service repair callbacks"
         )
-    return bundle
+    provenance = _plugin_source_provenance(specification.strip(), module, factory, bundle)
+    return LoadedProviderBundle(bundle, provenance)
+
+
+def _plugin_source_provenance(
+    specification: str,
+    root_module: Any,
+    factory: Callable[..., Any],
+    callbacks: Mapping[str, Callable[..., Any]],
+) -> dict[str, Any]:
+    """Hash the selected module/package and each callback's defining module."""
+
+    sources: dict[str, str] = {}
+
+    def add_file(module_name: str, source: str | Path) -> None:
+        original = Path(source).expanduser()
+        if original.is_symlink() or not original.is_file():
+            raise ProviderPluginError(
+                f"provider source for {module_name} must be a regular, non-symlink file"
+            )
+        digest = hashlib.sha256(original.read_bytes()).hexdigest()
+        prior = sources.get(module_name)
+        if prior is not None and prior != digest:
+            raise ProviderPluginError(f"provider module {module_name} resolves to conflicting source files")
+        sources[module_name] = digest
+
+    module_paths = tuple(getattr(root_module, "__path__", ()))
+    if module_paths:
+        for package_root_value in module_paths:
+            package_root = Path(package_root_value).expanduser()
+            if package_root.is_symlink() or not package_root.is_dir():
+                raise ProviderPluginError("provider package root must be a regular directory")
+            for source in sorted(package_root.rglob("*.py")):
+                if source.is_symlink():
+                    raise ProviderPluginError("provider package source cannot contain symlinks")
+                relative = source.relative_to(package_root).with_suffix("")
+                parts = list(relative.parts)
+                if parts[-1] == "__init__":
+                    parts.pop()
+                suffix = ".".join(parts)
+                module_name = root_module.__name__ + (f".{suffix}" if suffix else "")
+                add_file(module_name, source)
+    else:
+        source = getattr(root_module, "__file__", None)
+        if source is None:
+            raise ProviderPluginError("provider plugin module has no source file")
+        add_file(root_module.__name__, source)
+
+    for label, callback in (("factory", factory), *callbacks.items()):
+        target = callback if inspect.isfunction(callback) or inspect.ismethod(callback) else type(callback)
+        module_name = getattr(target, "__module__", None)
+        module = sys.modules.get(module_name)
+        source = None if module is None else getattr(module, "__file__", None)
+        if source is None:
+            try:
+                source = inspect.getsourcefile(target)
+            except (TypeError, OSError):
+                source = None
+        if source is None:
+            raise ProviderPluginError(f"provider {label} has no inspectable source module")
+        add_file(str(module_name), source)
+
+    files = [{"module": name, "source_sha256": digest} for name, digest in sorted(sources.items())]
+    payload = {
+        "schema_version": 1,
+        "specification": specification,
+        "files": files,
+    }
+    return {**payload, "sha256": sha256_json(payload)}
 
 
 def run_from_config(
@@ -110,7 +187,7 @@ def run_from_config(
         task_ids=(manifest.evolution_task_id, manifest.validation_task_id),
     )
     _validate_phase0_parent(phase0_result_path, manifest)
-    providers = load_provider_bundle(
+    provider_bundle = load_provider_bundle(
         provider_plugin,
         config=config,
         manifest=manifest,
@@ -119,7 +196,8 @@ def run_from_config(
         config_path=config_path,
         data_dir=data_dir,
         phase0_result_path=phase0_result_path,
-        **providers,
+        provider_provenance=provider_bundle.provenance,
+        **provider_bundle.callbacks,
     )
     return commits, budget, manifest
 

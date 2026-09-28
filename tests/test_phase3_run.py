@@ -27,8 +27,9 @@ def manifest() -> MechanismManifest:
     return MechanismManifest.from_mapping(config)
 
 
-def register_plugin(monkeypatch, factory):
+def register_plugin(monkeypatch, factory, *, source_file=__file__):
     module = ModuleType("evotau_test_provider_plugin")
+    module.__file__ = str(source_file)
     module.build_providers = factory
     monkeypatch.setitem(sys.modules, module.__name__, module)
     return module.__name__ + ":build_providers"
@@ -55,7 +56,12 @@ def test_provider_bundle_accepts_independent_audit_and_separate_repair_callbacks
         manifest=frozen_manifest,
     )
 
-    assert result == callbacks
+    assert result.callbacks == callbacks
+    assert result.provenance["sha256"]
+    assert any(
+        item["module"] == "evotau_test_provider_plugin"
+        for item in result.provenance["files"]
+    )
     assert received == [(config, frozen_manifest)]
 
 
@@ -116,3 +122,21 @@ def test_phase3_cli_runner_refuses_provider_disabled_config_before_loading_plugi
             provider_plugin="does_not_import:factory",
         )
 
+
+def test_provider_plugin_source_changes_change_frozen_provenance(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "provider_plugin.py"
+    source.write_text("PLUGIN_REVISION = 'one'\n", encoding="utf-8")
+    callbacks = {
+        "audit_provider": lambda *_args: None,
+        "service_transition": lambda *_args: None,
+    }
+    specification = register_plugin(
+        monkeypatch,
+        lambda **_kwargs: callbacks,
+        source_file=source,
+    )
+    first = load_provider_bundle(specification, config={}, manifest=manifest())
+    source.write_text("PLUGIN_REVISION = 'two'\n", encoding="utf-8")
+    second = load_provider_bundle(specification, config={}, manifest=manifest())
+
+    assert first.provenance["sha256"] != second.provenance["sha256"]

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -330,6 +331,7 @@ def run_native_phase3(
     phase0_result_path: str | Path,
     audit_provider: AuditProvider,
     customer_proposal_provider: OperatorSelector | None = None,
+    provider_provenance: Mapping[str, Any] | None = None,
     service_transition: Callable[..., Any] | None = None,
     service_proposal_provider: Callable[..., Any] | None = None,
     service_repair_audit_provider: Callable[..., Any] | None = None,
@@ -386,6 +388,17 @@ def run_native_phase3(
         )
     elif service_proposal_provider is not None or service_repair_audit_provider is not None:
         raise ValueError("pass either a complete ServiceTransition or repair providers, not both")
+    run_context = {
+        **run_context,
+        "provider_provenance": _provider_provenance_document(
+            provider_provenance,
+            {
+                "audit_provider": audit_provider,
+                "customer_proposal_provider": customer_proposal_provider,
+                "service_transition": service_transition,
+            },
+        ),
+    }
     budget = RequestBudget(manifest.request_budget_cap)
     output_directory = Path(manifest.output_path)
     context_path = output_directory / "run-context.json"
@@ -394,7 +407,7 @@ def run_native_phase3(
     if context_path.exists():
         saved_context = json.loads(context_path.read_text(encoding="utf-8"))
         if saved_context != run_context:
-            raise ValueError("existing Phase 3 run context belongs to a different Phase 0 result")
+            raise ValueError("existing Phase 3 run context differs from frozen parent or provider provenance")
     elif resuming:
         raise FileNotFoundError("Phase 3 checkpoint exists without its immutable run-context.json")
     if not resuming:
@@ -537,6 +550,74 @@ def _count_tool_calls(messages: Any) -> int:
         elif role == "multi_tool":
             count += len(message.get("tool_messages") or ())
     return count
+
+
+def _provider_provenance_document(
+    plugin_provenance: Mapping[str, Any] | None,
+    callbacks: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind provider callback source files and any plugin package to run resume."""
+
+    callback_sources: dict[tuple[str, str], dict[str, str]] = {}
+    visited: set[int] = set()
+
+    def visit(label: str, value: Any) -> None:
+        if value is None or id(value) in visited:
+            return
+        visited.add(id(value))
+        if callable(value):
+            target = value if inspect.isfunction(value) or inspect.ismethod(value) else type(value)
+            try:
+                source_path = inspect.getsourcefile(target)
+            except (TypeError, OSError) as exc:
+                raise ValueError(f"provider callback {label} has no inspectable source file") from exc
+            if source_path is None:
+                raise ValueError(f"provider callback {label} has no source file")
+            original_path = Path(source_path).expanduser()
+            if original_path.is_symlink() or not original_path.is_file():
+                raise ValueError(f"provider callback {label} source is not a regular file")
+            path = original_path.resolve()
+            module_name = getattr(target, "__module__", type(value).__module__)
+            qualname = getattr(target, "__qualname__", type(value).__qualname__)
+            row = {
+                "module": str(module_name),
+                "qualname": str(qualname),
+                "source_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            callback_sources[(label, f"{row['module']}:{row['qualname']}")] = row
+            if is_dataclass(value) and not isinstance(value, type):
+                for item in fields(value):
+                    nested = getattr(value, item.name)
+                    if callable(nested) or (is_dataclass(nested) and not isinstance(nested, type)):
+                        visit(f"{label}.{item.name}", nested)
+        elif is_dataclass(value) and not isinstance(value, type):
+            for item in fields(value):
+                nested = getattr(value, item.name)
+                if callable(nested) or (is_dataclass(nested) and not isinstance(nested, type)):
+                    visit(f"{label}.{item.name}", nested)
+
+    for name, callback in callbacks.items():
+        visit(name, callback)
+    if not callback_sources:
+        raise ValueError("native Phase 3 provider provenance has no callback source files")
+
+    plugin: dict[str, Any] | None = None
+    if plugin_provenance is not None:
+        plugin = dict(plugin_provenance)
+        recorded = plugin.pop("sha256", None)
+        if not isinstance(recorded, str) or sha256_json(plugin) != recorded:
+            raise ValueError("provider plugin source fingerprint is invalid")
+        plugin["sha256"] = recorded
+
+    payload = {
+        "schema_version": 1,
+        "plugin": plugin,
+        "callback_sources": [
+            {"label": label, **source}
+            for (label, _identity), source in sorted(callback_sources.items())
+        ],
+    }
+    return {**payload, "sha256": sha256_json(payload)}
 
 
 def _snapshot_delta(before: BudgetSnapshot, after: BudgetSnapshot) -> dict[str, int]:

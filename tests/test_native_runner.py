@@ -13,7 +13,7 @@ import yaml
 
 from evotau.budget import RequestBudget
 from evotau.checkpoint import manifest_fingerprint
-from evotau.manifest import ExperimentManifest, MechanismManifest
+from evotau.manifest import ExperimentManifest, MechanismManifest, sha256_json
 from evotau.native_runner import (
     IndependentEpisodeAudit,
     TauBenchEpisodeRunner,
@@ -593,11 +593,18 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
     def forbidden_service_transition(*_args):
         raise AssertionError("no-failure fixture should not request a Service repair")
 
+    provider_revision = {"schema_version": 1, "test_revision": "provider-fixture-v1"}
+    provider_provenance = {
+        **provider_revision,
+        "sha256": sha256_json(provider_revision),
+    }
+
     commits, budget = run_native_phase3(
         config_path=phase3_path,
         data_dir=data_dir,
         phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
         audit_provider=audit_provider,
+        provider_provenance=provider_provenance,
         service_transition=forbidden_service_transition,
     )
 
@@ -651,12 +658,28 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
         data_dir=data_dir,
         phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
         audit_provider=audit_provider,
+        provider_provenance=provider_provenance,
         service_transition=forbidden_service_transition,
     )
     assert resumed_commits == commits
     assert resumed_budget == budget
     assert len(calls) == budget.attempts
     assert result_path.read_bytes() == phase3_result_bytes
+
+    changed_revision = {"schema_version": 1, "test_revision": "provider-fixture-v2"}
+    changed_provenance = {
+        **changed_revision,
+        "sha256": sha256_json(changed_revision),
+    }
+    with pytest.raises(ValueError, match="provider provenance"):
+        run_native_phase3(
+            config_path=phase3_path,
+            data_dir=data_dir,
+            phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
+            audit_provider=audit_provider,
+            provider_provenance=changed_provenance,
+            service_transition=forbidden_service_transition,
+        )
 
     first_record = phase3_result["episodes"][0]["artifacts"]["episode_record"]["path"]
     artifact_path = result_path.parent / first_record
@@ -667,5 +690,6 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
             data_dir=data_dir,
             phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
             audit_provider=audit_provider,
+            provider_provenance=provider_provenance,
             service_transition=forbidden_service_transition,
         )
