@@ -17,6 +17,7 @@ from evotau.manifest import ExperimentManifest, MechanismManifest, sha256_json
 from evotau.native_runner import (
     IndependentEpisodeAudit,
     TauBenchEpisodeRunner,
+    _provider_provenance_document,
     _validate_phase0_parent,
     run_native_phase3,
 )
@@ -237,6 +238,28 @@ def test_native_phase3_entrypoint_stops_before_loading_or_running_disabled_manif
             audit_provider=lambda *_args: None,
             service_transition=lambda *_args: None,
         )
+
+
+def test_native_provider_provenance_binds_explicit_callback_configuration():
+    class ConfiguredCallback:
+        def __init__(self, revision: str):
+            self.revision = revision
+
+        def __call__(self, *_args):
+            return None
+
+        def __evotau_provenance__(self):
+            return {"revision": self.revision}
+
+    first = _provider_provenance_document(
+        None, {"audit_provider": ConfiguredCallback("v1")},
+    )
+    changed = _provider_provenance_document(
+        None, {"audit_provider": ConfiguredCallback("v2")},
+    )
+
+    assert first["sha256"] != changed["sha256"]
+    assert first["callback_configurations"][0]["configuration"] == {"revision": "v1"}
 
 
 def test_native_phase3_requires_phase0_artifact_and_binds_its_budget(tmp_path: Path):
@@ -590,8 +613,17 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
             invalid_repeated_write_calls=0,
         )
 
-    def forbidden_service_transition(*_args):
-        raise AssertionError("no-failure fixture should not request a Service repair")
+    class NoFailureServiceTransition:
+        def __init__(self, revision: str):
+            self.revision = revision
+
+        def __call__(self, *_args):
+            raise AssertionError("no-failure fixture should not request a Service repair")
+
+        def __evotau_provenance__(self):
+            return {"revision": self.revision}
+
+    service_transition = NoFailureServiceTransition("frozen-v1")
 
     provider_revision = {"schema_version": 1, "test_revision": "provider-fixture-v1"}
     provider_provenance = {
@@ -605,7 +637,7 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
         phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
         audit_provider=audit_provider,
         provider_provenance=provider_provenance,
-        service_transition=forbidden_service_transition,
+        service_transition=service_transition,
     )
 
     assert phase0_result["status"] == "complete"
@@ -628,6 +660,9 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
         (tmp_path / "runs/full-offline-phase3/run-context.json").read_text(encoding="utf-8")
     )
     assert run_context["phase0_result_sha256"]
+    assert run_context["provider_provenance"]["callback_configurations"][0][
+        "configuration"
+    ] == {"revision": "frozen-v1"}
     checkpoint = json.loads(
         (tmp_path / "checkpoints/full-offline-phase3.json").read_text(encoding="utf-8")
     )
@@ -659,7 +694,7 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
         phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
         audit_provider=audit_provider,
         provider_provenance=provider_provenance,
-        service_transition=forbidden_service_transition,
+        service_transition=service_transition,
     )
     assert resumed_commits == commits
     assert resumed_budget == budget
@@ -678,7 +713,17 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
             phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
             audit_provider=audit_provider,
             provider_provenance=changed_provenance,
-            service_transition=forbidden_service_transition,
+            service_transition=service_transition,
+        )
+
+    with pytest.raises(ValueError, match="provider provenance"):
+        run_native_phase3(
+            config_path=phase3_path,
+            data_dir=data_dir,
+            phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
+            audit_provider=audit_provider,
+            provider_provenance=provider_provenance,
+            service_transition=NoFailureServiceTransition("frozen-v2"),
         )
 
     first_record = phase3_result["episodes"][0]["artifacts"]["episode_record"]["path"]
@@ -691,5 +736,5 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
             phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
             audit_provider=audit_provider,
             provider_provenance=provider_provenance,
-            service_transition=forbidden_service_transition,
+            service_transition=service_transition,
         )

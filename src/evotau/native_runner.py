@@ -559,12 +559,38 @@ def _provider_provenance_document(
     """Bind provider callback source files and any plugin package to run resume."""
 
     callback_sources: dict[tuple[str, str], dict[str, str]] = {}
+    callback_configurations: dict[tuple[str, str], dict[str, Any]] = {}
     visited: set[int] = set()
 
     def visit(label: str, value: Any) -> None:
-        if value is None or id(value) in visited:
+        if value is None:
             return
+        already_expanded = id(value) in visited
         visited.add(id(value))
+        provenance_hook = getattr(value, "__evotau_provenance__", None)
+        if callable(provenance_hook):
+            try:
+                supplied_config = provenance_hook()
+                if not isinstance(supplied_config, Mapping):
+                    raise TypeError("provenance hook must return a mapping")
+                normalized_config = json.loads(json.dumps(
+                    dict(supplied_config), sort_keys=True, ensure_ascii=False, allow_nan=False,
+                ))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(
+                    f"provider callback {label} returned invalid resume provenance"
+                ) from exc
+            identity = (
+                str(getattr(value, "__module__", type(value).__module__)),
+                str(getattr(value, "__qualname__", type(value).__qualname__)),
+            )
+            callback_configurations[(label, ":".join(identity))] = {
+                "label": label,
+                "module": identity[0],
+                "qualname": identity[1],
+                "configuration": normalized_config,
+                "configuration_sha256": sha256_json(normalized_config),
+            }
         if callable(value):
             target = value if inspect.isfunction(value) or inspect.ismethod(value) else type(value)
             try:
@@ -585,12 +611,14 @@ def _provider_provenance_document(
                 "source_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             }
             callback_sources[(label, f"{row['module']}:{row['qualname']}")] = row
+            if already_expanded:
+                return
             if is_dataclass(value) and not isinstance(value, type):
                 for item in fields(value):
                     nested = getattr(value, item.name)
                     if callable(nested) or (is_dataclass(nested) and not isinstance(nested, type)):
                         visit(f"{label}.{item.name}", nested)
-        elif is_dataclass(value) and not isinstance(value, type):
+        elif is_dataclass(value) and not isinstance(value, type) and not already_expanded:
             for item in fields(value):
                 nested = getattr(value, item.name)
                 if callable(nested) or (is_dataclass(nested) and not isinstance(nested, type)):
@@ -615,6 +643,10 @@ def _provider_provenance_document(
         "callback_sources": [
             {"label": label, **source}
             for (label, _identity), source in sorted(callback_sources.items())
+        ],
+        "callback_configurations": [
+            configuration
+            for (_label, _identity), configuration in sorted(callback_configurations.items())
         ],
     }
     return {**payload, "sha256": sha256_json(payload)}
