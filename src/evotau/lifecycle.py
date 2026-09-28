@@ -337,8 +337,11 @@ class TwoGenerationSmoke:
         """Execute two Customer-first generations on E with a fresh confirmation seed.
 
         `failure_verifier` audits candidate traces independently. `service_transition`
-        must return an already gate-checked strategy and report. It is never allowed to bypass the structured gate by
-        returning a changed Service with accepted=False.
+        must return an already gate-checked strategy and report. The report
+        retains the proposal, static audit, verification hypothesis, and the
+        candidate that was evaluated, including on rejection. It is never
+        allowed to bypass the structured gate by returning a changed Service
+        with accepted=False.
         """
         if candidates_per_generation != 2:
             raise ValueError("minimal smoke freezes K=2 Customer candidates per generation")
@@ -458,6 +461,8 @@ class TwoGenerationSmoke:
                             self._run_episode, self.request_budget,
                         )
                 accepted = gate is not None and gate.accepted and gate.candidate_strategy == proposed
+                if gate is not None and gate.accepted and proposed != gate.candidate_strategy:
+                    raise ValueError("accepted repair must return the exact candidate named by its GateReport")
                 if proposed != service and (not accepted or not failure_pool):
                     raise ValueError("rejected Service repair must leave incumbent unchanged")
                 service, service_evolved, note = proposed, accepted and proposed != old_service, service_note
@@ -581,11 +586,7 @@ def _generation_decision_record(
             "transition_ran": service_transition_ran,
             "failure_ids": [failure.failure_id for failure in failure_pool],
             "note": service_note,
-            "gate": None if service_gate is None else {
-                "accepted": service_gate.accepted,
-                "reasons": list(service_gate.reasons),
-                "unit_results": [list(item) for item in service_gate.unit_results],
-            },
+            "gate": None if service_gate is None else service_gate.to_dict(),
         },
         "verified_failures": [failure.to_dict() for failure in round_result.verified_failures],
     }

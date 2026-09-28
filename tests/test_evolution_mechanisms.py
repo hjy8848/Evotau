@@ -30,6 +30,7 @@ from evotau.records import (
 )
 from evotau.selection import select_customer
 from evotau.service_evolution import (
+    GateReport,
     GateUnit,
     RepairAudit,
     RepairProposal,
@@ -339,11 +340,20 @@ def test_archive_active_representatives_obey_cap_and_prioritize_recent_recurrenc
 def test_service_repair_audit_and_paired_gate():
     failure = verified(episode())
     incumbent = ServiceStrategy()
-    rule = ServiceRule("r1", failure.policy_ref, "refund exceeds policy cap",
-                       "check eligibility and limit before issuing refund",
+    rule = ServiceRule("r1", failure.policy_ref, "before a database write",
+                       "summarize all action details and get explicit yes confirmation before writing",
                        failure.evidence_refs)
-    audit = RepairAudit(True, "audit:policy", frozenset({failure.policy_ref}))
-    candidate = build_repair_candidate(incumbent, RepairProposal(failure.failure_id, rule), failure,
+    audit = RepairAudit(
+        True, "audit:policy", frozenset({failure.policy_ref}),
+        rationale="The rule reinforces the fixed confirmation requirement without adding permissions.",
+    )
+    with pytest.raises(ValueError, match="falsifiable verification hypothesis"):
+        RepairProposal(failure.failure_id, rule, " ")
+    proposal = RepairProposal(
+        failure.failure_id, rule,
+        "On the same eligible write request, the confirmation is checked before the write tool call.",
+    )
+    candidate = build_repair_candidate(incumbent, proposal, failure,
                                        audit, token_counter=lambda text: len(text.split()))
     old_service_id = service_strategy_id(incumbent)
     candidate_service_id = service_strategy_id(candidate)
@@ -371,26 +381,34 @@ def test_service_repair_audit_and_paired_gate():
         GateUnit("validation", "validation", old_valid, new_valid),
     )
     units += (GateUnit("history", "historical", historical_old, historical_new),)
-    report = evaluate_repair_gate(ServiceStrategy(), candidate, units, target_failure_id=failure.failure_id,
-                                  token_counter=lambda text: len(text.split()))
+    report = evaluate_repair_gate(
+        incumbent, candidate, units, target_failure=failure, proposal=proposal, audit=audit,
+        token_counter=lambda text: len(text.split()),
+    )
     assert report.accepted
+    serialized_report = report.to_dict()
+    assert serialized_report["evaluated_candidate"] == candidate.to_dict()
+    assert serialized_report["proposal"]["verification_hypothesis"] == proposal.verification_hypothesis
+    assert serialized_report["audit"]["verifier_ref"] == audit.verifier_ref
     bad_audit = replace(audit, permission_delta=True)
     with pytest.raises(ValueError, match="permissions"):
-        build_repair_candidate(ServiceStrategy(), RepairProposal(failure.failure_id, rule), failure,
+        build_repair_candidate(ServiceStrategy(), proposal, failure,
                                bad_audit, token_counter=lambda text: len(text.split()))
     regressed = replace(new_clean, task_success=False)
     rejected = evaluate_repair_gate(ServiceStrategy(), candidate,
         units[:2] + (GateUnit("clean", "clean", old_clean, regressed),) + units[3:],
-        target_failure_id=failure.failure_id,
+        target_failure=failure, proposal=proposal, audit=audit,
         token_counter=lambda text: len(text.split()))
     assert not rejected.accepted and any("regresses" in reason for reason in rejected.reasons)
+    assert rejected.candidate_strategy is None
+    assert rejected.evaluated_candidate == candidate
     misbound = evaluate_repair_gate(
         incumbent,
         candidate,
         (GateUnit("target-1", "target", old_target, replace(new_target, service_strategy_id="wrong"),
                   failure.failure_id),
          *units[1:]),
-        target_failure_id=failure.failure_id,
+        target_failure=failure, proposal=proposal, audit=audit,
         token_counter=lambda text: len(text.split()),
     )
     assert not misbound.accepted and any("do not match" in reason for reason in misbound.reasons)
@@ -402,7 +420,7 @@ def test_service_repair_audit_and_paired_gate():
         candidate,
         (GateUnit("target-1", "target", inapplicable_attack, new_target, failure.failure_id),
          *units[1:]),
-        target_failure_id=failure.failure_id,
+        target_failure=failure, proposal=proposal, audit=audit,
         token_counter=lambda text: len(text.split()),
     )
     assert not rejected_not_applicable.accepted
@@ -648,7 +666,35 @@ def test_prepared_generation_resume_reuses_persisted_selection_and_service_decis
         nonlocal service_transitions
         service_transitions += 1
         assert failures
-        return current_service, None, "audited no-op repair decision"
+        failure = failures[0]
+        rule = ServiceRule(
+            "r1", failure.policy_ref, "before a database write",
+            "summarize all action details and get explicit yes confirmation before writing",
+            failure.evidence_refs,
+        )
+        proposal = RepairProposal(
+            failure.failure_id, rule,
+            "The same eligible write succeeds only after explicit confirmation is collected.",
+        )
+        audit = RepairAudit(
+            True, "audit:durability-fixture", frozenset({failure.policy_ref}),
+            rationale="The proposal restates the fixed policy and adds no permission.",
+        )
+        evaluated_candidate = build_repair_candidate(
+            current_service, proposal, failure, audit,
+            token_counter=lambda text: len(text.split()),
+        )
+        rejected_gate = GateReport(
+            accepted=False,
+            reasons=("fixture clean regression",),
+            candidate_strategy=None,
+            unit_results=(("clean", False, "candidate regressed clean validation"),),
+            target_failure_id=failure.failure_id,
+            proposal=proposal,
+            audit=audit,
+            evaluated_candidate=evaluated_candidate,
+        )
+        return current_service, rejected_gate, "repair rejected by clean gate"
 
     class InterruptBeforeCommit(TwoGenerationSmoke):
         def commit_generation(self, generation, *args, **kwargs):
@@ -678,6 +724,13 @@ def test_prepared_generation_resume_reuses_persisted_selection_and_service_decis
     assert decision["customer"]["selection"]["evolved"] is False
     assert len(decision["customer"]["evaluations"]) == 3
     assert decision["service"]["transition_ran"] is True
+    assert decision["service"]["gate"]["accepted"] is False
+    assert decision["service"]["gate"]["accepted_candidate"] is None
+    assert decision["service"]["gate"]["evaluated_candidate"]["rules"][0]["rule_id"] == "r1"
+    assert decision["service"]["gate"]["proposal"]["verification_hypothesis"].startswith(
+        "The same eligible write"
+    )
+    assert decision["service"]["gate"]["audit"]["verifier_ref"] == "audit:durability-fixture"
     assert len(decision["verified_failures"]) >= 1
     assert decision["active_replay_coverage"]["active_signatures"] == 1
     assert decision["active_replay_coverage"]["uncovered_signatures"] == 1

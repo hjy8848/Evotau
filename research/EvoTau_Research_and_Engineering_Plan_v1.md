@@ -1,4 +1,4 @@
-Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play summaries, exact-policy failure taxonomy, attribution-calibration readiness CLI, and multi-task E/V/H leakage validator implemented; live Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play summaries, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, and complete Service repair audit journaling implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
 Last verified: 2026-09-29 (60 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
@@ -1501,5 +1501,11 @@ Phase 0 之后的实现顺序建议：
 
 - 新增 `validate_generalization_selection()`：E/V 必须来自官方 train，H 必须来自官方 test；三组任务 ID 和提取到的 customer/order/email/entity keys 均需互斥；所有任务逐个通过 ex-ante eligibility。任何缺失、越界、deception 风险或实体重叠都会报错，不自动过滤或改写样本。
 - 该检查是保守的 lexical entity overlap 检测，不等于完整语义 near-duplicate、policy/tool compatibility 或 task satisfiability 审查；这些仍需保存预运行人工判断。尚无根据 smoke 实测成本和失败 yield 冻结的 Pilot 任务清单；当前验证总计 **60 passed**，Ruff、`compileall` 和 `git diff --check` 通过。
+
+**Service repair evidence and rejection durability**
+
+- `RepairProposal` 现在必须保存精确 target failure 和可证伪的验证假设；静态 `RepairAudit` 保留 reviewer 引用、批准的 policy refs、权限/任务特定性/答案泄漏检查与非空理由。
+- `GateReport` 将此 proposal/audit 与实际评估过的候选 Service 绑定到同一 verified failure。候选被拒时仍保留完整规则、假设、静态审核和 target/history/clean/validation 结果；`prepared_generation` checkpoint 通过 `GateReport.to_dict()` 持久化这份完整材料，不会只留下 incumbent 或一句拒绝说明。
+- 补充测试验证已接受和拒绝 gate 均可审计。当前验证为 **60 passed**，Ruff、`compileall` 与 `git diff --check` 通过。
 
 **仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。

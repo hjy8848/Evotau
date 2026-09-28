@@ -19,6 +19,21 @@ from .strategies import (
 class RepairProposal:
     target_failure_id: str
     rule: ServiceRule
+    verification_hypothesis: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target_failure_id, str) or not self.target_failure_id.strip():
+            raise ValueError("repair proposal requires a verified target failure ID")
+        if (not isinstance(self.verification_hypothesis, str)
+                or not self.verification_hypothesis.strip()):
+            raise ValueError("repair proposal requires a falsifiable verification hypothesis")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "target_failure_id": self.target_failure_id,
+            "rule": self.rule.to_dict(),
+            "verification_hypothesis": self.verification_hypothesis,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +46,34 @@ class RepairAudit:
     eligibility_change: bool = False
     reference_answer_exposure: bool = False
     rationale: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.verifier_ref, str) or not self.verifier_ref.strip():
+            raise ValueError("repair audit requires a verifier reference")
+        if type(self.approved) is not bool:
+            raise TypeError("repair audit approved must be an explicit boolean")
+        for name in (
+            "permission_delta", "task_specific_content", "eligibility_change",
+            "reference_answer_exposure",
+        ):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"repair audit {name} must be an explicit boolean")
+        if any(not isinstance(item, str) or not item.strip() for item in self.approved_policy_refs):
+            raise ValueError("approved policy references must be non-empty strings")
+        if not isinstance(self.rationale, str) or not self.rationale.strip():
+            raise ValueError("repair audit requires a rationale")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "approved": self.approved,
+            "verifier_ref": self.verifier_ref,
+            "approved_policy_refs": sorted(self.approved_policy_refs),
+            "permission_delta": self.permission_delta,
+            "task_specific_content": self.task_specific_content,
+            "eligibility_change": self.eligibility_change,
+            "reference_answer_exposure": self.reference_answer_exposure,
+            "rationale": self.rationale,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,12 +91,40 @@ class GateReport:
     reasons: tuple[str, ...]
     candidate_strategy: ServiceStrategy | None
     unit_results: tuple[tuple[str, bool, str], ...]
+    target_failure_id: str
+    proposal: RepairProposal
+    audit: RepairAudit
+    evaluated_candidate: ServiceStrategy
 
     def __post_init__(self) -> None:
-        if self.accepted and (self.reasons or self.candidate_strategy is None):
+        if type(self.accepted) is not bool:
+            raise TypeError("gate report accepted must be a boolean")
+        if (not isinstance(self.target_failure_id, str) or not self.target_failure_id
+                or self.proposal.target_failure_id != self.target_failure_id):
+            raise ValueError("gate report must retain its exact verified target failure")
+        if self.evaluated_candidate is None:
+            raise ValueError("gate report must retain the evaluated Service candidate")
+        if self.accepted and (
+            self.reasons or self.candidate_strategy is None
+            or self.candidate_strategy != self.evaluated_candidate or not self.audit.approved
+        ):
             raise ValueError("accepted gate report must have no rejection reasons and identify its candidate")
         if not self.accepted and self.candidate_strategy is not None:
             raise ValueError("rejected gate report cannot expose an accepted candidate strategy")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "accepted": self.accepted,
+            "reasons": list(self.reasons),
+            "target_failure_id": self.target_failure_id,
+            "proposal": self.proposal.to_dict(),
+            "audit": self.audit.to_dict(),
+            "evaluated_candidate": self.evaluated_candidate.to_dict(),
+            "accepted_candidate": (
+                None if self.candidate_strategy is None else self.candidate_strategy.to_dict()
+            ),
+            "unit_results": [list(item) for item in self.unit_results],
+        }
 
 
 def build_repair_candidate(
@@ -99,12 +170,26 @@ def evaluate_repair_gate(
     candidate: ServiceStrategy,
     units: tuple[GateUnit, ...],
     *,
-    target_failure_id: str,
+    target_failure: FailureRecord,
+    proposal: RepairProposal,
+    audit: RepairAudit,
     token_counter: Callable[[str], int],
 ) -> GateReport:
     """Apply target/replay/clean/validation checks to paired episode evidence."""
     reasons: list[str] = []
     results: list[tuple[str, bool, str]] = []
+    target_failure_id = target_failure.failure_id
+    if proposal.target_failure_id != target_failure_id:
+        reasons.append("repair proposal must identify the exact supplied target failure")
+    try:
+        expected_candidate = build_repair_candidate(
+            incumbent, proposal, target_failure, audit, token_counter=token_counter,
+        )
+    except ValueError as exc:
+        reasons.append(f"repair proposal failed static audit: {exc}")
+    else:
+        if candidate != expected_candidate:
+            reasons.append("evaluated Service candidate differs from the audited repair proposal")
     try:
         render_service_strategy(candidate, token_counter=token_counter)
     except ValueError as exc:
@@ -141,7 +226,16 @@ def evaluate_repair_gate(
         results.append((unit.key, ok, reason))
         if not ok:
             reasons.append(f"{unit.key}: {reason}")
-    return GateReport(not reasons, tuple(reasons), candidate if not reasons else None, tuple(results))
+    return GateReport(
+        accepted=not reasons,
+        reasons=tuple(reasons),
+        candidate_strategy=candidate if not reasons else None,
+        unit_results=tuple(results),
+        target_failure_id=target_failure_id,
+        proposal=proposal,
+        audit=audit,
+        evaluated_candidate=candidate,
+    )
 
 
 def _check_unit(
