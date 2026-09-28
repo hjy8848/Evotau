@@ -30,7 +30,10 @@ def formal_plan():
             "contrast": contrast,
             "alternative": alternative,
             "primary": True,
-            "multiplicity_family": f"family-{rq}",
+            "multiplicity_family": "primary",
+            "statistical_method": "paired_t",
+            "permutation_seed": None,
+            "permutation_replicates": None,
         }
         for index, (rq, endpoint, contrast, alternative) in enumerate(primary)
     ]
@@ -148,7 +151,14 @@ def test_formal_preregistration_rejects_missing_required_primary_contrast():
         item for item in document["power_calculations"]
         if item["hypothesis_id"] in {hypothesis["hypothesis_id"] for hypothesis in document["hypotheses"]}
     ]
-    with pytest.raises(ValueError, match="missing planned RQ contrasts"):
+    with pytest.raises(ValueError, match="each planned RQ contrast exactly once"):
+        validate_formal_preregistration(document, exact_input_sha256=sha("plan"))
+
+
+def test_formal_preregistration_rejects_duplicate_or_unsupported_primary_contrasts():
+    document = formal_plan()
+    document["hypotheses"][0]["contrast"] = "unregistered_control"
+    with pytest.raises(ValueError, match="unexpected=.*unregistered_control"):
         validate_formal_preregistration(document, exact_input_sha256=sha("plan"))
 
 

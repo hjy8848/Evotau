@@ -182,10 +182,11 @@ def validate_formal_preregistration(
     hypotheses = value["hypotheses"]
     if not isinstance(hypotheses, list) or not hypotheses:
         raise ValueError("hypotheses must be a non-empty JSON array")
-    parsed_hypotheses: dict[str, tuple[tuple[str, str, str, str], bool, str]] = {}
+    parsed_hypotheses: dict[str, tuple[tuple[str, str, str, str], bool, str, str, int | None, int | None]] = {}
     hypothesis_fields = {
         "hypothesis_id", "research_question", "endpoint", "contrast",
-        "alternative", "primary", "multiplicity_family",
+        "alternative", "primary", "multiplicity_family", "statistical_method",
+        "permutation_seed", "permutation_replicates",
     }
     for index, item in enumerate(hypotheses):
         if not isinstance(item, dict) or set(item) != hypothesis_fields:
@@ -204,14 +205,37 @@ def validate_formal_preregistration(
         if type(item["primary"]) is not bool:
             raise ValueError("hypothesis primary must be an explicit boolean")
         family = _nonempty_string(item["multiplicity_family"], "multiplicity_family")
-        parsed_hypotheses[identifier] = ((rq, endpoint, contrast, alternative), item["primary"], family)
+        method = item["statistical_method"]
+        if method not in {"paired_t", "paired_sign_flip"}:
+            raise ValueError("statistical_method must be paired_t or paired_sign_flip")
+        seed, replicates = item["permutation_seed"], item["permutation_replicates"]
+        if method == "paired_t":
+            if seed is not None or replicates is not None:
+                raise ValueError("paired_t hypotheses cannot include permutation parameters")
+        elif (type(seed) is not int or seed < 0
+              or type(replicates) is not int or replicates < 9_999):
+            raise ValueError("paired_sign_flip requires a seed and at least 9,999 replicates")
+        parsed_hypotheses[identifier] = (
+            (rq, endpoint, contrast, alternative), item["primary"], family,
+            method, seed, replicates,
+        )
 
-    primary_tuples = {
-        signature for signature, primary, _ in parsed_hypotheses.values() if primary
-    }
-    if not PRIMARY_CONTRASTS <= primary_tuples:
+    primary_signatures = [
+        signature for signature, primary, *_ in parsed_hypotheses.values() if primary
+    ]
+    primary_tuples = set(primary_signatures)
+    if primary_tuples != PRIMARY_CONTRASTS or len(primary_signatures) != len(PRIMARY_CONTRASTS):
         missing = sorted(PRIMARY_CONTRASTS - primary_tuples)
-        raise ValueError(f"primary hypotheses are missing planned RQ contrasts: {missing}")
+        unexpected = sorted(primary_tuples - PRIMARY_CONTRASTS)
+        raise ValueError(
+            "primary hypotheses must contain each planned RQ contrast exactly once; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    primary_families = {
+        family for _, primary, family, *_ in parsed_hypotheses.values() if primary
+    }
+    if len(primary_families) != 1:
+        raise ValueError("all preregistered primary hypotheses must share one multiplicity family")
     if value["multiple_comparison_method"] != "holm":
         raise ValueError("Formal primary hypotheses must use the preregistered Holm adjustment")
     alpha = value["familywise_alpha"]
@@ -262,7 +286,9 @@ def validate_formal_preregistration(
         if type(planned) is not int or planned < 3:
             raise ValueError("planned_seed_blocks must be at least three")
         required_power[identifier] = planned
-    primary_ids = {identifier for identifier, (_, primary, _) in parsed_hypotheses.items() if primary}
+    primary_ids = {
+        identifier for identifier, (_, primary, *_) in parsed_hypotheses.items() if primary
+    }
     if seen_power != primary_ids:
         raise ValueError("every primary hypothesis needs one pilot-backed power calculation")
     planned_blocks = max(required_power.values())

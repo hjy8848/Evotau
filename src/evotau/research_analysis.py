@@ -375,6 +375,8 @@ class RQ3RunMetrics:
     evolution_seed: int
     condition: str
     input_sha256: str
+    request_budget_cap: int
+    provider_attempts: int
     transitions: int
     confirmed_response_chains: int
     sustained_two_chain_response: float | None
@@ -405,6 +407,7 @@ class RQ3ResponseReport:
     minimum_independent_seed_blocks: int
     bootstrap_seed: int
     bootstrap_replicates: int
+    task_ids: tuple[str, ...]
     runs: tuple[RQ3RunMetrics, ...]
     paired_comparisons: tuple[RQ3PairedComparison, ...]
     reasons: tuple[str, ...]
@@ -523,6 +526,7 @@ def analyze_rq3_longitudinal_response(
         minimum_independent_seed_blocks=minimum_independent_seed_blocks,
         bootstrap_seed=bootstrap_seed,
         bootstrap_replicates=bootstrap_replicates,
+        task_ids=first.transitions[0].task_ids,
         runs=metrics,
         paired_comparisons=comparisons,
         reasons=reasons,
@@ -560,6 +564,8 @@ def _summarize_response_run(run: EvolutionResponseRun) -> RQ3RunMetrics:
         evolution_seed=run.evolution_seed,
         condition=run.condition,
         input_sha256=run.input_sha256,
+        request_budget_cap=run.request_budget_cap,
+        provider_attempts=run.provider_attempts,
         transitions=len(run.transitions),
         confirmed_response_chains=chains,
         sustained_two_chain_response=sustained,

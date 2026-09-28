@@ -221,6 +221,7 @@ class StudyRun:
         return RunMetrics(
             run_id=self.run_id,
             seed_block_id=self.seed_block_id,
+            evolution_seed=self.evolution_seed,
             condition=self.condition,
             input_sha256=self.input_sha256,
             request_budget_cap=self.request_budget_cap,
@@ -249,6 +250,7 @@ class StudyRun:
 class RunMetrics:
     run_id: str
     seed_block_id: str
+    evolution_seed: int
     condition: str
     input_sha256: str
     request_budget_cap: int
