@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, and balanced cross-play summaries implemented; live Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play summaries, exact-policy failure taxonomy, and attribution-calibration readiness CLI implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (52 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
+Last verified: 2026-09-29 (58 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1488,8 +1488,13 @@ Phase 0 之后的实现顺序建议：
 
 **Frozen MVP failure taxonomy update**
 
-- 将计划要求的三类窄范围执行错误固化为 Phase 3 manifest 中的有序 taxonomy，并写入独立 SHA-256：缺失身份核验、写入前缺少明确确认、写入范围不完整。
+- 将计划要求的三类窄范围执行错误及其精确 Retail policy reference 固化为 Phase 3 manifest 中的有序 taxonomy，并写入独立 SHA-256：缺失身份核验、写入前缺少明确确认、写入范围不完整。伪造或不匹配的 policy reference 同样不能晋升。
 - `FailureRecord` 构造与验证拒绝 taxonomy 以外的 signature，`promote_verified_failure` 将此类记录保留为未晋升诊断；因此任意 reviewer 标签不能进入 Customer fitness、Service repair 输入或 replay archive。失败条件 mutation 的支持 ID 仍按对应算子精确关联。
-- 补充 manifest taxonomy/hash 与越界拒绝测试。当前完整验证为 **52 passed**（含 pinned τ-bench 构造集成）；Ruff 与 `git diff --check` 通过。Phase 0/3 preflight 与 compileall 仍需在提交前复验。
+- 补充 manifest taxonomy/hash、越界 signature 和错误 policy reference 拒绝测试。当前完整验证为 **57 passed**（含 pinned τ-bench 构造集成）；Ruff、`compileall`、两项 eligibility preflight 与 `git diff --check` 均通过。
 
-**仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以此轮没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、归因校准（至少 30 条）、任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。
+**Attribution calibration readiness helper**
+
+- 新增 `calibration.py` 和 `evotau-calibrate-attribution` CLI，把计划中的归因校准门槛编码为纯数据分析：每个候选正例须有两份独立判断，只有双方确认才进入保守 precision 分子，所有候选始终留在分母；不足 30 条返回 `insufficient_evidence`，精度低于 90% 或关键事实争议率高于 10% 返回 `pause_automation`。严格 JSON schema 和输入 SHA-256 使人工标注文件及结果可核对。
+- 工具只评估已经采集的人工审查，不创建审查结果、不提升 failure，也不自动打开 provider。当前没有 30 条真实候选标注，所以 Pilot 的 attribution-calibration exit 仍未达成；软件阈值、schema 与边界值测试已覆盖。当前完整验证为 **58 passed**，Ruff、`compileall`、Phase 0/3 preflight 和 `git diff --check` 均通过。
+
+**仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。

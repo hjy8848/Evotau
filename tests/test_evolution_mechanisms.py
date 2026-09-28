@@ -74,6 +74,10 @@ def test_attribution_requires_validity_adherence_evidence_and_independent_audit(
     assert "outside the frozen MVP taxonomy" in decision.reason
     with pytest.raises(ValueError, match="outside the frozen Retail MVP taxonomy"):
         FailureRecord.verify(out_of_scope, generation=0, verifier="audit:out-of-scope")
+    forged_policy_ref = replace(ep, policy_rule_id="retail.policy:refund_limit")
+    assert not promote_verified_failure(
+        forged_policy_ref, generation=0, independent_verification_ref="audit:wrong-policy-ref",
+    ).promoted
 
 
 def test_customer_mutation_determinism_and_incumbent_retention_on_tie():
@@ -294,14 +298,14 @@ def test_archive_is_append_only_idempotent_and_deduplicates_representatives(tmp_
     assert archive.active_replay_coverage()["coverage_rate"] == 1.0
 
 
-def test_archive_active_representatives_are_capped_and_prioritize_recent_recurrence(tmp_path):
+def test_archive_active_representatives_obey_cap_and_prioritize_recent_recurrence(tmp_path):
     archive = FailureArchive(tmp_path / "bounded-failures.sqlite")
     base = verified(episode(name="base"), 0)
     signatures = []
-    for index in range(35):
-        signature = FailureSignature(
-            "retail", "pre_write", f"policy.rule-{index}", "missing_explicit_confirmation",
-        )
+    # The frozen MVP taxonomy contains only three exact signature classes, so
+    # the 32-item limit cannot be saturated without inventing out-of-scope data.
+    for index, (stage, policy_ref, mistake) in enumerate(MVP_FAILURE_TAXONOMY):
+        signature = FailureSignature("retail", stage, policy_ref, mistake)
         item = replace(
             base,
             failure_id=f"failure-{index:02d}",
@@ -310,7 +314,7 @@ def test_archive_active_representatives_are_capped_and_prioritize_recent_recurre
             generation=1,
             signature=signature,
             policy_ref=signature.policy_rule_id,
-            severity="high" if index == 34 else "material",
+            severity="high" if index == 2 else "material",
         )
         archive.append(item)
         signatures.append(item)
@@ -322,11 +326,12 @@ def test_archive_active_representatives_are_capped_and_prioritize_recent_recurre
 
     active = archive.active_representatives(current_generation=2)
 
-    assert len(active) == 32
+    assert len(active) == len(MVP_FAILURE_TAXONOMY)
     assert active[0].failure_id == "failure-recurrence"
-    assert any(item.failure_id == "failure-34" for item in active)
-    assert len({item.signature.key for item in active}) == 32
-    assert archive.active_replay_coverage()["active_signatures"] == 32
+    assert active[1].failure_id == "failure-02"
+    assert len({item.signature.key for item in active}) == len(MVP_FAILURE_TAXONOMY)
+    assert archive.active_replay_coverage()["active_signatures"] == len(MVP_FAILURE_TAXONOMY)
+    assert len(archive.active_representatives(limit=2, current_generation=2)) == 2
     with pytest.raises(ValueError, match="capped"):
         archive.active_representatives(33)
 
@@ -454,8 +459,8 @@ def test_phase3_manifest_freezes_tasks_generations_and_hard_caps():
     assert not manifest.real_provider_enabled
     payload = manifest.to_payload()
     assert payload["failure_taxonomy"] == [
-        {"workflow_stage": stage, "mistake_type": mistake}
-        for stage, mistake in MVP_FAILURE_TAXONOMY
+        {"workflow_stage": stage, "policy_rule_id": policy_rule_id, "mistake_type": mistake}
+        for stage, policy_rule_id, mistake in MVP_FAILURE_TAXONOMY
     ]
     assert payload["failure_taxonomy_sha256"] == sha256_json(MVP_FAILURE_TAXONOMY)
     assert manifest.sha256 == manifest_fingerprint(payload)

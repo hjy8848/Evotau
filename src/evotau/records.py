@@ -63,7 +63,7 @@ class FailureSignature:
 
 def is_mvp_failure_signature(signature: FailureSignature) -> bool:
     return signature.domain == "retail" and (
-        signature.workflow_stage, signature.mistake_type
+        signature.workflow_stage, signature.policy_rule_id, signature.mistake_type
     ) in MVP_FAILURE_TAXONOMY
 
 
