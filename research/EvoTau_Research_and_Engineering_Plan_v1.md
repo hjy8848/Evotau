@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play, RQ1 run-level and RQ2 panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, and complete Service repair audit journaling implemented; live Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, and complete Service repair audit journaling implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (71 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
+Last verified: 2026-09-29 (74 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1525,7 +1525,14 @@ Phase 0 之后的实现顺序建议：
 
 - 扩展 `CrossPlayCell`，现在从实际 `EpisodeRecord`/verified `FailureRecord` 精确保留 native task success、所有已审 policy violation、按 signature 的 verified failure episode counts，以及与冻结 repaired-signature set 匹配的 recurrence count。矩阵构造时校验每个比例与其分子/分母一致，避免只靠 summary 数值伪造/丢失分母。
 - 新增 `service_analysis.py`，要求 incumbent/candidate 使用相同 task、episode seed、完整 frozen Customer 面板及相同的 prior-repaired signature 集合，Service ID 不同且唯一，并有 fully audited `customer=None` clean 控制。逐 Customer 报告任务成功率、policy violation 和 attributable-failure 变化；分别计算接受 gate 的 target signature 失败率下降、clean 成功/违规变化、历史 repaired signature 复发率与 signature coverage、各 repair gate 接受比例。输出绑定两个矩阵、target FailureRecord 与每个完整 GateReport 的 hash。
-- 该函数对 target、historical、clean、validation 和 heldout 面板逐面板运行；目前只提供 paired-panel 描述指标，独立 evolution-run 的 RQ2 区间/显著性分析及其真实 E/V/H run artifact 仍未实现。未将 episodes 误作独立样本。
-- 针对 target 率分子、clean denominator、接受/拒绝比例、历史复发、服务面板不匹配和损坏的 cross-play 计数新增测试。当前全量验证为 **71 passed**（含 pinned runtime integration test）；Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
+- 该函数对 target、historical、clean、validation 和 heldout 面板逐面板运行；未将 episodes 误作独立样本。
+- 针对 target 率分子、clean denominator、接受/拒绝比例、历史复发、服务面板不匹配和损坏的 cross-play 计数新增测试。当前全量验证为 **74 passed**（含 pinned runtime integration test）；Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
 
-**仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。RQ2 尚缺独立 evolution-run 层的预注册分析与汇总。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。
+**RQ2 independent-run aggregation**
+
+- 新增 `ServiceRobustnessRun` 与 `analyze_rq2_service_robustness()`，每个 evolution seed 必须有 target、historical、clean、validation、heldout 五份面板分析，并且这些面板必须共享角色 Service checkpoints 和同一 provider budget snapshot。跨 run 要求演化 seed 唯一、面板 task order 固定、同一 request cap；E/V/H 由调用者显式传入并互斥，面板任务必须落在对应 split，H 必须精确匹配冻结顺序。
+- 将每 run 配对的 target repair reduction、gate acceptance、clean/validation/heldout success 与 violation/failure 变化、historical recurrence 汇总成预先命名的 RQ2 metrics。Bootstrap 在独立 evolution runs 上执行；任一 run 缺关键 denominator 时不静默排除，而是把该 metric 和总体结果标为 incomplete。每个 run 和每个源 cross-play/gate artifact 均保留 SHA-256 引用。
+- 区间和方向统计仍是描述性的，不能替代 pilot-informed 样本量、预注册假设/非劣效 margin 或 formal 推断。目前没有真实多 seed RQ2 数据，测试只验证计算和输入门禁，不产生研究证据。
+- 新增多 run、E/V/H、预算、seed、面板缺项和 incomplete-denominator 测试；全量验证为 **74 passed**（含 pinned runtime integration test），Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
+
+**仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。RQ2 的独立-run 分析代码已具备，但正式推断所需预注册假设/非劣效 margin、pilot-informed 样本量和真实 run artifacts 尚不存在。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。

@@ -135,6 +135,8 @@ def test_rq2_reports_exact_target_effect_gate_acceptance_and_clean_preservation(
         gate_reports=(gate_for(target_failures[0], candidate_service, accepted=True),
                       gate_for(target_failures[1], candidate_service, accepted=False)),
         target_failures=target_failures,
+        request_budget_cap=100,
+        provider_attempts=90,
     )
 
     assert report.proposed_repairs == 2
@@ -201,6 +203,8 @@ def test_rq2_reports_recurrence_against_the_frozen_repaired_signature_set():
         panel_scope="historical",
         gate_reports=(),
         target_failures=(source_failure,),
+        request_budget_cap=100,
+        provider_attempts=90,
         repaired_signature_keys=(repaired_signature,),
     )
 
@@ -232,6 +236,7 @@ def test_rq2_requires_matching_frozen_panels_and_true_native_clean_control():
     with pytest.raises(ValueError, match="same task/seed panel"):
         analyze_service_repair_crossplay(
             baseline, changed_panel, panel_scope="heldout", gate_reports=(), target_failures=(),
+            request_budget_cap=100, provider_attempts=90,
         )
 
     clean_id = customer_strategy_id(None)
@@ -257,4 +262,6 @@ def test_rq2_requires_matching_frozen_panels_and_true_native_clean_control():
             panel_scope="clean",
             gate_reports=(),
             target_failures=(),
+            request_budget_cap=100,
+            provider_attempts=90,
         )

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import random
 import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from statistics import mean
 from typing import Any
 
 from .crossplay import CrossPlayCell, CrossPlayMatrix
@@ -41,6 +43,8 @@ class ServiceRepairAnalysis:
     panel_scope: str
     task_ids: tuple[str, ...]
     seeds: tuple[int, ...]
+    request_budget_cap: int
+    provider_attempts: int
     incumbent_service_strategy_id: str
     candidate_service_strategy_id: str
     incumbent_matrix_sha256: str
@@ -84,6 +88,8 @@ def analyze_service_repair_crossplay(
     panel_scope: str,
     gate_reports: Sequence[GateReport],
     target_failures: Sequence[FailureRecord],
+    request_budget_cap: int,
+    provider_attempts: int,
     repaired_signature_keys: Sequence[str] = (),
 ) -> ServiceRepairAnalysis:
     """Compare one frozen Service checkpoint with its proposed replacement.
@@ -97,6 +103,11 @@ def analyze_service_repair_crossplay(
 
     if panel_scope not in SERVICE_PANEL_SCOPES:
         raise ValueError(f"panel_scope must be one of {sorted(SERVICE_PANEL_SCOPES)}")
+    if type(request_budget_cap) is not int or request_budget_cap <= 0:
+        raise ValueError("request_budget_cap must be a positive integer")
+    if (type(provider_attempts) is not int
+            or not 0 <= provider_attempts <= request_budget_cap):
+        raise ValueError("provider_attempts must be within the frozen request budget")
     if incumbent.task_ids != candidate.task_ids or incumbent.seeds != candidate.seeds:
         raise ValueError("incumbent and candidate matrices must use the same task/seed panel")
     if incumbent.customer_strategy_ids != candidate.customer_strategy_ids:
@@ -238,6 +249,8 @@ def analyze_service_repair_crossplay(
         panel_scope=panel_scope,
         task_ids=incumbent.task_ids,
         seeds=incumbent.seeds,
+        request_budget_cap=request_budget_cap,
+        provider_attempts=provider_attempts,
         incumbent_service_strategy_id=old_service_id,
         candidate_service_strategy_id=new_service_id,
         incumbent_matrix_sha256=sha256_json(incumbent.to_dict()),
@@ -344,3 +357,283 @@ def _difference(old: float | None, new: float | None) -> float | None:
 
 def _signature_episode_count(cell: CrossPlayCell, signature_keys: set[str]) -> int:
     return sum(count for key, count in cell.verified_signature_episode_counts if key in signature_keys)
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceRobustnessRun:
+    """The five paired Service panels for one independent evolution run."""
+
+    run_id: str
+    evolution_seed: int
+    panels: tuple[ServiceRepairAnalysis, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.run_id, str) or not self.run_id.strip():
+            raise ValueError("RQ2 run_id must be a non-empty string")
+        if type(self.evolution_seed) is not int or self.evolution_seed < 0:
+            raise ValueError("RQ2 evolution seed must be a non-negative integer")
+        if any(not isinstance(panel, ServiceRepairAnalysis) for panel in self.panels):
+            raise TypeError("RQ2 run panels must be ServiceRepairAnalysis records")
+        scopes = [panel.panel_scope for panel in self.panels]
+        if len(scopes) != len(set(scopes)) or set(scopes) != SERVICE_PANEL_SCOPES:
+            raise ValueError("each RQ2 evolution run must include target/history/clean/validation/heldout once")
+        budget_caps = {panel.request_budget_cap for panel in self.panels}
+        provider_attempts = {panel.provider_attempts for panel in self.panels}
+        if len(budget_caps) != 1 or len(provider_attempts) != 1:
+            raise ValueError("all RQ2 panels in one evolution run must share its request budget snapshot")
+        cap = next(iter(budget_caps))
+        attempts = next(iter(provider_attempts))
+        if type(cap) is not int or cap <= 0 or type(attempts) is not int or not 0 <= attempts <= cap:
+            raise ValueError("RQ2 run request-attempt snapshot is outside its positive frozen budget")
+        service_pairs = {
+            (panel.incumbent_service_strategy_id, panel.candidate_service_strategy_id)
+            for panel in self.panels
+        }
+        if len(service_pairs) != 1:
+            raise ValueError("all RQ2 panels in a run must compare the same Service checkpoint pair")
+
+    @property
+    def panels_by_scope(self) -> dict[str, ServiceRepairAnalysis]:
+        return {panel.panel_scope: panel for panel in self.panels}
+
+    @property
+    def input_sha256(self) -> str:
+        return sha256_json({
+            "run_id": self.run_id,
+            "evolution_seed": self.evolution_seed,
+            "panels": [panel.to_dict() for panel in sorted(self.panels, key=lambda item: item.panel_scope)],
+        })
+
+
+@dataclass(frozen=True, slots=True)
+class RQ2MetricEstimate:
+    metric: str
+    interpretation_direction: str
+    status: str
+    independent_runs: int
+    complete_run_values: int
+    observations: tuple[tuple[str, float | None], ...]
+    mean: float | None
+    median: float | None
+    bootstrap_95_percentile_interval: tuple[float, float] | None
+    bootstrap_replicates: int
+    directionally_favorable_runs: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class RQ2RobustnessReport:
+    status: str
+    evolution_task_ids: tuple[str, ...]
+    validation_task_ids: tuple[str, ...]
+    heldout_task_ids: tuple[str, ...]
+    request_budget_cap: int
+    minimum_independent_runs: int
+    bootstrap_seed: int
+    run_ids_and_input_sha256: tuple[tuple[str, int, str], ...]
+    actual_provider_attempts: tuple[tuple[str, int], ...]
+    metrics: tuple[RQ2MetricEstimate, ...]
+    reasons: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def analyze_rq2_service_robustness(
+    runs: Sequence[ServiceRobustnessRun],
+    *,
+    evolution_task_ids: Sequence[str],
+    validation_task_ids: Sequence[str],
+    heldout_task_ids: Sequence[str],
+    minimum_independent_runs: int = 3,
+    bootstrap_replicates: int = 10_000,
+    bootstrap_seed: int = 0,
+) -> RQ2RobustnessReport:
+    """Aggregate RQ2 panels over independent evolution runs.
+
+    The five panel scopes and their task partitions are frozen across runs.
+    Paired changes are first calculated within each run; bootstrap resampling
+    then uses only independent evolution runs. Episode-level rows never act
+    as independent statistical units. All intervals remain descriptive until
+    a pilot-informed, pre-registered formal analysis is supplied.
+    """
+
+    e_tasks = _task_tuple(evolution_task_ids, "evolution")
+    v_tasks = _task_tuple(validation_task_ids, "validation")
+    h_tasks = _task_tuple(heldout_task_ids, "heldout")
+    if not e_tasks or not v_tasks or not h_tasks:
+        raise ValueError("RQ2 E, V, and H task selections must each be non-empty")
+    all_selected = (*e_tasks, *v_tasks, *h_tasks)
+    if len(set(all_selected)) != len(all_selected):
+        raise ValueError("RQ2 E, V, and H task selections must be unique and disjoint")
+    if type(minimum_independent_runs) is not int or minimum_independent_runs < 2:
+        raise ValueError("minimum_independent_runs must be at least two")
+    if type(bootstrap_replicates) is not int or bootstrap_replicates < 100:
+        raise ValueError("bootstrap_replicates must be at least 100")
+    if type(bootstrap_seed) is not int or bootstrap_seed < 0:
+        raise ValueError("bootstrap_seed must be a non-negative integer")
+    if not runs:
+        raise ValueError("RQ2 analysis requires independent evolution runs")
+
+    run_ids: set[str] = set()
+    evolution_seeds: set[int] = set()
+    for run in runs:
+        if run.run_id in run_ids:
+            raise ValueError("RQ2 run IDs must be unique")
+        if run.evolution_seed in evolution_seeds:
+            raise ValueError("RQ2 independent evolution runs must use distinct seeds")
+        run_ids.add(run.run_id)
+        evolution_seeds.add(run.evolution_seed)
+        panels = run.panels_by_scope
+        if not set(panels["target"].task_ids) <= set(e_tasks):
+            raise ValueError("RQ2 target panel tasks must belong to the frozen E partition")
+        if not set(panels["historical"].task_ids) <= set(e_tasks):
+            raise ValueError("RQ2 historical replay tasks must belong to the frozen E partition")
+        if not set(panels["clean"].task_ids) <= set(v_tasks):
+            raise ValueError("RQ2 clean control tasks must belong to the frozen V partition")
+        if not set(panels["validation"].task_ids) <= set(v_tasks):
+            raise ValueError("RQ2 adversarial validation tasks must belong to the frozen V partition")
+        if panels["heldout"].task_ids != h_tasks:
+            raise ValueError("RQ2 heldout panel must equal the sealed ordered H partition")
+
+    reference = runs[0].panels_by_scope
+    request_budget_cap = reference["target"].request_budget_cap
+    for run in runs[1:]:
+        panels = run.panels_by_scope
+        for scope in SERVICE_PANEL_SCOPES:
+            if panels[scope].task_ids != reference[scope].task_ids:
+                raise ValueError(f"RQ2 {scope} task panel must be identical across independent runs")
+        if panels["target"].request_budget_cap != request_budget_cap:
+            raise ValueError("RQ2 independent runs must share one request-attempt budget cap")
+
+    specs = (
+        ("target_failure_rate_reduction", "target", "target_failure_rate_reduction", "higher"),
+        ("repair_acceptance_rate", "target", "repair_acceptance_rate", "descriptive"),
+        ("clean_success_rate_change", "clean", "clean_success_rate_change", "higher"),
+        ("clean_policy_violation_rate_change", "clean", "clean_policy_violation_rate_change", "lower"),
+        ("validation_success_rate_change", "validation", "task_success_rate_change", "higher"),
+        ("validation_policy_violation_rate_change", "validation", "policy_violation_rate_change", "lower"),
+        ("validation_attributable_failure_rate_change", "validation", "attributable_failure_rate_change", "lower"),
+        ("heldout_success_rate_change", "heldout", "task_success_rate_change", "higher"),
+        ("heldout_policy_violation_rate_change", "heldout", "policy_violation_rate_change", "lower"),
+        ("heldout_attributable_failure_rate_change", "heldout", "attributable_failure_rate_change", "lower"),
+        ("historical_recurrence_rate", "historical", "historical_recurrence_rate", "lower"),
+        ("historical_recurrence_rate_change", "historical", "historical_recurrence_rate_change", "lower"),
+    )
+    rng = random.Random(bootstrap_seed)
+    estimates = tuple(
+        _estimate_rq2_metric(
+            name=name,
+            scope=scope,
+            attribute=attribute,
+            direction=direction,
+            runs=runs,
+            minimum_runs=minimum_independent_runs,
+            bootstrap_replicates=bootstrap_replicates,
+            rng=rng,
+        )
+        for name, scope, attribute, direction in specs
+    )
+    reasons: list[str] = []
+    if len(runs) < minimum_independent_runs:
+        reasons.append(
+            f"only {len(runs)} independent evolution runs; {minimum_independent_runs} required for pilot-level comparison"
+        )
+    if any(metric.status == "incomplete_denominator" for metric in estimates):
+        reasons.append("one or more panel metrics lack a valid denominator in at least one independent run")
+    status = (
+        "insufficient_independent_runs" if len(runs) < minimum_independent_runs
+        else "incomplete_denominators" if reasons
+        else "descriptive"
+    )
+    return RQ2RobustnessReport(
+        status=status,
+        evolution_task_ids=e_tasks,
+        validation_task_ids=v_tasks,
+        heldout_task_ids=h_tasks,
+        request_budget_cap=request_budget_cap,
+        minimum_independent_runs=minimum_independent_runs,
+        bootstrap_seed=bootstrap_seed,
+        run_ids_and_input_sha256=tuple(
+            (run.run_id, run.evolution_seed, run.input_sha256) for run in runs
+        ),
+        actual_provider_attempts=tuple(
+            (run.run_id, run.panels_by_scope["target"].provider_attempts) for run in runs
+        ),
+        metrics=estimates,
+        reasons=tuple(reasons),
+    )
+
+
+def _estimate_rq2_metric(
+    *,
+    name: str,
+    scope: str,
+    attribute: str,
+    direction: str,
+    runs: Sequence[ServiceRobustnessRun],
+    minimum_runs: int,
+    bootstrap_replicates: int,
+    rng: random.Random,
+) -> RQ2MetricEstimate:
+    observations = tuple(
+        (run.run_id, getattr(run.panels_by_scope[scope], attribute)) for run in runs
+    )
+    values = [value for _, value in observations if value is not None]
+    if len(runs) < minimum_runs:
+        status = "insufficient_independent_runs"
+    elif len(values) != len(runs):
+        status = "incomplete_denominator"
+    else:
+        status = "descriptive"
+    interval = None
+    metric_mean = metric_median = None
+    favorable_runs = None
+    used_replicates = 0
+    if len(values) == len(runs) and values:
+        metric_mean = mean(values)
+        metric_median = _percentile(values, 0.5)
+        favorable_runs = (
+            sum(value >= 0 for value in values) if direction == "higher"
+            else sum(value <= 0 for value in values) if direction == "lower"
+            else None
+        )
+        if len(runs) >= minimum_runs:
+            bootstrap_means = [
+                mean(rng.choice(values) for _ in values)
+                for _ in range(bootstrap_replicates)
+            ]
+            interval = (_percentile(bootstrap_means, 0.025), _percentile(bootstrap_means, 0.975))
+            used_replicates = bootstrap_replicates
+    return RQ2MetricEstimate(
+        metric=name,
+        interpretation_direction=direction,
+        status=status,
+        independent_runs=len(runs),
+        complete_run_values=len(values),
+        observations=observations,
+        mean=metric_mean,
+        median=metric_median,
+        bootstrap_95_percentile_interval=interval,
+        bootstrap_replicates=used_replicates,
+        directionally_favorable_runs=favorable_runs,
+    )
+
+
+def _task_tuple(values: Sequence[str], name: str) -> tuple[str, ...]:
+    tasks = tuple(values)
+    if any(not isinstance(item, str) or not item for item in tasks):
+        raise ValueError(f"{name} task IDs must be non-empty strings")
+    if len(set(tasks)) != len(tasks):
+        raise ValueError(f"{name} task IDs must be unique")
+    return tasks
+
+
+def _percentile(values: Sequence[float], probability: float) -> float:
+    if not values:
+        raise ValueError("cannot calculate a percentile from an empty sample")
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
