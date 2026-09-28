@@ -161,8 +161,13 @@ def _check_unit(
         return False, "incomplete or invalid episode evidence"
     if old.customer_valid is not True or new.customer_valid is not True:
         return False, "invalid Customer behavior cannot be used as gate evidence"
-    if old.customer_strategy_adherent is not True or new.customer_strategy_adherent is not True:
-        return False, "Customer strategy adherence must be confirmed in both paired episodes"
+    if unit.panel == "clean":
+        if old.strategy_applicable is not False or new.strategy_applicable is not False:
+            return False, "clean gate must use the native Customer without an EvoTau strategy overlay"
+    elif (old.strategy_applicable is not True or new.strategy_applicable is not True
+          or old.customer_strategy_adherent is not True
+          or new.customer_strategy_adherent is not True):
+        return False, "adversarial Customer strategy must be applicable and adherent in both paired episodes"
     if unit.panel in {"target", "historical"}:
         if unit.panel == "target":
             if not unit.target_failure_id:

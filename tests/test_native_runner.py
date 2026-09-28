@@ -17,7 +17,7 @@ from evotau.native_runner import (
     run_native_phase3,
 )
 from evotau.phase0 import load_config
-from evotau.records import EpisodeStatus, EvidenceRef
+from evotau.records import EpisodeStatus, EvidenceRef, customer_strategy_id
 from evotau.strategies import CustomerStrategy, ServiceStrategy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,6 +116,7 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
         return IndependentEpisodeAudit(
             verifier_ref="human-audit:review-17",
             customer_valid=True,
+            strategy_applicable=True,
             customer_strategy_adherent=True,
             policy_violation=True,
             policy_rule_id="retail.policy:confirmation",
@@ -163,6 +164,29 @@ def test_native_runner_without_independent_audit_is_uncertain_and_not_fit_eligib
     assert record.customer_valid is None
     assert not record.has_attributable_failure_candidate
     assert budget.snapshot().attempts == 1
+
+
+def test_native_runner_can_execute_clean_user_without_strategy_overlay(tmp_path: Path, monkeypatch):
+    def audit(_simulation, _task, customer, _service, panel_name):
+        assert customer is None
+        assert panel_name == "clean"
+        return IndependentEpisodeAudit(
+            verifier_ref="human-audit:clean-user",
+            customer_valid=True,
+            strategy_applicable=False,
+            customer_strategy_adherent=None,
+            policy_violation=False,
+        )
+
+    runner, _budget, _provider = configured_runner(tmp_path, monkeypatch, audit_provider=audit)
+    record = runner(
+        task_id="73", seed=42, customer=None, service=ServiceStrategy(), panel_name="clean",
+    )
+    assert record.status == EpisodeStatus.COMPLETE
+    assert record.customer_strategy_id == customer_strategy_id(None)
+    assert record.strategy_applicable is False
+    assert record.customer_strategy_adherent is None
+    assert not record.has_attributable_failure_candidate
 
 
 def test_native_runner_requires_explicit_provider_opt_in(tmp_path: Path, monkeypatch):

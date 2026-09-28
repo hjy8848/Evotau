@@ -26,6 +26,10 @@ class CrossPlayCell:
     invalid_episodes: int
     infrastructure_episodes: int
     uncertain_episodes: int
+    strategy_opportunities: int
+    strategy_adherent_episodes: int
+    strategy_not_applicable_episodes: int
+    strategy_adherence_rate: float | None
     successful_episodes: int
     verified_failure_episodes: int
     verified_failure_rate: float | None
@@ -70,7 +74,7 @@ def build_crossplay_matrix(
     episodes: Sequence[EpisodeRecord],
     verified_failures: Sequence[FailureRecord],
     *,
-    customer_strategies: Sequence[CustomerStrategy],
+    customer_strategies: Sequence[CustomerStrategy | None],
     service_strategies: Sequence[ServiceStrategy],
     task_ids: Sequence[str],
     seeds: Sequence[int],
@@ -143,23 +147,23 @@ def build_crossplay_matrix(
             selected = tuple(grouped[(customer_id, service_id)].values())
             valid = tuple(
                 item for item in selected
-                if item.status == EpisodeStatus.COMPLETE
+                if item.status in {EpisodeStatus.COMPLETE, EpisodeStatus.INVALID_STRATEGY}
                 and item.customer_valid is True
-                and item.customer_strategy_adherent is True
             )
             invalid = tuple(
                 item for item in selected
-                if item.status in {EpisodeStatus.INVALID_CUSTOMER, EpisodeStatus.INVALID_STRATEGY}
-                or item.customer_valid is False
-                or item.customer_strategy_adherent is False
+                if item.status == EpisodeStatus.INVALID_CUSTOMER or item.customer_valid is False
             )
+            opportunities = tuple(item for item in valid if item.strategy_opportunity)
+            adherent = tuple(item for item in opportunities if item.customer_strategy_adherent is True)
+            not_applicable = tuple(item for item in valid if item.strategy_not_applicable)
             infrastructure = tuple(
                 item for item in selected if item.status == EpisodeStatus.INFRASTRUCTURE_ERROR
             )
             classified = {item.episode_id for item in (*valid, *invalid, *infrastructure)}
             uncertain_count = len(selected) - len(classified)
             failure_ids = {
-                item.episode_id for item in valid if item.episode_id in failures_by_episode
+                item.episode_id for item in adherent if item.episode_id in failures_by_episode
             }
             unique_task_signature = {
                 (failures_by_episode[episode_id].task_id, failures_by_episode[episode_id].signature.key)
@@ -173,9 +177,13 @@ def build_crossplay_matrix(
                 invalid_episodes=len(invalid),
                 infrastructure_episodes=len(infrastructure),
                 uncertain_episodes=uncertain_count,
+                strategy_opportunities=len(opportunities),
+                strategy_adherent_episodes=len(adherent),
+                strategy_not_applicable_episodes=len(not_applicable),
+                strategy_adherence_rate=(len(adherent) / len(opportunities) if opportunities else None),
                 successful_episodes=sum(item.task_success is True for item in valid),
                 verified_failure_episodes=len(failure_ids),
-                verified_failure_rate=(len(failure_ids) / len(valid) if valid else None),
+                verified_failure_rate=(len(failure_ids) / len(adherent) if adherent else None),
                 unique_task_signature_failures=len(unique_task_signature),
                 unique_signatures=len({
                     failures_by_episode[episode_id].signature.key for episode_id in failure_ids

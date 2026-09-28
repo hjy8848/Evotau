@@ -10,6 +10,8 @@ from .manifest import sha256_json
 from .records import EvidenceRef, FailureRecord, FailureSignature
 from .strategies import CustomerStrategy, ServiceStrategy
 
+MAX_ACTIVE_FAILURE_REPRESENTATIVES = 32
+
 
 class FailureArchive:
     def __init__(self, path: str | Path):
@@ -34,6 +36,12 @@ class FailureArchive:
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS failures_signature ON failures(signature_key, generation DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS failures_task ON failures(task_id, generation DESC)")
+            db.execute("""CREATE TABLE IF NOT EXISTS replay_events (
+                signature_key TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                failure_id TEXT NOT NULL,
+                PRIMARY KEY(signature_key, generation)
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS customer_strategies (
                 strategy_id TEXT PRIMARY KEY,
                 parent_id TEXT,
@@ -126,6 +134,85 @@ class FailureArchive:
                 FROM failures
             ) WHERE rank = 1 ORDER BY generation DESC LIMIT ?""", (limit,)).fetchall()
         return tuple(_failure_from_dict(json.loads(row["payload"])) for row in rows)
+
+    def active_representatives(
+        self,
+        limit: int = MAX_ACTIVE_FAILURE_REPRESENTATIVES,
+        *,
+        current_generation: int | None = None,
+    ) -> tuple[FailureRecord, ...]:
+        """Select a bounded replay set, preserving raw archive history.
+
+        Untested signatures are favored, then recent recurrence, severity,
+        total recurrence, and recency. The fixed tie order makes selections
+        reproducible even when SQLite returns equivalent rows in another order.
+        """
+        if not 0 <= limit <= MAX_ACTIVE_FAILURE_REPRESENTATIVES:
+            raise ValueError(f"active failure representatives are capped at {MAX_ACTIVE_FAILURE_REPRESENTATIVES}")
+        all_representatives = self.representatives(limit=2**31 - 1)
+        if current_generation is None:
+            current_generation = max((item.generation for item in all_representatives), default=0)
+        if current_generation < 0:
+            raise ValueError("current generation must be non-negative")
+        with self._connect() as db:
+            tested = {
+                row["signature_key"] for row in db.execute("SELECT DISTINCT signature_key FROM replay_events")
+            }
+            counts = {
+                row["signature_key"]: (int(row["total_count"]), int(row["recent_count"]))
+                for row in db.execute(
+                    """SELECT signature_key, COUNT(*) AS total_count,
+                       SUM(CASE WHEN generation >= ? THEN 1 ELSE 0 END) AS recent_count
+                       FROM failures GROUP BY signature_key""",
+                    (max(0, current_generation - 1),),
+                )
+            }
+        severity_rank = {"critical": 0, "high": 1, "material": 2, "low": 3}
+        ordered = sorted(
+            all_representatives,
+            key=lambda failure: (
+                -(counts[failure.signature.key][1]),
+                severity_rank.get(failure.severity.lower(), 4),
+                failure.signature.key in tested,
+                -counts[failure.signature.key][0],
+                -failure.generation,
+                failure.failure_id,
+            ),
+        )
+        return tuple(ordered[:limit])
+
+    def mark_replayed(self, failure_id: str, *, generation: int) -> bool:
+        """Record at most one replay-coverage event per signature and generation."""
+        if generation < 0:
+            raise ValueError("replay generation must be non-negative")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT signature_key FROM failures WHERE failure_id=?", (failure_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("cannot mark an unknown failure as replayed")
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO replay_events(signature_key, generation, failure_id) VALUES (?, ?, ?)",
+                (row["signature_key"], generation, failure_id),
+            )
+            return cursor.rowcount == 1
+
+    def active_replay_coverage(self, limit: int = MAX_ACTIVE_FAILURE_REPRESENTATIVES) -> dict[str, int | float]:
+        """Report tested and untested signature representatives in the active set."""
+        active = self.active_representatives(limit)
+        signatures = {item.signature.key for item in active}
+        with self._connect() as db:
+            tested = {
+                row["signature_key"] for row in db.execute("SELECT DISTINCT signature_key FROM replay_events")
+            }
+        covered = len(signatures & tested)
+        total = len(signatures)
+        return {
+            "active_signatures": total,
+            "replayed_signatures": covered,
+            "uncovered_signatures": total - covered,
+            "coverage_rate": covered / total if total else 1.0,
+        }
 
     def recurrence_count(self, signature_key: str) -> int:
         with self._connect() as db:

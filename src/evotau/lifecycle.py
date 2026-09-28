@@ -36,7 +36,7 @@ from .strategies import CustomerStrategy, ServiceRule, ServiceStrategy
 
 
 class EpisodeRunner(Protocol):
-    def __call__(self, *, task_id: str, seed: int, customer: CustomerStrategy,
+    def __call__(self, *, task_id: str, seed: int, customer: CustomerStrategy | None,
                  service: ServiceStrategy, panel_name: str) -> EpisodeRecord: ...
 
 
@@ -268,6 +268,22 @@ class TwoGenerationSmoke:
             tuple(f"generation:{item['generation']}" for item in self._commit_records),
         ))
 
+    def _apply_prepared_archive(self, prepared: dict[str, Any]) -> None:
+        _append_prepared_archive(self.failure_archive, prepared["archive"])
+        decision = prepared["commit"].get("decision_record")
+        if decision is None:
+            raise ValueError("prepared generation is missing its immutable decision record")
+        coverage = (
+            None if self.failure_archive is None
+            else self.failure_archive.active_replay_coverage()
+        )
+        existing = decision.get("active_replay_coverage")
+        if existing is None:
+            decision["active_replay_coverage"] = coverage
+            self._persist_progress()
+        elif existing != coverage:
+            raise ValueError("prepared generation replay-coverage summary changed during recovery")
+
     def commit_generation(self, generation: int, customer: CustomerStrategy,
                           service: ServiceStrategy, *, note: str = "",
                           customer_evolved: bool = False, service_evolved: bool = False,
@@ -385,7 +401,7 @@ class TwoGenerationSmoke:
             if prepared is not None:
                 customer = CustomerStrategy(**prepared["customer"])
                 service = _service_from_dict(prepared["service"])
-                _append_prepared_archive(self.failure_archive, prepared["archive"])
+                self._apply_prepared_archive(prepared)
                 expected = GenerationCommit(**prepared["commit"])
                 commit = self.commit_generation(
                     generation, customer, service, note=expected.note,
@@ -421,7 +437,12 @@ class TwoGenerationSmoke:
             service_note = note
             failure_pool = {failure.failure_id: failure for failure in round_result.verified_failures}
             if self.failure_archive is not None:
-                failure_pool.update({failure.failure_id: failure for failure in self.failure_archive.recent()})
+                failure_pool.update({
+                    failure.failure_id: failure
+                    for failure in self.failure_archive.active_representatives(
+                        current_generation=generation,
+                    )
+                })
             if service_transition is not None and failure_pool:
                 if self.request_budget is None:
                     proposed, gate, service_note = service_transition(
@@ -479,7 +500,7 @@ class TwoGenerationSmoke:
                 "archive": archive_payload,
             }
             self._persist_progress()
-            _append_prepared_archive(self.failure_archive, archive_payload)
+            self._apply_prepared_archive(self._progress["prepared_generation"])
             commit = self.commit_generation(
                 generation, customer, service, note=note,
                 customer_evolved=customer != old_customer,
@@ -541,6 +562,9 @@ def _generation_decision_record(
                     "parent_id": proposal.parent_id,
                     "operator": proposal.operator,
                     "rationale": proposal.rationale,
+                    "changed_fields": list(proposal.changed_fields),
+                    "expected_behavioral_effect": proposal.expected_behavioral_effect,
+                    "supporting_failure_ids": list(proposal.supporting_failure_ids),
                 }
                 for proposal in round_result.proposals
             ],
@@ -621,7 +645,7 @@ def _append_prepared_archive(
         archive.append(FailureRecord.from_dict(item))
 
 
-def _runner_cache_key(*, task_id: str, seed: int, customer: CustomerStrategy,
+def _runner_cache_key(*, task_id: str, seed: int, customer: CustomerStrategy | None,
                       service: ServiceStrategy, panel_name: str) -> str:
     return sha256_json({"task_id": task_id, "seed": seed,
                         "customer": customer_strategy_id(customer),

@@ -75,6 +75,7 @@ class EpisodeRecord:
     native_reward: float | None = None
     termination_reason: str | None = None
     customer_valid: bool | None = None
+    strategy_applicable: bool | None = None
     customer_strategy_adherent: bool | None = None
     policy_violation: bool = False
     policy_rule_id: str | None = None
@@ -94,6 +95,14 @@ class EpisodeRecord:
             raise ValueError("episode seed must be non-negative")
         if self.tool_calls < 0:
             raise ValueError("tool_calls must be non-negative")
+        for name in ("customer_valid", "strategy_applicable", "customer_strategy_adherent"):
+            value = getattr(self, name)
+            if value is not None and type(value) is not bool:
+                raise TypeError(f"{name} must be bool or None")
+        if self.strategy_applicable is False and self.customer_strategy_adherent is not None:
+            raise ValueError("not_applicable Customer strategy behavior cannot have an adherence judgment")
+        if self.strategy_applicable is True and self.customer_strategy_adherent is None:
+            raise ValueError("applicable Customer strategy behavior requires an adherence judgment")
         if self.status == EpisodeStatus.COMPLETE and self.task_success is None:
             raise ValueError("a complete episode must record task_success")
 
@@ -114,6 +123,7 @@ class EpisodeRecord:
         return bool(
             self.status == EpisodeStatus.COMPLETE
             and self.customer_valid is True
+            and self.strategy_applicable is not False
             and self.customer_strategy_adherent is True
             and self.policy_violation
             and self.policy_rule_id
@@ -121,6 +131,16 @@ class EpisodeRecord:
             and self.workflow_stage
             and self.evidence
         )
+
+    @property
+    def strategy_opportunity(self) -> bool:
+        return self.strategy_applicable is True or (
+            self.strategy_applicable is None and self.customer_strategy_adherent is not None
+        )
+
+    @property
+    def strategy_not_applicable(self) -> bool:
+        return self.strategy_applicable is False
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -255,18 +275,15 @@ class CandidateEvaluation:
     @property
     def valid_episode_count(self) -> int:
         return sum(
-            item.status == EpisodeStatus.COMPLETE
+            item.status in {EpisodeStatus.COMPLETE, EpisodeStatus.INVALID_STRATEGY}
             and item.customer_valid is True
-            and item.customer_strategy_adherent is True
             for item in self.episodes
         )
 
     @property
     def invalid_episode_count(self) -> int:
         return sum(
-            item.status in {EpisodeStatus.INVALID_CUSTOMER, EpisodeStatus.INVALID_STRATEGY}
-            or item.customer_valid is False
-            or item.customer_strategy_adherent is False
+            item.status == EpisodeStatus.INVALID_CUSTOMER or item.customer_valid is False
             for item in self.episodes
         )
 
@@ -278,6 +295,36 @@ class CandidateEvaluation:
     def task_coverage(self) -> int:
         return len({item.task_id for item in self.episodes})
 
+    @property
+    def strategy_opportunity_count(self) -> int:
+        return sum(
+            item.status in {EpisodeStatus.COMPLETE, EpisodeStatus.INVALID_STRATEGY}
+            and item.customer_valid is True and item.strategy_opportunity
+            for item in self.episodes
+        )
+
+    @property
+    def strategy_adherent_count(self) -> int:
+        return sum(
+            item.status in {EpisodeStatus.COMPLETE, EpisodeStatus.INVALID_STRATEGY}
+            and item.customer_valid is True and item.customer_strategy_adherent is True
+            for item in self.episodes
+        )
+
+    @property
+    def strategy_not_applicable_count(self) -> int:
+        return sum(
+            item.status in {EpisodeStatus.COMPLETE, EpisodeStatus.INVALID_STRATEGY}
+            and item.customer_valid is True and item.strategy_not_applicable
+            for item in self.episodes
+        )
+
+    @property
+    def strategy_adherence_rate(self) -> float | None:
+        if not self.strategy_opportunity_count:
+            return None
+        return self.strategy_adherent_count / self.strategy_opportunity_count
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "strategy_id": self.strategy_id,
@@ -287,12 +334,18 @@ class CandidateEvaluation:
             "valid_episode_count": self.valid_episode_count,
             "invalid_episode_count": self.invalid_episode_count,
             "uncertain_episode_count": self.uncertain_episode_count,
+            "strategy_opportunity_count": self.strategy_opportunity_count,
+            "strategy_adherent_count": self.strategy_adherent_count,
+            "strategy_not_applicable_count": self.strategy_not_applicable_count,
+            "strategy_adherence_rate": self.strategy_adherence_rate,
             "episodes": [item.to_dict() for item in self.episodes],
             "failure_ids": [item.failure_id for item in self.verified_failures],
         }
 
 
-def customer_strategy_id(strategy: CustomerStrategy) -> str:
+def customer_strategy_id(strategy: CustomerStrategy | None) -> str:
+    if strategy is None:
+        return sha256_json({"mode": "native_no_overlay"})[:16]
     return sha256_json(strategy.to_dict())[:16]
 
 

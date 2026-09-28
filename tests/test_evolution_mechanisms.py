@@ -24,6 +24,7 @@ from evotau.records import (
     EpisodeStatus,
     EvidenceRef,
     FailureRecord,
+    FailureSignature,
     customer_strategy_id,
     service_strategy_id,
 )
@@ -43,7 +44,7 @@ def episode(*, name="e1", task="task-1", seed=1, customer="c", service="s",
     return EpisodeRecord(
         episode_id=name, task_id=task, seed=seed, customer_strategy_id=customer,
         service_strategy_id=service, status=status, task_success=success,
-        customer_valid=True, customer_strategy_adherent=True,
+        customer_valid=True, strategy_applicable=True, customer_strategy_adherent=True,
         policy_violation=violation, policy_rule_id="policy.refund_limit",
         mistake_type="unauthorized_refund", workflow_stage="decision",
         evidence=(EvidenceRef(2, "tool", "refund issued above policy limit"),), tool_calls=calls,
@@ -70,12 +71,28 @@ def test_customer_mutation_determinism_and_incumbent_retention_on_tie():
     b = propose_customer_candidates(incumbent, 2, seed=17)
     assert [x.strategy_id for x in a] == [x.strategy_id for x in b]
     assert len({x.strategy_id for x in a}) == 2
+    all_axes = propose_customer_candidates(incumbent, 3, seed=17)
+    assert {field for candidate in all_axes for field in candidate.changed_fields} == {
+        "disclosure", "request_order", "challenge_style", "challenge_budget",
+    }
+    assert all(candidate.expected_behavioral_effect for candidate in all_axes)
     incumbent_episode = episode(customer="inc", success=False)
     candidate_episode = episode(name="e2", customer="candidate", success=False)
     base = CandidateEvaluation("inc", (incumbent_episode,), (verified(incumbent_episode),))
     equal = CandidateEvaluation("candidate", (candidate_episode,), (verified(candidate_episode),))
     decision = select_customer(base, (equal,))
     assert not decision.evolved and decision.selected_id == "inc"
+
+
+def test_failure_conditioned_mutation_records_exact_supporting_failure_lineage():
+    failure = verified(episode())
+    proposals = propose_customer_candidates(CustomerStrategy(), 3, seed=13, recent_failures=(failure,))
+    by_operator = {proposal.operator: proposal for proposal in proposals}
+    assert by_operator["request_order"].rationale == "failure_conditioned"
+    assert by_operator["request_order"].supporting_failure_ids == (failure.failure_id,)
+    assert by_operator["challenge"].supporting_failure_ids == ()
+    assert by_operator["challenge"].rationale == "exploration"
+    assert by_operator["disclosure"].supporting_failure_ids == ()
 
 
 def test_strict_customer_win_requires_fresh_paired_confirmation():
@@ -120,6 +137,29 @@ def test_customer_fitness_ignores_invalid_and_unverified_episodes():
         strategy_seen_failures={"a-1": "audit:fixture"},
     )
     assert verified_result.fitness == 1
+
+
+def test_strategy_not_applicable_is_separate_from_nonadherence_and_customer_invalidity():
+    customer = CustomerStrategy()
+    applicable = episode(customer=customer_strategy_id(customer))
+    nonadherent = replace(
+        applicable, episode_id="not-adherent", status=EpisodeStatus.INVALID_STRATEGY,
+        task_success=False, customer_strategy_adherent=False, policy_violation=False, evidence=(),
+    )
+    not_applicable = replace(
+        applicable, episode_id="not-applicable", strategy_applicable=False,
+        customer_strategy_adherent=None, policy_violation=False, evidence=(),
+    )
+    evaluation = CandidateEvaluation(
+        customer_strategy_id(customer), (applicable, nonadherent, not_applicable),
+    )
+    assert evaluation.valid_episode_count == 3
+    assert evaluation.invalid_episode_count == 0
+    assert evaluation.uncertain_episode_count == 0
+    assert evaluation.strategy_opportunity_count == 2
+    assert evaluation.strategy_adherent_count == 1
+    assert evaluation.strategy_not_applicable_count == 1
+    assert evaluation.strategy_adherence_rate == 0.5
 
 
 def test_candidate_evaluation_binds_verified_failures_to_its_exact_episode():
@@ -172,6 +212,10 @@ def test_crossplay_matrix_is_balanced_and_only_counts_verified_failures():
     assert (first.attempted_episodes, first.valid_episodes, first.invalid_episodes,
             first.infrastructure_episodes, first.uncertain_episodes) == (4, 2, 1, 1, 0)
     assert first.verified_failure_rate == 0.5
+    assert first.strategy_opportunities == 2
+    assert first.strategy_adherent_episodes == 2
+    assert first.strategy_not_applicable_episodes == 0
+    assert first.strategy_adherence_rate == 1.0
     assert first.unique_task_signature_failures == 1
     assert first.unique_signatures == 1
     assert second.verified_failure_rate == 0.0
@@ -195,6 +239,29 @@ def test_crossplay_rejects_unbalanced_panels_and_unlinked_verifications():
         build_crossplay_matrix(full_panel, (unrelated,), **kwargs)
 
 
+def test_crossplay_separates_native_clean_customer_from_not_applicable_attack():
+    clean_id = customer_strategy_id(None)
+    adversary = CustomerStrategy()
+    service = ServiceStrategy()
+    clean = episode(
+        name="clean", customer=clean_id, service=service_strategy_id(service), violation=False,
+    )
+    clean = replace(clean, strategy_applicable=False, customer_strategy_adherent=None)
+    attack = episode(
+        name="attack", customer=customer_strategy_id(adversary),
+        service=service_strategy_id(service), violation=False,
+    )
+    matrix = build_crossplay_matrix(
+        (clean, attack), (), customer_strategies=(None, adversary), service_strategies=(service,),
+        task_ids=(clean.task_id,), seeds=(clean.seed,),
+    )
+    clean_cell = next(item for item in matrix.cells if item.customer_strategy_id == clean_id)
+    assert clean_cell.valid_episodes == 1
+    assert clean_cell.strategy_opportunities == 0
+    assert clean_cell.strategy_not_applicable_episodes == 1
+    assert clean_cell.strategy_adherence_rate is None
+
+
 def test_archive_is_append_only_idempotent_and_deduplicates_representatives(tmp_path):
     archive = FailureArchive(tmp_path / "failures.sqlite")
     one = verified(episode(name="one"), 0)
@@ -205,6 +272,52 @@ def test_archive_is_append_only_idempotent_and_deduplicates_representatives(tmp_
     assert archive.recurrence_count(one.signature.key) == 2
     assert len(archive.recent()) == 2
     assert len(archive.representatives()) == 1
+    assert len(archive.active_representatives()) == 1
+    assert archive.active_replay_coverage() == {
+        "active_signatures": 1, "replayed_signatures": 0,
+        "uncovered_signatures": 1, "coverage_rate": 0.0,
+    }
+    active = archive.active_representatives()[0]
+    assert archive.mark_replayed(active.failure_id, generation=2)
+    assert not archive.mark_replayed(active.failure_id, generation=2)
+    assert archive.active_replay_coverage()["coverage_rate"] == 1.0
+
+
+def test_archive_active_representatives_are_capped_and_prioritize_recent_recurrence(tmp_path):
+    archive = FailureArchive(tmp_path / "bounded-failures.sqlite")
+    base = verified(episode(name="base"), 0)
+    signatures = []
+    for index in range(35):
+        signature = FailureSignature(
+            "retail", f"stage-{index}", f"policy.rule-{index}", "policy-mistake",
+        )
+        item = replace(
+            base,
+            failure_id=f"failure-{index:02d}",
+            episode_id=f"episode-{index:02d}",
+            task_id=f"task-{index:02d}",
+            generation=1,
+            signature=signature,
+            policy_ref=signature.policy_rule_id,
+            severity="high" if index == 34 else "material",
+        )
+        archive.append(item)
+        signatures.append(item)
+    recurring = replace(
+        signatures[0], failure_id="failure-recurrence", episode_id="episode-recurrence",
+        generation=2,
+    )
+    archive.append(recurring)
+
+    active = archive.active_representatives(current_generation=2)
+
+    assert len(active) == 32
+    assert active[0].failure_id == "failure-recurrence"
+    assert any(item.failure_id == "failure-34" for item in active)
+    assert len({item.signature.key for item in active}) == 32
+    assert archive.active_replay_coverage()["active_signatures"] == 32
+    with pytest.raises(ValueError, match="capped"):
+        archive.active_representatives(33)
 
 
 def test_service_repair_audit_and_paired_gate():
@@ -222,14 +335,17 @@ def test_service_repair_audit_and_paired_gate():
     new_target = replace(old_target, episode_id="new-target", service_strategy_id=candidate_service_id,
                          task_success=True, policy_violation=False)
     old_clean = replace(old_target, episode_id="old-clean", task_id="clean", task_success=True,
+                        strategy_applicable=False, customer_strategy_adherent=None,
                         policy_violation=False, tool_calls=3)
     new_clean = replace(old_clean, episode_id="new-clean", service_strategy_id=candidate_service_id,
                         tool_calls=4)
-    old_valid = replace(old_clean, episode_id="old-valid", task_id="validation")
+    old_valid = replace(old_target, episode_id="old-valid", task_id="validation", task_success=True,
+                        policy_violation=False)
     new_valid = replace(old_valid, episode_id="new-valid", service_strategy_id=candidate_service_id)
     old_target_2 = replace(old_target, episode_id="old-target-2", seed=2)
     new_target_2 = replace(new_target, episode_id="new-target-2", seed=2)
-    historical_old = replace(old_clean, episode_id="old-history", task_id="history")
+    historical_old = replace(old_target, episode_id="old-history", task_id="history", task_success=True,
+                             policy_violation=False)
     historical_new = replace(historical_old, episode_id="new-history",
                              service_strategy_id=candidate_service_id)
     units = (
@@ -262,6 +378,19 @@ def test_service_repair_audit_and_paired_gate():
         token_counter=lambda text: len(text.split()),
     )
     assert not misbound.accepted and any("do not match" in reason for reason in misbound.reasons)
+    inapplicable_attack = replace(
+        old_target, strategy_applicable=False, customer_strategy_adherent=None,
+    )
+    rejected_not_applicable = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        (GateUnit("target-1", "target", inapplicable_attack, new_target, failure.failure_id),
+         *units[1:]),
+        target_failure_id=failure.failure_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert not rejected_not_applicable.accepted
+    assert any("applicable and adherent" in reason for reason in rejected_not_applicable.reasons)
 
 
 def test_checkpoint_atomic_roundtrip_and_manifest_binding(tmp_path):
@@ -528,6 +657,8 @@ def test_prepared_generation_resume_reuses_persisted_selection_and_service_decis
     assert len(decision["customer"]["evaluations"]) == 3
     assert decision["service"]["transition_ran"] is True
     assert len(decision["verified_failures"]) >= 1
+    assert decision["active_replay_coverage"]["active_signatures"] == 1
+    assert decision["active_replay_coverage"]["uncovered_signatures"] == 1
     assert service_transitions == 1
     assert dispatches == 3
 

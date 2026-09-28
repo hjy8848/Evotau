@@ -1,6 +1,6 @@
 Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, and balanced cross-play summaries implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (47 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
+Last verified: 2026-09-29 (52 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1472,5 +1472,18 @@ Phase 0 之后的实现顺序建议：
 - 计划第 16 节要求在代际提交前先持久化运行结果、验证结果与 selection/gate 决定。现将每代 incumbent/candidate/confirmation evaluations、proposal lineage、selection 分数与原因、verified failure records、Service gate 与摘要、待更新 archive 项写入 `prepared_generation` checkpoint，再幂等写 archive 并提交 generation。
 - 若进程在决策已生成、generation 尚未提交时退出，恢复路径直接复用 prepared Customer/Service、决策和 archive payload，不再次运行 Customer panel 或调用 ServiceTransition；如 archive 已先写入，则稳定 ID 插入保持幂等。
 - 新增故障注入恢复测试：在 generation 0 的决策 checkpoint 完成后、commit 前中断，随后恢复并验证策略决策逐字一致、完成的 episode 没有重跑、ServiceTransition 只在后续新 generation 再调用。当前测试数更新为 **47 passed**。
+
+**Behavioral applicability and native clean-user update**
+
+- 按计划第 23 节将策略行为“有机会适用”与“遵循策略”拆为两个审计信号。`IndependentEpisodeAudit` 必须明确标注 `strategy_applicable`；仅在适用时要求 adherence bool。无机会按 `not_applicable` 记录，不算 adherence failure；customer-factual validity、strategy adherence 和 attribution failure 分开计数。
+- Native Phase 3 runner 允许 ServiceTransition 用 `customer=None` 调用 τ-bench 原生 UserSimulator，不追加 EvoTau 策略块；这为计划中的 clean gate 提供真正的 clean 控制。target、historical、adversarial validation gate 必须有策略机会且确认 adherent；clean gate 必须标记为 native/no-overlay。稳定 clean Customer ID 参与 episode/cache/cross-play 键。
+- Candidate 与 cross-play 汇总现分别报告 valid / invalid / uncertain、strategy opportunities、adherent episodes、not-applicable episodes 和 adherence rate；可归因失败率分母限于有效且 adherent 的行为机会。新增 clean native runner、cross-play 和 gate 不适用控制测试。当前完整验证为 **50 passed**（含 pinned τ-bench 构造集成），Ruff、compileall、两项任务预检及 diff check 通过。
+
+**Archive bounds and mutation lineage update**
+
+- `FailureArchive.active_representatives()` 实施最多 32 个可回放 signature representatives，原始 occurrence 仍追加保留。active set 按近两代 recurrence、严重度、是否已有该 signature 的 replay 记录、累计 recurrence、最新 generation 与稳定 ID 排序；超过 32 时只缩减 active set，不删除历史。
+- 新增 signature/generation 幂等 replay events 与 `active_replay_coverage()`。generation 的 selection/gate 决策 checkpoint 保存归档写入后的 active replay coverage，使达到上限时覆盖率可查。controller 传给 ServiceTransition 的历史失败改用有界、优先级排序的 active representatives。
+- 每个 Customer proposal 现在明确记录 `changed_fields`、模板化 `expected_behavioral_effect`、`supporting_failure_ids` 和探索/失败条件 rationale；只有与 mutation operator 相关的失败才标作 failure-conditioned。
+- 新增 archive cap/排序/coverage、replay 幂等和 lineage 测试。当前完整验证为 **52 passed**（含 pinned τ-bench 构造集成），Ruff、compileall、两项 eligibility preflight 和 `git diff --check` 均通过。
 
 **仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以此轮没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、归因校准（至少 30 条）、任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。

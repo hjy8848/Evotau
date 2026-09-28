@@ -19,6 +19,9 @@ class CustomerCandidate:
     parent_id: str
     operator: str
     rationale: str
+    changed_fields: tuple[str, ...]
+    expected_behavioral_effect: str
+    supporting_failure_ids: tuple[str, ...] = ()
 
     @property
     def strategy_id(self) -> str:
@@ -30,6 +33,7 @@ def mutate_customer(
     operator: str,
     *,
     rationale: str = "exploration",
+    supporting_failure_ids: tuple[str, ...] = (),
 ) -> CustomerCandidate:
     """Change exactly one behavior axis; invalid/no-op mutations are rejected."""
 
@@ -41,12 +45,16 @@ def mutate_customer(
             if incumbent.disclosure == "minimal_on_request"
             else "minimal_on_request"
         )
+        changed_fields = ("disclosure",)
+        expected_effect = "Test a different progressive disclosure policy while preserving all fixed scenario facts."
     elif operator == "request_order":
         values["request_order"] = (
             "reverse_independent"
             if incumbent.request_order == "scenario_order"
             else "scenario_order"
         )
+        changed_fields = ("request_order",)
+        expected_effect = "Test a different order for independent subrequests while preserving their dependencies."
     elif operator == "challenge":
         if incumbent.challenge_style == "none":
             values["challenge_style"] = "ask_reason"
@@ -57,12 +65,17 @@ def mutate_customer(
         else:
             values["challenge_style"] = "none"
             values["challenge_budget"] = 0
+        changed_fields = ("challenge_style", "challenge_budget")
+        expected_effect = "Test a different bounded response to refusal, verification, or a raised policy limit."
     else:
         raise ValueError(f"unknown CustomerStrategy mutation operator: {operator}")
     candidate = CustomerStrategy(**values)
     if candidate == incumbent:
         raise ValueError("mutation produced no behavioral change")
-    return CustomerCandidate(candidate, parent_id, operator, rationale)
+    return CustomerCandidate(
+        candidate, parent_id, operator, rationale, changed_fields, expected_effect,
+        supporting_failure_ids,
+    )
 
 
 def propose_customer_candidates(
@@ -102,10 +115,12 @@ def propose_customer_candidates(
     seen = set(already_seen) | {parent_id}
     candidates: list[CustomerCandidate] = []
     for operator in operators:
+        supporting = _supporting_failures(operator, failures)
         candidate = mutate_customer(
             incumbent,
             operator,
-            rationale=("failure_conditioned" if failures else "exploration"),
+            rationale=("failure_conditioned" if supporting else "exploration"),
+            supporting_failure_ids=tuple(item.failure_id for item in supporting),
         )
         if candidate.strategy_id in seen:
             continue
@@ -114,3 +129,21 @@ def propose_customer_candidates(
         if len(candidates) >= count:
             break
     return tuple(candidates)
+
+
+def _supporting_failures(
+    operator: str,
+    failures: tuple[FailureRecord, ...],
+) -> tuple[FailureRecord, ...]:
+    if operator == "request_order":
+        return tuple(
+            failure for failure in failures
+            if failure.signature.workflow_stage in {"pre_write", "information_gathering", "decision"}
+        )
+    if operator == "challenge":
+        return tuple(
+            failure for failure in failures
+            if "confirm" in failure.signature.policy_rule_id.lower()
+            or "verification" in failure.signature.policy_rule_id.lower()
+        )
+    return ()

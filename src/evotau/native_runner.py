@@ -31,7 +31,8 @@ class IndependentEpisodeAudit:
 
     verifier_ref: str
     customer_valid: bool
-    customer_strategy_adherent: bool
+    strategy_applicable: bool
+    customer_strategy_adherent: bool | None
     policy_violation: bool
     policy_rule_id: str | None = None
     mistake_type: str | None = None
@@ -41,8 +42,12 @@ class IndependentEpisodeAudit:
     def __post_init__(self) -> None:
         if not self.verifier_ref.strip():
             raise ValueError("independent episode audit requires a verifier reference")
-        if type(self.customer_valid) is not bool or type(self.customer_strategy_adherent) is not bool:
-            raise ValueError("independent audit must explicitly judge Customer validity and adherence")
+        if type(self.customer_valid) is not bool or type(self.strategy_applicable) is not bool:
+            raise ValueError("independent audit must explicitly judge Customer validity and strategy applicability")
+        if self.strategy_applicable and type(self.customer_strategy_adherent) is not bool:
+            raise ValueError("applicable strategy behavior requires an adherence judgment")
+        if not self.strategy_applicable and self.customer_strategy_adherent is not None:
+            raise ValueError("not_applicable strategy behavior must not be scored for adherence")
         if type(self.policy_violation) is not bool:
             raise ValueError("independent audit must explicitly judge policy violation")
         if self.policy_violation and not all(
@@ -52,7 +57,7 @@ class IndependentEpisodeAudit:
 
 
 AuditProvider = Callable[
-    [Any, Any, CustomerStrategy, ServiceStrategy, str], IndependentEpisodeAudit
+    [Any, Any, CustomerStrategy | None, ServiceStrategy, str], IndependentEpisodeAudit
 ]
 
 
@@ -120,7 +125,7 @@ class TauBenchEpisodeRunner:
         *,
         task_id: str,
         seed: int,
-        customer: CustomerStrategy,
+        customer: CustomerStrategy | None,
         service: ServiceStrategy,
         panel_name: str,
     ) -> EpisodeRecord:
@@ -211,7 +216,7 @@ class TauBenchEpisodeRunner:
                     status = EpisodeStatus.UNCERTAIN
                 elif not audit_result.customer_valid:
                     status = EpisodeStatus.INVALID_CUSTOMER
-                elif not audit_result.customer_strategy_adherent:
+                elif audit_result.strategy_applicable and not audit_result.customer_strategy_adherent:
                     status = EpisodeStatus.INVALID_STRATEGY
                 else:
                     status = EpisodeStatus.COMPLETE
@@ -230,6 +235,7 @@ class TauBenchEpisodeRunner:
                 native_reward=native_reward,
                 termination_reason=simulation_payload.get("termination_reason"),
                 customer_valid=None if audit_result is None else audit_result.customer_valid,
+                strategy_applicable=None if audit_result is None else audit_result.strategy_applicable,
                 customer_strategy_adherent=None if audit_result is None else audit_result.customer_strategy_adherent,
                 policy_violation=False if audit_result is None else audit_result.policy_violation,
                 policy_rule_id=None if audit_result is None else audit_result.policy_rule_id,
@@ -463,6 +469,7 @@ def _audit_dict(audit: IndependentEpisodeAudit) -> dict[str, Any]:
     return {
         "verifier_ref": audit.verifier_ref,
         "customer_valid": audit.customer_valid,
+        "strategy_applicable": audit.strategy_applicable,
         "customer_strategy_adherent": audit.customer_strategy_adherent,
         "policy_violation": audit.policy_violation,
         "policy_rule_id": audit.policy_rule_id,
