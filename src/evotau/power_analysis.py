@@ -1,8 +1,9 @@
-"""Pilot-informed, conservative seed-block planning for paired t tests."""
+"""Pilot-informed, conservative seed-block planning for paired tests."""
 
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import json
 import math
@@ -19,17 +20,19 @@ _POWER_INPUT_FIELDS = {
     "pilot_seed_blocks", "alternative", "noninferiority_margin",
     "minimum_relevant_effect", "familywise_alpha", "primary_family_size",
     "target_power", "maximum_seed_blocks", "simulation_replicates", "simulation_seed",
-    "statistical_method",
+    "statistical_method", "permutation_seed", "permutation_replicates",
 }
 
 
-def calculate_paired_t_power(value: Any, *, input_sha256: str) -> dict[str, Any]:
-    """Estimate power by resampling centered pilot seed-block differences.
+def calculate_paired_power(value: Any, *, input_sha256: str) -> dict[str, Any]:
+    """Estimate paired-test power by resampling centered Pilot differences.
 
     The smallest relevant effect and available maximum sample size are inputs,
     not inferred from the observed Pilot outcome. Holm's first-step threshold
     (familywise alpha divided by the primary family size) is used as a
-    conservative per-hypothesis bound. This does not estimate joint power.
+    conservative per-hypothesis bound. For paired sign-flip, the registered
+    exact/Monte Carlo test is repeated inside each power simulation. This does
+    not estimate joint power.
     """
 
     _require_sha256(input_sha256, "input_sha256")
@@ -40,8 +43,19 @@ def calculate_paired_t_power(value: Any, *, input_sha256: str) -> dict[str, Any]
     study_id = _nonempty_string(value["study_id"], "study_id")
     hypothesis_id = _nonempty_string(value["hypothesis_id"], "hypothesis_id")
     pilot_digest = _require_sha256(value["pilot_artifact_sha256"], "pilot_artifact_sha256")
-    if value["statistical_method"] != "paired_t":
-        raise ValueError("the built-in Pilot power calculator currently supports paired_t only")
+    method = value["statistical_method"]
+    if method not in {"paired_t", "paired_sign_flip"}:
+        raise ValueError("statistical_method must be paired_t or paired_sign_flip")
+    permutation_seed = value["permutation_seed"]
+    permutation_replicates = value["permutation_replicates"]
+    if method == "paired_t":
+        if permutation_seed is not None or permutation_replicates is not None:
+            raise ValueError("paired_t power inputs cannot include permutation settings")
+    else:
+        if type(permutation_seed) is not int or permutation_seed < 0:
+            raise ValueError("paired_sign_flip requires a non-negative permutation_seed")
+        if type(permutation_replicates) is not int or permutation_replicates < 9_999:
+            raise ValueError("paired_sign_flip requires at least 9,999 permutation_replicates")
 
     rows = value["pilot_seed_blocks"]
     if not isinstance(rows, list) or len(rows) < 3:
@@ -109,21 +123,33 @@ def calculate_paired_t_power(value: Any, *, input_sha256: str) -> dict[str, Any]
     planned_power: float | None = None
     planned_interval: tuple[float, float] | None = None
     for blocks in range(3, maximum_blocks + 1):
-        critical = _one_sided_t_critical(test_alpha, blocks - 1)
+        critical = (
+            _one_sided_t_critical(test_alpha, blocks - 1)
+            if method == "paired_t" else None
+        )
+        sign_patterns = (
+            _monte_carlo_sign_patterns(
+                blocks, seed=permutation_seed, replicates=permutation_replicates,
+            )
+            if method == "paired_sign_flip" and blocks > 20 else None
+        )
         rejected = 0
         for _ in range(replicates):
-            total = total_squares = 0.0
-            for _ in range(blocks):
-                observation = minimum_effect + generator.choice(residuals)
-                total += observation
-                total_squares += observation * observation
-            sample_mean = total / blocks
-            sample_variance = max(0.0, (total_squares - total * total / blocks) / (blocks - 1))
-            if sample_variance == 0.0:
-                rejected += sample_mean > 0
-                continue
-            statistic = sample_mean / math.sqrt(sample_variance / blocks)
-            rejected += statistic >= critical
+            observations = [minimum_effect + generator.choice(residuals) for _ in range(blocks)]
+            if method == "paired_t":
+                sample_mean = mean(observations)
+                sample_variance = stdev(observations) ** 2
+                if sample_variance == 0.0:
+                    rejected += sample_mean > 0
+                    continue
+                statistic = sample_mean / math.sqrt(sample_variance / blocks)
+                rejected += statistic >= critical
+            elif blocks <= 20:
+                rejected += _exact_sign_flip_rejects(observations, test_alpha)
+            else:
+                rejected += _monte_carlo_sign_flip_rejects(
+                    observations, test_alpha, sign_patterns,
+                )
         probability = rejected / replicates
         interval = _wilson_interval(rejected, replicates)
         curve.append({
@@ -144,8 +170,10 @@ def calculate_paired_t_power(value: Any, *, input_sha256: str) -> dict[str, Any]
         "pilot_artifact_sha256": pilot_digest,
         "power_input_sha256": input_sha256,
         "calculator_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "calculator": "centered_empirical_residual_bootstrap_paired_t_v1",
-        "statistical_method": "paired_t",
+        "calculator": f"centered_empirical_residual_bootstrap_{method}_v1",
+        "statistical_method": method,
+        "permutation_seed": permutation_seed,
+        "permutation_replicates": permutation_replicates,
         "alternative": alternative,
         "noninferiority_margin": margin,
         "pilot_independent_seed_blocks": len(rows),
@@ -167,6 +195,58 @@ def calculate_paired_t_power(value: Any, *, input_sha256: str) -> dict[str, Any]
         ),
         "power_curve": curve,
     }
+
+
+def calculate_paired_t_power(value: Any, *, input_sha256: str) -> dict[str, Any]:
+    """Compatibility wrapper for callers that explicitly require paired t."""
+    if not isinstance(value, dict) or value.get("statistical_method") != "paired_t":
+        raise ValueError("calculate_paired_t_power requires statistical_method paired_t")
+    return calculate_paired_power(value, input_sha256=input_sha256)
+
+
+def _exact_sign_flip_rejects(values: list[float], alpha: float) -> bool:
+    """Match Formal's inclusive one-sided exact sign-flip test in O(2^(n/2))."""
+    observed = mean(values)
+    tolerance = 1e-12 * max(1.0, abs(observed))
+    target = sum(values) - tolerance * len(values)
+    midpoint = len(values) // 2
+    left = _signed_sums([abs(value) for value in values[:midpoint]])
+    right = sorted(_signed_sums([abs(value) for value in values[midpoint:]]))
+    extreme = sum(len(right) - bisect.bisect_left(right, target - item) for item in left)
+    exact_p = extreme / (1 << len(values))
+    return exact_p <= alpha
+
+
+def _signed_sums(values: list[float]) -> list[float]:
+    sums = [0.0]
+    for value in values:
+        previous = sums
+        sums = [item - value for item in previous] + [item + value for item in previous]
+    return sums
+
+
+def _monte_carlo_sign_patterns(
+    blocks: int, *, seed: int, replicates: int,
+) -> list[tuple[int, ...]]:
+    generator = random.Random(seed)
+    return [
+        tuple(1 if generator.getrandbits(1) else -1 for _ in range(blocks))
+        for _ in range(replicates)
+    ]
+
+
+def _monte_carlo_sign_flip_rejects(
+    values: list[float], alpha: float, sign_patterns: list[tuple[int, ...]],
+) -> bool:
+    observed = mean(values)
+    tolerance = 1e-12 * max(1.0, abs(observed))
+    extreme = sum(
+        sum(value * sign for value, sign in zip(values, signs, strict=True)) / len(values)
+        >= observed - tolerance
+        for signs in sign_patterns
+    )
+    p_value = (extreme + 1) / (len(sign_patterns) + 1)
+    return p_value <= alpha
 
 
 def _one_sided_t_critical(alpha: float, degrees_freedom: int) -> float:
@@ -215,7 +295,7 @@ def _require_sha256(value: Any, name: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Estimate seed-block sample size from paired Pilot differences."
+        description="Estimate paired-test seed-block sample size from Pilot differences."
     )
     parser.add_argument("--input", required=True, type=Path, help="version 1 Pilot power-input JSON")
     parser.add_argument("--output", required=True, type=Path)
@@ -223,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         raw = args.input.read_bytes()
         document = json.loads(raw.decode("utf-8"))
-        result = calculate_paired_t_power(
+        result = calculate_paired_power(
             document, input_sha256=hashlib.sha256(raw).hexdigest(),
         )
         rendered = json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n"

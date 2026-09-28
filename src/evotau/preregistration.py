@@ -302,6 +302,8 @@ def validate_formal_preregistration(
                     "pilot_artifact_sha256": item["pilot_artifact_sha256"],
                     "calculator_source_sha256": calculator_digest,
                     "statistical_method": hypothesis["statistical_method"],
+                    "permutation_seed": hypothesis["permutation_seed"],
+                    "permutation_replicates": hypothesis["permutation_replicates"],
                     "alternative": hypothesis["alternative"],
                     "noninferiority_margin": (
                         margins.get(hypothesis["endpoint"])

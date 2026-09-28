@@ -124,6 +124,8 @@ def power_result(plan, calculation):
         "pilot_artifact_sha256": calculation["pilot_artifact_sha256"],
         "calculator_source_sha256": calculation["calculator_artifact"]["sha256"],
         "statistical_method": hypothesis["statistical_method"],
+        "permutation_seed": hypothesis["permutation_seed"],
+        "permutation_replicates": hypothesis["permutation_replicates"],
         "alternative": hypothesis["alternative"],
         "noninferiority_margin": (
             plan["noninferiority_margins"].get(hypothesis["endpoint"])
@@ -237,6 +239,19 @@ def test_formal_preflight_verifies_local_artifact_hashes_and_writes_once(tmp_pat
     first_calculation["calculation_artifact"]["sha256"] = hashlib.sha256(raw_result).hexdigest()
     raw_plan = json.dumps(document, sort_keys=True).encode()
     with pytest.raises(ValueError, match="planned_seed_blocks differs"):
+        validate_formal_preregistration(
+            document,
+            exact_input_sha256=hashlib.sha256(raw_plan).hexdigest(),
+            artifact_root=tmp_path,
+        )
+
+    result["planned_seed_blocks"] += 1
+    result["permutation_seed"] = 4
+    raw_result = json.dumps(result, sort_keys=True).encode()
+    calculation_path.write_bytes(raw_result)
+    first_calculation["calculation_artifact"]["sha256"] = hashlib.sha256(raw_result).hexdigest()
+    raw_plan = json.dumps(document, sort_keys=True).encode()
+    with pytest.raises(ValueError, match="permutation_seed differs"):
         validate_formal_preregistration(
             document,
             exact_input_sha256=hashlib.sha256(raw_plan).hexdigest(),
