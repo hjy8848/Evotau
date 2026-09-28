@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import json
+import math
 import random
 import re
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
 from statistics import mean
 from typing import Any
 
@@ -15,6 +20,7 @@ from .records import FailureRecord, customer_strategy_id
 from .service_evolution import GateReport
 
 SERVICE_PANEL_SCOPES = frozenset({"target", "historical", "clean", "validation", "heldout"})
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +90,103 @@ class ServiceRepairAnalysis:
     customer_effects: tuple[CustomerRepairEffect, ...]
     interpretation: str
 
+    def __post_init__(self) -> None:
+        if self.panel_scope not in SERVICE_PANEL_SCOPES:
+            raise ValueError("RQ2 panel has an unknown scope")
+        if (not self.task_ids or any(not isinstance(item, str) or not item for item in self.task_ids)
+                or len(set(self.task_ids)) != len(self.task_ids)):
+            raise ValueError("RQ2 panel task IDs must be non-empty, unique strings")
+        if (not self.seeds or any(type(seed) is not int or seed < 0 for seed in self.seeds)
+                or len(set(self.seeds)) != len(self.seeds)):
+            raise ValueError("RQ2 panel seeds must be non-empty, unique non-negative integers")
+        if (type(self.request_budget_cap) is not int or self.request_budget_cap <= 0
+                or type(self.provider_attempts) is not int
+                or not 0 <= self.provider_attempts <= self.request_budget_cap):
+            raise ValueError("RQ2 panel provider attempts are outside the frozen budget")
+        for name in ("incumbent_service_strategy_id", "candidate_service_strategy_id", "interpretation"):
+            if not isinstance(getattr(self, name), str) or not getattr(self, name).strip():
+                raise ValueError(f"RQ2 {name} must be a non-empty string")
+        if self.incumbent_service_strategy_id == self.candidate_service_strategy_id:
+            raise ValueError("RQ2 incumbent and candidate Service IDs must differ")
+        for digest in (self.incumbent_matrix_sha256, self.candidate_matrix_sha256,
+                       *self.gate_report_sha256, *self.target_failure_sha256):
+            if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+                raise ValueError("RQ2 source references must be lowercase SHA-256 digests")
+        counts = (
+            self.proposed_repairs, self.accepted_repairs, self.rejected_repairs,
+            self.inconclusive_repairs, self.accepted_target_signature_count,
+            self.incumbent_historical_recurrence_episodes, self.historical_recurrence_episodes,
+            self.incumbent_historical_adherent_episodes, self.historical_adherent_episodes,
+            self.repaired_signature_count,
+        )
+        if any(type(value) is not int or value < 0 for value in counts):
+            raise ValueError("RQ2 repair and denominator counts must be non-negative integers")
+        if self.proposed_repairs != (
+            self.accepted_repairs + self.rejected_repairs + self.inconclusive_repairs
+        ):
+            raise ValueError("RQ2 repair outcomes must cover every proposal")
+        if self.accepted_target_signature_count != len(self.accepted_target_signature_keys):
+            raise ValueError("RQ2 accepted target signature count does not match its keys")
+        if (len(set(self.accepted_target_signature_keys)) != len(self.accepted_target_signature_keys)
+                or any(not re.fullmatch(r"[0-9a-f]{16}", key)
+                       for key in self.accepted_target_signature_keys)):
+            raise ValueError("RQ2 accepted target signature keys are invalid or repeated")
+        if tuple(sorted(self.repaired_signature_keys)) != self.repaired_signature_keys:
+            raise ValueError("RQ2 repaired signature keys must be canonically sorted")
+        if (len(set(self.repaired_signature_keys)) != len(self.repaired_signature_keys)
+                or any(not re.fullmatch(r"[0-9a-f]{16}", key)
+                       for key in self.repaired_signature_keys)
+                or self.repaired_signature_count != len(self.repaired_signature_keys)):
+            raise ValueError("RQ2 repaired signature count does not match its keys")
+        for name in (
+            "repair_acceptance_rate", "task_success_rate_change", "policy_violation_rate_change",
+            "invalid_repeated_write_call_rate_change", "incumbent_repeated_write_audit_coverage",
+            "candidate_repeated_write_audit_coverage", "attributable_failure_rate_change",
+            "target_failure_rate_reduction", "clean_success_rate_change",
+            "clean_policy_violation_rate_change", "incumbent_historical_recurrence_rate",
+            "historical_recurrence_rate", "historical_recurrence_rate_change",
+            "incumbent_repaired_signature_coverage", "repaired_signature_coverage",
+        ):
+            value = getattr(self, name)
+            if value is not None and (type(value) not in {int, float} or not math.isfinite(value)):
+                raise ValueError(f"RQ2 {name} must be finite or missing")
+        for name in (
+            "repair_acceptance_rate", "incumbent_repeated_write_audit_coverage",
+            "candidate_repeated_write_audit_coverage", "incumbent_historical_recurrence_rate",
+            "historical_recurrence_rate", "incumbent_repaired_signature_coverage",
+            "repaired_signature_coverage",
+        ):
+            value = getattr(self, name)
+            if value is not None and not 0 <= value <= 1:
+                raise ValueError(f"RQ2 {name} must be between zero and one")
+        if len({item.customer_strategy_id for item in self.customer_effects}) != len(self.customer_effects):
+            raise ValueError("RQ2 customer effects must have unique strategy IDs")
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: Any) -> ServiceRepairAnalysis:
+        expected = {item.name for item in fields(cls)}
+        if not isinstance(value, dict) or set(value) != expected:
+            raise ValueError("RQ2 panel analysis has missing or unknown fields")
+        sequence_fields = (
+            "task_ids", "seeds", "gate_report_sha256", "target_failure_sha256",
+            "accepted_target_signature_keys", "repaired_signature_keys", "customer_effects",
+        )
+        if any(not isinstance(value[name], list) for name in sequence_fields):
+            raise TypeError("RQ2 panel sequence fields must be JSON arrays")
+        effect_fields = {item.name for item in fields(CustomerRepairEffect)}
+        effects = []
+        for effect in value["customer_effects"]:
+            if not isinstance(effect, dict) or set(effect) != effect_fields:
+                raise ValueError("RQ2 customer effect has missing or unknown fields")
+            effects.append(CustomerRepairEffect(**effect))
+        parsed = dict(value)
+        for name in sequence_fields[:-1]:
+            parsed[name] = tuple(parsed[name])
+        parsed["customer_effects"] = tuple(effects)
+        return cls(**parsed)
 
 
 def analyze_service_repair_crossplay(
@@ -435,6 +536,25 @@ class ServiceRobustnessRun:
     def panels_by_scope(self) -> dict[str, ServiceRepairAnalysis]:
         return {panel.panel_scope: panel for panel in self.panels}
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "evolution_seed": self.evolution_seed,
+            "panels": [panel.to_dict() for panel in self.panels],
+        }
+
+    @classmethod
+    def from_dict(cls, value: Any) -> ServiceRobustnessRun:
+        if not isinstance(value, dict) or set(value) != {"run_id", "evolution_seed", "panels"}:
+            raise ValueError("RQ2 run has missing or unknown fields")
+        if not isinstance(value["panels"], list):
+            raise TypeError("RQ2 run panels must be a JSON array")
+        return cls(
+            run_id=value["run_id"],
+            evolution_seed=value["evolution_seed"],
+            panels=tuple(ServiceRepairAnalysis.from_dict(item) for item in value["panels"]),
+        )
+
     @property
     def input_sha256(self) -> str:
         return sha256_json({
@@ -678,3 +798,68 @@ def _percentile(values: Sequence[float], probability: float) -> float:
     upper = min(lower + 1, len(ordered) - 1)
     fraction = position - lower
     return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
+
+
+def load_rq2_document(
+    value: Any,
+) -> tuple[tuple[ServiceRobustnessRun, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Load the strict run-level interchange used by the RQ2 analysis CLI."""
+
+    required = {
+        "schema_version", "evolution_task_ids", "validation_task_ids",
+        "heldout_task_ids", "runs",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError("RQ2 input has missing or unknown top-level fields")
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+        raise ValueError("unsupported RQ2 input schema_version")
+    task_panels = []
+    for name in ("evolution_task_ids", "validation_task_ids", "heldout_task_ids"):
+        panel = value[name]
+        if (not isinstance(panel, list)
+                or any(not isinstance(task, str) or not task.strip() for task in panel)
+                or not panel or len(set(panel)) != len(panel)):
+            raise ValueError(f"RQ2 {name} must be a non-empty array of unique task IDs")
+        task_panels.append(tuple(panel))
+    if not isinstance(value["runs"], list) or not value["runs"]:
+        raise ValueError("RQ2 runs must be a non-empty JSON array")
+    runs = tuple(ServiceRobustnessRun.from_dict(item) for item in value["runs"])
+    return runs, task_panels[0], task_panels[1], task_panels[2]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Analyze RQ2 Service robustness across independent evolution runs."
+    )
+    parser.add_argument("--input", required=True, type=Path, help="version 1 RQ2 run-level JSON")
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--bootstrap-seed", type=int, default=0)
+    parser.add_argument("--bootstrap-replicates", type=int, default=10_000)
+    args = parser.parse_args(argv)
+    try:
+        raw = args.input.read_bytes()
+        document = json.loads(raw.decode("utf-8"))
+        runs, evolution, validation, heldout = load_rq2_document(document)
+        report = analyze_rq2_service_robustness(
+            runs,
+            evolution_task_ids=evolution,
+            validation_task_ids=validation,
+            heldout_task_ids=heldout,
+            bootstrap_seed=args.bootstrap_seed,
+            bootstrap_replicates=args.bootstrap_replicates,
+        )
+        payload = {
+            "input_sha256": hashlib.sha256(raw).hexdigest(),
+            "analysis": report.to_dict(),
+        }
+        rendered = json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n"
+        with args.output.open("x", encoding="utf-8") as handle:
+            handle.write(rendered)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError,
+            ValueError, ArithmeticError) as exc:
+        parser.error(str(exc))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

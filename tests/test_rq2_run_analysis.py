@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import replace
 
 import pytest
@@ -17,6 +19,10 @@ from evotau.service_analysis import (
     ServiceRobustnessRun,
     analyze_rq2_service_robustness,
     analyze_service_repair_crossplay,
+    load_rq2_document,
+)
+from evotau.service_analysis import (
+    main as analyze_rq2_main,
 )
 from evotau.service_evolution import GateReport, RepairAudit, RepairProposal
 from evotau.strategies import CustomerStrategy, ServiceRule, ServiceStrategy
@@ -265,3 +271,53 @@ def test_rq2_reports_missing_denominators_without_silently_dropping_a_run():
     assert estimate.complete_run_values == 2
     assert estimate.mean is None
     assert estimate.observations[1] == ("run-2", None)
+
+
+def test_rq2_strict_json_roundtrip_and_cli_emit_formal_ready_report(tmp_path):
+    runs = tuple(service_run(index) for index in (1, 2, 3))
+    document = {
+        "schema_version": 1,
+        "evolution_task_ids": ["E-target", "E-history"],
+        "validation_task_ids": ["V-clean", "V-adversarial"],
+        "heldout_task_ids": ["H-final"],
+        "runs": [run.to_dict() for run in runs],
+    }
+    raw = json.dumps(document, sort_keys=True).encode()
+    decoded = json.loads(raw)
+    loaded, evolution, validation, heldout = load_rq2_document(decoded)
+    assert loaded == runs
+    assert evolution == ("E-target", "E-history")
+    assert validation == ("V-clean", "V-adversarial")
+    assert heldout == ("H-final",)
+
+    input_path = tmp_path / "rq2-input.json"
+    output_path = tmp_path / "rq2-report.json"
+    input_path.write_bytes(raw)
+    args = [
+        "--input", str(input_path), "--output", str(output_path),
+        "--bootstrap-seed", "19", "--bootstrap-replicates", "100",
+    ]
+    assert analyze_rq2_main(args) == 0
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["input_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert report["analysis"]["status"] == "descriptive"
+    assert len(report["analysis"]["run_ids_and_input_sha256"]) == 3
+    assert set(report) == {"input_sha256", "analysis"}
+    with pytest.raises(SystemExit) as error:
+        analyze_rq2_main(args)
+    assert error.value.code == 2
+
+
+def test_rq2_json_loader_rejects_tampered_shape_and_noncanonical_panel_data():
+    run = service_run(1).to_dict()
+    report = run["panels"][0]
+    report.pop("interpretation")
+    document = {
+        "schema_version": 1,
+        "evolution_task_ids": ["E-target", "E-history"],
+        "validation_task_ids": ["V-clean", "V-adversarial"],
+        "heldout_task_ids": ["H-final"],
+        "runs": [run],
+    }
+    with pytest.raises(ValueError, match="missing or unknown fields"):
+        load_rq2_document(document)
