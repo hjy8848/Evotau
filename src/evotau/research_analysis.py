@@ -632,7 +632,7 @@ def load_rq3_document(value: Any) -> tuple[EvolutionResponseRun, ...]:
 
     if not isinstance(value, dict) or set(value) != {"schema_version", "runs"}:
         raise ValueError("RQ3 input must contain only schema_version and runs")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
         raise ValueError("unsupported RQ3 input schema_version")
     if not isinstance(value["runs"], list) or not value["runs"]:
         raise ValueError("RQ3 runs must be a non-empty JSON array")
@@ -643,7 +643,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Analyze longitudinal co-evolution response chains over paired seed blocks."
     )
-    parser.add_argument("--input", required=True, type=Path, help="version 1 RQ3 run-level JSON")
+    parser.add_argument("--input", required=True, type=Path, help="version 2 RQ3 run-level JSON")
     parser.add_argument("--output", type=Path, help="write a new report without overwriting an existing file")
     parser.add_argument("--bootstrap-seed", type=int, default=0)
     parser.add_argument("--bootstrap-replicates", type=int, default=10_000)

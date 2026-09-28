@@ -360,7 +360,7 @@ def test_rq3_independent_seed_blocks_cannot_reuse_task_episode_seeds():
 
 def test_rq3_json_cli_binds_report_to_input_and_never_overwrites(tmp_path, capsys):
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "runs": [run.to_dict() for run in _rq3_runs()],
     }
     input_path = tmp_path / "rq3-runs.json"
@@ -393,18 +393,18 @@ def test_rq3_json_cli_binds_report_to_input_and_never_overwrites(tmp_path, capsy
 
 def test_rq3_json_interchange_rejects_unknown_fields_and_bad_schema():
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "runs": [run.to_dict() for run in _rq3_runs()],
     }
     with pytest.raises(ValueError, match="schema_version and runs"):
         load_rq3_document({**document, "note": "unregistered metadata"})
     with pytest.raises(ValueError, match="unsupported RQ3 input schema_version"):
-        load_rq3_document({**document, "schema_version": 2})
+        load_rq3_document({**document, "schema_version": 1})
 
 
 def test_rq3_transition_summary_is_recomputed_from_serialized_crossplay_matrices():
     document = json.loads(json.dumps({
-        "schema_version": 1,
+        "schema_version": 2,
         "runs": [run.to_dict() for run in _rq3_runs()],
     }))
     transition = document["runs"][0]["transitions"][0]
