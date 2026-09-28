@@ -17,6 +17,7 @@ from evotau.native_runner import (
     run_native_phase3,
 )
 from evotau.phase0 import load_config
+from evotau.phase0_run import _load_pinned_task, execute_phase0
 from evotau.records import EpisodeStatus, EvidenceRef, customer_strategy_id
 from evotau.strategies import CustomerStrategy, ServiceStrategy
 
@@ -290,3 +291,130 @@ def test_native_runner_loads_pinned_e_and_v_tasks_without_provider_calls(
     assert set(runner.tasks) == {"73", "93"}
     assert {str(task.id) for task in runner.tasks.values()} == {"73", "93"}
     assert budget.snapshot().attempts == 0
+
+
+def test_pinned_native_run_simulation_evaluation_and_review_without_provider_calls(
+    tmp_path: Path, monkeypatch
+):
+    """Exercise the pinned runner end to end with a local deterministic completion stub."""
+    try:
+        distribution("tau2")
+    except PackageNotFoundError:
+        pytest.skip("install the tau-bench optional extra to run native integration checks")
+    data_dir = os.environ.get("EVOTAU_TAU2_DATA_DIR")
+    if not data_dir:
+        pytest.skip("set EVOTAU_TAU2_DATA_DIR to the pinned tau-bench data directory")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TAU2_DATA_DIR", data_dir)
+    from litellm import ModelResponse
+    from tau2.utils import llm_utils
+
+    config = load_config(ROOT / "configs/mvp.yaml")
+    experiment = config["experiment"]
+    experiment["real_provider_enabled"] = True
+    experiment["models"] = {
+        "agent": "evotau-offline-agent",
+        "customer": "evotau-offline-customer",
+        "reviewer": "evotau-offline-reviewer",
+    }
+    experiment["output_path"] = "runs/pinned-native-offline-e2e"
+    manifest = ExperimentManifest.from_mapping(config)
+    task = _load_pinned_task(
+        manifest,
+        data_dir=data_dir,
+        task_selection=experiment["task_selection"],
+    )
+    replies = {"evotau-offline-customer": 0, "evotau-offline-agent": 0}
+    calls: list[tuple[str, int]] = []
+
+    def completion(*, model: str, messages: list[dict], **kwargs):
+        """Mock only the HTTP-facing completion function, never tau2 runtime logic."""
+        assert kwargs.get("num_retries") == 0
+        calls.append((model, len(messages)))
+        if model == "evotau-offline-customer":
+            replies[model] += 1
+            content = (
+                "I would like help returning the items from my recent order. "
+                "My email is fatima.wilson5721@example.com."
+                if replies[model] == 1
+                else "###STOP###"
+            )
+            message = {"role": "assistant", "content": content}
+        elif model == "evotau-offline-agent":
+            replies[model] += 1
+            if replies[model] == 1:
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call-user-lookup",
+                        "type": "function",
+                        "function": {
+                            "name": "find_user_id_by_email",
+                            "arguments": json.dumps({"email": "fatima.wilson5721@example.com"}),
+                        },
+                    }],
+                }
+            else:
+                message = {"role": "assistant", "content": "I found the account."}
+        elif model == "evotau-offline-reviewer":
+            system_prompt = messages[0]["content"]
+            if "Classify the user authentication outcome" in system_prompt:
+                content = json.dumps({"status": "succeeded", "reasoning": "Offline fixture."})
+            else:
+                content = json.dumps({"errors": [], "summary": "Offline fixture review."})
+            message = {"role": "assistant", "content": content}
+        else:
+            # The pinned task's ALL evaluator may invoke its native NL judge.
+            content = json.dumps({"results": [
+                {
+                    "expectedOutcome": assertion,
+                    "reasoning": "Offline fixture; no model judgment was requested.",
+                    "metExpectation": False,
+                }
+                for assertion in (task.evaluation_criteria.nl_assertions or ())
+            ]})
+            message = {"role": "assistant", "content": content}
+        return ModelResponse(
+            model=model,
+            choices=[{
+                "index": 0,
+                "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
+                "message": message,
+            }],
+            usage={"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
+        )
+
+    monkeypatch.setattr(llm_utils, "completion", completion)
+    monkeypatch.setattr(llm_utils, "get_response_cost", lambda _response: 0.0)
+    result = execute_phase0(
+        manifest=manifest,
+        config=config,
+        task=task,
+    )
+
+    output = tmp_path / experiment["output_path"]
+    simulation = json.loads((output / "native-simulation.json").read_text(encoding="utf-8"))
+    saved_result = json.loads((output / "phase0-result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "complete"
+    assert result["simulation_id"] == simulation["id"]
+    assert result["native_reward"] == 0.0  # The offline fixture looked up an account, not a return.
+    assert result["review"]["summary"] == "Offline fixture review."
+    assert result["auth_classification"]["status"] == "succeeded"
+    assert set(result["rendered_prompt_sha256"]) == {"agent", "customer"}
+    assert saved_result == result
+    assert any(
+        call.get("name") == "find_user_id_by_email"
+        for item in simulation["messages"]
+        for call in (item.get("tool_calls") or ())
+    )
+    assert any(
+        item.get("role") == "tool" and item.get("requestor") == "assistant"
+        for item in simulation["messages"]
+    )
+    assert result["provider_budget"]["attempts"] == len(calls)
+    assert result["provider_budget"]["attempts"] == (
+        result["provider_budget"]["successes"] + result["provider_budget"]["failures"]
+    )
+    assert result["provider_budget"]["attempts"] >= 6
