@@ -6,10 +6,10 @@ silently interprets a task failure as an attributed Service failure.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from .archive import FailureArchive
 from .attribution import promote_verified_failure
@@ -78,10 +78,12 @@ def evaluate_customer_panel(
             episodes.append(episode)
             verification_ref = None
             if episode.has_attributable_failure_candidate:
-                verification_ref = (
-                    failure_verifier(episode) if failure_verifier is not None
-                    else (strategy_seen_failures or {}).get(episode.episode_id)
-                )
+                if failure_verifier is not None:
+                    verification_ref = failure_verifier(episode)
+                elif strategy_seen_failures is not None:
+                    verification_ref = strategy_seen_failures.get(episode.episode_id) or episode.audit_ref
+                else:
+                    verification_ref = episode.audit_ref
             decision = promote_verified_failure(
                 episode, generation=generation,
                 independent_verification_ref=verification_ref,
@@ -165,7 +167,11 @@ class GenerationCommit:
     note: str = ""
 
 
-ServiceTransition = Callable[[int, ServiceStrategy, tuple[FailureRecord, ...], EpisodeRunner], tuple[ServiceStrategy, GateReport | None, str]]
+ServiceTransition = Callable[
+    [int, CustomerStrategy, ServiceStrategy, tuple[FailureRecord, ...], EpisodeRunner,
+     RequestBudget | None],
+    tuple[ServiceStrategy, GateReport | None, str],
+]
 
 
 class TwoGenerationSmoke:
@@ -174,12 +180,18 @@ class TwoGenerationSmoke:
     def __init__(self, *, manifest: dict | MechanismManifest, checkpoint_path: str,
                  runner: EpisodeRunner, task_ids: tuple[str, ...], seed: int,
                  request_budget: RequestBudget | None = None,
-                 failure_archive: FailureArchive | None = None):
+                 failure_archive: FailureArchive | None = None,
+                 manifest_context: Mapping[str, Any] | None = None):
         if len(task_ids) != 2 or task_ids[0] == task_ids[1]:
             raise ValueError("mechanism smoke requires distinct evolution and validation task IDs")
         self.manifest = manifest
         manifest_payload = manifest.to_payload() if isinstance(manifest, MechanismManifest) else manifest
-        self.manifest_hash = manifest_fingerprint(manifest_payload)
+        self.manifest_context = None if manifest_context is None else dict(manifest_context)
+        self.manifest_hash = manifest_fingerprint(
+            manifest_payload if self.manifest_context is None else {
+                "manifest": manifest_payload, "run_context": self.manifest_context,
+            }
+        )
         if isinstance(manifest, MechanismManifest):
             if (task_ids != (manifest.evolution_task_id, manifest.validation_task_id)
                     or seed != manifest.seed):
@@ -193,7 +205,8 @@ class TwoGenerationSmoke:
         self.request_budget = request_budget
         self.failure_archive = failure_archive
         self.max_episodes = manifest.max_episodes if isinstance(manifest, MechanismManifest) else int(manifest.get("max_episodes", 23))
-        self.episode_attempts = 0
+        # Phase 3's 23-episode ceiling includes the Phase 0 integration episode.
+        self.episode_attempts = 1 if self.manifest_context is not None else 0
         self._last_customer: CustomerStrategy | None = None
         self._last_service: ServiceStrategy | None = None
         self._commit_records: list[dict] = []
@@ -236,6 +249,7 @@ class TwoGenerationSmoke:
             "customer": customer.to_dict(), "service": service.to_dict(),
             "commits": list(self._commit_records), "seed": self.seed,
             "episode_attempts": self.episode_attempts,
+            "run_context": self.manifest_context,
             "request_budget": _budget_snapshot_dict(self.request_budget),
             "episode_history": {key: episode.to_dict() for key, episode in self._episode_history.items()},
             "progress": progress,
@@ -266,6 +280,7 @@ class TwoGenerationSmoke:
             }],
             "seed": self.seed,
             "episode_attempts": self.episode_attempts,
+            "run_context": self.manifest_context,
             "request_budget": _budget_snapshot_dict(self.request_budget),
             "episode_history": {key: episode.to_dict() for key, episode in self._episode_history.items()},
             "progress": None,
@@ -275,15 +290,17 @@ class TwoGenerationSmoke:
         if path.exists():
             from .checkpoint import load_checkpoint
             old = load_checkpoint(path, expected_manifest_hash=self.manifest_hash)
-            if generation in {item["generation"] for item in old.state.get("commits", [])}:
+            completed = {item["generation"] for item in old.state.get("commits", [])}
+            if generation in completed:
                 prior = next(item for item in old.state["commits"] if item["generation"] == generation)
                 if prior["customer_id"] == commit.customer_id and prior["service_id"] == commit.service_id:
                     return commit
                 raise ValueError("generation already committed with different strategy state")
-            completed = {item["generation"] for item in old.state.get("commits", [])}
             if generation != (max(completed) + 1 if completed else 0):
                 raise ValueError("generation commits must be sequential")
             state["commits"] = old.state.get("commits", []) + state["commits"]
+        elif generation != 0:
+            raise ValueError("generation commits must start at generation 0")
         save_checkpoint(self.checkpoint_path, EvolutionCheckpoint(
             self.manifest_hash, generation, state, tuple(f"generation:{item['generation']}" for item in state["commits"]),
         ))
@@ -297,7 +314,7 @@ class TwoGenerationSmoke:
             failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
             service_transition: ServiceTransition | None = None,
             candidates_per_generation: int = 2) -> tuple[GenerationCommit, ...]:
-        """Execute two Customer-first generations on E, confirming on V.
+        """Execute two Customer-first generations on E with a fresh confirmation seed.
 
         `failure_verifier` audits candidate traces independently. `service_transition`
         must return an already gate-checked strategy and report. It is never allowed to bypass the structured gate by
@@ -305,6 +322,11 @@ class TwoGenerationSmoke:
         """
         if candidates_per_generation != 2:
             raise ValueError("minimal smoke freezes K=2 Customer candidates per generation")
+        if isinstance(self.manifest, MechanismManifest):
+            if sha256_json(customer.to_dict()) != self.manifest.customer_strategy_sha256:
+                raise ValueError("initial Customer strategy does not match the frozen manifest")
+            if sha256_json(service.to_dict()) != self.manifest.service_strategy_sha256:
+                raise ValueError("initial Service strategy does not match the frozen manifest")
         commits: list[GenerationCommit] = []
         start_generation = 0
         if self._last_customer is None:
@@ -312,6 +334,8 @@ class TwoGenerationSmoke:
         path = Path(self.checkpoint_path)
         if path.exists():
             restored = load_checkpoint(path, expected_manifest_hash=self.manifest_hash)
+            if restored.state.get("run_context") != self.manifest_context:
+                raise ValueError("checkpoint Phase 0 run context does not match the current run")
             self.episode_attempts = int(restored.state.get("episode_attempts", 0))
             self._last_customer = customer = CustomerStrategy(**restored.state["customer"])
             self._last_service = service = _service_from_dict(restored.state["service"])
@@ -359,7 +383,8 @@ class TwoGenerationSmoke:
                 verification_refs=verification_refs,
                 failure_verifier=failure_verifier,
                 already_seen=self._progress["seen_strategy_ids"],
-                confirmation_task_ids=(self.task_ids[1],), confirmation_seeds=(seed,),
+                confirmation_task_ids=(self.task_ids[0],),
+                confirmation_seeds=(self.seed + 10_000 + generation,),
                 request_budget=self.request_budget,
             )
             old_customer = customer
@@ -374,15 +399,29 @@ class TwoGenerationSmoke:
             if self.failure_archive is not None:
                 failure_pool.update({failure.failure_id: failure for failure in self.failure_archive.recent()})
             if service_transition is not None and failure_pool:
-                proposed, gate, service_note = service_transition(
-                    generation, service, tuple(failure_pool.values()), self._run_episode,
-                )
+                if self.request_budget is None:
+                    proposed, gate, service_note = service_transition(
+                        generation, customer, service, tuple(failure_pool.values()),
+                        self._run_episode, None,
+                    )
+                else:
+                    from tau2.utils import llm_utils
+
+                    with self.request_budget.instrument_tau_llm_utils(llm_utils):
+                        proposed, gate, service_note = service_transition(
+                            generation, customer, service, tuple(failure_pool.values()),
+                            self._run_episode, self.request_budget,
+                        )
                 accepted = gate is not None and gate.accepted and gate.candidate_strategy == proposed
                 if proposed != service and (not accepted or not failure_pool):
                     raise ValueError("rejected Service repair must leave incumbent unchanged")
                 service, service_evolved, note = proposed, accepted and proposed != old_service, service_note
             elif service_transition is not None:
                 note = "no verified failure is available for a Service repair"
+            elif failure_pool:
+                raise ValueError(
+                    "verified Service failures require an audited ServiceTransition before generation commit"
+                )
             if self.failure_archive is not None:
                 self.failure_archive.append_customer_strategy(
                     old_customer, parent_id=None, operator="incumbent", generation=generation,

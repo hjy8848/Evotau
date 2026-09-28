@@ -13,6 +13,7 @@ from evotau.checkpoint import (
     manifest_fingerprint,
     save_checkpoint,
 )
+from evotau.crossplay import build_crossplay_matrix
 from evotau.lifecycle import TwoGenerationSmoke, evaluate_customer_panel
 from evotau.manifest import MechanismManifest
 from evotau.mutation import propose_customer_candidates
@@ -69,14 +70,17 @@ def test_customer_mutation_determinism_and_incumbent_retention_on_tie():
     b = propose_customer_candidates(incumbent, 2, seed=17)
     assert [x.strategy_id for x in a] == [x.strategy_id for x in b]
     assert len({x.strategy_id for x in a}) == 2
-    base = CandidateEvaluation("inc", (episode(success=False),), (verified(episode()),))
-    equal = CandidateEvaluation("candidate", (episode(name="e2", success=False),), (verified(episode(name="e2")),))
+    incumbent_episode = episode(customer="inc", success=False)
+    candidate_episode = episode(name="e2", customer="candidate", success=False)
+    base = CandidateEvaluation("inc", (incumbent_episode,), (verified(incumbent_episode),))
+    equal = CandidateEvaluation("candidate", (candidate_episode,), (verified(candidate_episode),))
     decision = select_customer(base, (equal,))
     assert not decision.evolved and decision.selected_id == "inc"
 
 
 def test_strict_customer_win_requires_fresh_paired_confirmation():
-    base_1, base_2 = episode(name="b1", task="task-1"), episode(name="b2", task="task-2", seed=2)
+    base_1 = episode(name="b1", task="task-1", customer="incumbent")
+    base_2 = episode(name="b2", task="task-2", seed=2, customer="incumbent")
     candidate_1 = episode(name="c1", task="task-1", customer="challenger")
     candidate_2 = episode(name="c2", task="task-2", seed=2, customer="challenger")
     incumbent = CandidateEvaluation("incumbent", (base_1, base_2), (verified(base_1),))
@@ -118,6 +122,79 @@ def test_customer_fitness_ignores_invalid_and_unverified_episodes():
     assert verified_result.fitness == 1
 
 
+def test_candidate_evaluation_binds_verified_failures_to_its_exact_episode():
+    item = episode(customer="actual")
+    failure = verified(item)
+    with pytest.raises(ValueError, match="strategy does not match"):
+        CandidateEvaluation("other-customer", (item,), (failure,))
+    with pytest.raises(ValueError, match="refer to an episode"):
+        CandidateEvaluation("actual", (replace(item, episode_id="different-episode"),), (failure,))
+
+
+def test_crossplay_matrix_is_balanced_and_only_counts_verified_failures():
+    customers = (CustomerStrategy(), CustomerStrategy(challenge_style="ask_reason", challenge_budget=1))
+    services = (ServiceStrategy(),)
+    customer_ids = tuple(customer_strategy_id(item) for item in customers)
+    service_id = service_strategy_id(services[0])
+    items = []
+    for customer_id in customer_ids:
+        for task_id in ("task-1", "task-2"):
+            for seed in (1, 2):
+                is_first = customer_id == customer_ids[0]
+                item = episode(
+                    name=f"{customer_id}:{task_id}:{seed}", task=task_id, seed=seed,
+                    customer=customer_id, service=service_id,
+                    success=not (is_first and task_id == "task-1" and seed == 1),
+                    violation=is_first and task_id == "task-1" and seed == 1,
+                )
+                if is_first and task_id == "task-2" and seed == 1:
+                    item = replace(item, status=EpisodeStatus.INVALID_CUSTOMER,
+                                   customer_valid=False, customer_strategy_adherent=False,
+                                   task_success=False, policy_violation=False, evidence=())
+                elif is_first and task_id == "task-2" and seed == 2:
+                    item = replace(item, status=EpisodeStatus.INFRASTRUCTURE_ERROR,
+                                   task_success=None, policy_violation=False, evidence=())
+                elif not is_first and task_id == "task-1" and seed == 1:
+                    # Native review flagged this trajectory, but no independent
+                    # verifier promoted it into FailureRecord evidence.
+                    item = replace(item, policy_violation=True)
+                items.append(item)
+    verified_failure = verified(items[0])
+    matrix = build_crossplay_matrix(
+        items,
+        (verified_failure,),
+        customer_strategies=customers,
+        service_strategies=services,
+        task_ids=("task-1", "task-2"),
+        seeds=(1, 2),
+    )
+    first, second = matrix.cells
+    assert (first.attempted_episodes, first.valid_episodes, first.invalid_episodes,
+            first.infrastructure_episodes, first.uncertain_episodes) == (4, 2, 1, 1, 0)
+    assert first.verified_failure_rate == 0.5
+    assert first.unique_task_signature_failures == 1
+    assert first.unique_signatures == 1
+    assert second.verified_failure_rate == 0.0
+    assert second.verified_failure_episodes == 0
+    assert second.unique_signatures == 0
+
+
+def test_crossplay_rejects_unbalanced_panels_and_unlinked_verifications():
+    customer, service = CustomerStrategy(), ServiceStrategy()
+    customer_id, service_id = customer_strategy_id(customer), service_strategy_id(service)
+    item = episode(customer=customer_id, service=service_id)
+    kwargs = {
+        "customer_strategies": (customer,), "service_strategies": (service,),
+        "task_ids": (item.task_id, "task-2"), "seeds": (item.seed,),
+    }
+    with pytest.raises(ValueError, match="missing task/seed"):
+        build_crossplay_matrix((item,), (), **kwargs)
+    unrelated = verified(replace(item, episode_id="not-in-matrix"))
+    full_panel = (item, replace(item, episode_id="second", task_id="task-2"))
+    with pytest.raises(ValueError, match="outside the cross-play"):
+        build_crossplay_matrix(full_panel, (unrelated,), **kwargs)
+
+
 def test_archive_is_append_only_idempotent_and_deduplicates_representatives(tmp_path):
     archive = FailureArchive(tmp_path / "failures.sqlite")
     one = verified(episode(name="one"), 0)
@@ -132,23 +209,29 @@ def test_archive_is_append_only_idempotent_and_deduplicates_representatives(tmp_
 
 def test_service_repair_audit_and_paired_gate():
     failure = verified(episode())
+    incumbent = ServiceStrategy()
     rule = ServiceRule("r1", failure.policy_ref, "refund exceeds policy cap",
                        "check eligibility and limit before issuing refund",
                        failure.evidence_refs)
     audit = RepairAudit(True, "audit:policy", frozenset({failure.policy_ref}))
-    candidate = build_repair_candidate(ServiceStrategy(), RepairProposal(failure.failure_id, rule), failure,
+    candidate = build_repair_candidate(incumbent, RepairProposal(failure.failure_id, rule), failure,
                                        audit, token_counter=lambda text: len(text.split()))
-    old_target = episode(name="old-target")
-    new_target = replace(old_target, episode_id="new-target", task_success=True, policy_violation=False)
+    old_service_id = service_strategy_id(incumbent)
+    candidate_service_id = service_strategy_id(candidate)
+    old_target = episode(name="old-target", service=old_service_id)
+    new_target = replace(old_target, episode_id="new-target", service_strategy_id=candidate_service_id,
+                         task_success=True, policy_violation=False)
     old_clean = replace(old_target, episode_id="old-clean", task_id="clean", task_success=True,
                         policy_violation=False, tool_calls=3)
-    new_clean = replace(old_clean, episode_id="new-clean", tool_calls=4)
+    new_clean = replace(old_clean, episode_id="new-clean", service_strategy_id=candidate_service_id,
+                        tool_calls=4)
     old_valid = replace(old_clean, episode_id="old-valid", task_id="validation")
-    new_valid = replace(old_valid, episode_id="new-valid")
+    new_valid = replace(old_valid, episode_id="new-valid", service_strategy_id=candidate_service_id)
     old_target_2 = replace(old_target, episode_id="old-target-2", seed=2)
     new_target_2 = replace(new_target, episode_id="new-target-2", seed=2)
     historical_old = replace(old_clean, episode_id="old-history", task_id="history")
-    historical_new = replace(historical_old, episode_id="new-history")
+    historical_new = replace(historical_old, episode_id="new-history",
+                             service_strategy_id=candidate_service_id)
     units = (
         GateUnit("target-1", "target", old_target, new_target, failure.failure_id),
         GateUnit("target-2", "target", old_target_2, new_target_2, failure.failure_id),
@@ -169,6 +252,16 @@ def test_service_repair_audit_and_paired_gate():
         target_failure_id=failure.failure_id,
         token_counter=lambda text: len(text.split()))
     assert not rejected.accepted and any("regresses" in reason for reason in rejected.reasons)
+    misbound = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        (GateUnit("target-1", "target", old_target, replace(new_target, service_strategy_id="wrong"),
+                  failure.failure_id),
+         *units[1:]),
+        target_failure_id=failure.failure_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert not misbound.accepted and any("do not match" in reason for reason in misbound.reasons)
 
 
 def test_checkpoint_atomic_roundtrip_and_manifest_binding(tmp_path):
@@ -196,6 +289,22 @@ def test_request_budget_restores_cumulative_attempt_accounting():
         budget.restore_usage(BudgetSnapshot(cap=10, attempts=1, successes=1, failures=0, denied=0))
 
 
+def test_global_budget_absorbs_child_phase_usage_and_enforces_total_cap():
+    total = RequestBudget(8)
+    total.absorb_usage(BudgetSnapshot(
+        cap=70, attempts=3, successes=2, failures=1, denied=0,
+        prompt_tokens=12, completion_tokens=7,
+        usage_responses=2, usage_unavailable=1, cache_hits=0,
+    ))
+    assert total.snapshot().attempts == 3
+    assert total.snapshot().remaining == 5
+    assert total.snapshot().prompt_tokens == 12
+    with pytest.raises(ValueError, match="exceeds"):
+        total.absorb_usage(BudgetSnapshot(
+            cap=70, attempts=6, successes=6, failures=0, denied=0,
+        ))
+
+
 def test_phase3_manifest_freezes_tasks_generations_and_hard_caps():
     config_path = __import__("pathlib").Path(__file__).parents[1] / "configs" / "phase3-mechanism.yaml"
     manifest = MechanismManifest.from_mapping(load_config(config_path))
@@ -208,6 +317,77 @@ def test_phase3_manifest_freezes_tasks_generations_and_hard_caps():
     invalid["experiment"]["request_budget_cap"] = 1801
     with pytest.raises(ValueError, match="1800"):
         MechanismManifest.from_mapping(invalid)
+
+
+def test_manifest_bound_controller_uses_a_fresh_e_seed_for_confirmation(tmp_path):
+    config_path = __import__("pathlib").Path(__file__).parents[1] / "configs" / "phase3-mechanism.yaml"
+    manifest = MechanismManifest.from_mapping(load_config(config_path))
+    customer, service = CustomerStrategy(), ServiceStrategy()
+    winner = propose_customer_candidates(customer, 2, seed=manifest.seed)[0]
+    calls = []
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        calls.append((task_id, seed, panel_name))
+        is_winner = customer_strategy_id(customer) == winner.strategy_id
+        return EpisodeRecord(
+            episode_id=f"{panel_name}:{task_id}:{seed}:{customer_strategy_id(customer)}",
+            task_id=task_id,
+            seed=seed,
+            customer_strategy_id=customer_strategy_id(customer),
+            service_strategy_id=service_strategy_id(service),
+            status=EpisodeStatus.COMPLETE,
+            task_success=not is_winner,
+            customer_valid=True,
+            customer_strategy_adherent=True,
+            policy_violation=is_winner,
+            policy_rule_id="policy.confirmation",
+            mistake_type="missing_confirmation",
+            workflow_stage="write_before_confirmation",
+            evidence=(EvidenceRef(2, "tool", "write occurred before confirmation"),) if is_winner else (),
+        )
+
+    controller = TwoGenerationSmoke(
+        manifest=manifest,
+        checkpoint_path=str(tmp_path / "fresh-confirmation.json"),
+        runner=runner,
+        task_ids=(manifest.evolution_task_id, manifest.validation_task_id),
+        seed=manifest.seed,
+    )
+    service_customers = []
+
+    def no_repair(generation, evolved_customer, current_service, failures, episode_runner, budget):
+        assert failures
+        assert episode_runner is not None
+        assert budget is None
+        service_customers.append(customer_strategy_id(evolved_customer))
+        return current_service, None, "no service proposal in this fixture"
+
+    commits = controller.run(
+        customer,
+        service,
+        failure_verifier=lambda item: "audit:independent-fixture" if item.policy_violation else None,
+        service_transition=no_repair,
+    )
+    assert commits[0].customer_evolved
+    assert commits[0].customer_id == winner.strategy_id
+    assert (manifest.evolution_task_id, manifest.seed + 10_000, "confirmation") in calls
+    assert not any(panel == "confirmation" and task == manifest.validation_task_id
+                   for task, _seed, panel in calls)
+    assert service_customers == [winner.strategy_id, winner.strategy_id]
+
+
+def test_manifest_bound_controller_rejects_unfrozen_initial_strategy(tmp_path):
+    config_path = __import__("pathlib").Path(__file__).parents[1] / "configs" / "phase3-mechanism.yaml"
+    manifest = MechanismManifest.from_mapping(load_config(config_path))
+    controller = TwoGenerationSmoke(
+        manifest=manifest,
+        checkpoint_path=str(tmp_path / "mismatched-strategy.json"),
+        runner=lambda **kwargs: None,
+        task_ids=(manifest.evolution_task_id, manifest.validation_task_id),
+        seed=manifest.seed,
+    )
+    with pytest.raises(ValueError, match="initial Customer strategy"):
+        controller.run(CustomerStrategy(disclosure="related_on_request"), ServiceStrategy())
 
 
 def test_two_generation_smoke_commits_are_idempotent_and_detect_manifest_drift(tmp_path):
@@ -226,6 +406,11 @@ def test_two_generation_smoke_commits_are_idempotent_and_detect_manifest_drift(t
         task_ids=("E", "V"), seed=1)
     with pytest.raises(ValueError, match="manifest"):
         changed.commit_generation(1, c, s)
+    fresh = TwoGenerationSmoke(manifest={"experiment": "fresh"},
+        checkpoint_path=str(tmp_path / "fresh.json"), runner=lambda **kwargs: None,
+        task_ids=("E", "V"), seed=1)
+    with pytest.raises(ValueError, match="start at generation 0"):
+        fresh.commit_generation(1, c, s)
 
 
 def test_two_generation_controller_runs_customer_first_and_commits_no_change(tmp_path):
@@ -314,6 +499,25 @@ def test_controller_applies_episode_and_shared_request_caps(tmp_path):
                           request_budget=RequestBudget(1801))
 
 
+def test_phase0_context_counts_toward_manifest_episode_cap(tmp_path):
+    invoked = False
+
+    def runner(**kwargs):
+        nonlocal invoked
+        invoked = True
+        raise AssertionError("Phase 0 already consumed the one-episode cap")
+
+    controller = TwoGenerationSmoke(
+        manifest={"max_episodes": 1}, checkpoint_path=str(tmp_path / "phase3.json"),
+        runner=runner, task_ids=("E", "V"), seed=1,
+        manifest_context={"phase0_result_sha256": "fixture"},
+    )
+    assert controller.episode_attempts == 1
+    with pytest.raises(RuntimeError, match="episode cap"):
+        controller.run(CustomerStrategy(), ServiceStrategy())
+    assert not invoked
+
+
 def test_generation_lifecycle_commits_only_independently_verified_discoveries(tmp_path):
     customer, service = CustomerStrategy(), ServiceStrategy()
     archive = FailureArchive(tmp_path / "history.sqlite")
@@ -328,7 +532,13 @@ def test_generation_lifecycle_commits_only_independently_verified_discoveries(tm
         task_ids=("E", "V"), seed=5, failure_archive=archive)
     refs = {f"discovery:E:{seed}": "audit:fixture" for seed in (5, 6)}
     # Only matching episode IDs with a supplied audit reference can enter archive.
-    controller.run(customer, service, verification_refs=refs)
+
+    def no_repair(_generation, _customer, current_service, failures, _episode_runner, budget):
+        assert failures
+        assert budget is None
+        return current_service, None, "no repair proposal in fixture"
+
+    controller.run(customer, service, verification_refs=refs, service_transition=no_repair)
     assert archive.recent()
     assert archive.customer_strategies()
     assert archive.service_strategies()

@@ -11,7 +11,12 @@ import pytest
 
 from evotau.budget import ProviderBudgetExceeded, RequestBudget
 from evotau.eligibility import TaskEligibilityError, validate_smoke_selection
-from evotau.manifest import ExperimentManifest, git_blob_sha1, write_manifest_once
+from evotau.manifest import (
+    ExperimentManifest,
+    git_blob_sha1,
+    sha256_json,
+    write_manifest_once,
+)
 from evotau.phase0_run import (
     Phase0ExecutionError,
     _load_pinned_task,
@@ -162,7 +167,7 @@ def test_manifest_hash_is_stable_and_writer_refuses_overwrite(tmp_path: Path) ->
         write_manifest_once(target, manifest)
 
 
-def test_saved_phase0_manifest_matches_the_canonical_config() -> None:
+def test_saved_phase0_manifest_is_self_consistent_and_matches_the_frozen_protocol() -> None:
     config = __import__("yaml").safe_load((ROOT / "configs/mvp.yaml").read_text(encoding="utf-8"))
     manifest = ExperimentManifest.from_mapping(config)
     saved = json.loads(
@@ -170,7 +175,14 @@ def test_saved_phase0_manifest_matches_the_canonical_config() -> None:
             encoding="utf-8"
         )
     )
-    assert saved == manifest.to_document()
+    saved_payload = {key: value for key, value in saved.items() if key != "manifest_sha256"}
+    assert saved["manifest_sha256"] == sha256_json(saved_payload)
+    current_payload = manifest.to_payload()
+    # The checked-in record is an immutable historical artifact. Its source
+    # provenance must stay frozen while its experiment protocol matches config.
+    assert {key: value for key, value in saved_payload.items() if key != "evotau"} == {
+        key: value for key, value in current_payload.items() if key != "evotau"
+    }
 
 
 def test_git_blob_sha1_includes_the_git_object_header() -> None:
@@ -277,6 +289,30 @@ def test_request_budget_records_reported_tokens_and_cache_hits() -> None:
     assert snapshot.completion_tokens == 4
     assert snapshot.usage_responses == 1
     assert snapshot.cache_hits == 1
+
+
+def test_nested_budget_instrumentation_counts_tau_and_direct_litellm_calls_once() -> None:
+    calls = []
+
+    def completion(**kwargs):
+        calls.append(kwargs)
+        return "ok"
+
+    litellm = SimpleNamespace(completion=completion)
+    module = SimpleNamespace(
+        completion=completion,
+        DEFAULT_MAX_RETRIES=5,
+        litellm=litellm,
+    )
+    budget = RequestBudget(cap=2)
+    with budget.instrument_tau_llm_utils(module), budget.instrument_tau_llm_utils(module):
+        module.completion(model="tau-call", num_retries=9)
+        litellm.completion(model="direct-call", num_retries=7)
+    assert budget.snapshot().attempts == 2
+    assert [call["num_retries"] for call in calls] == [0, 0]
+    assert module.DEFAULT_MAX_RETRIES == 5
+    assert module.completion is completion
+    assert litellm.completion is completion
 
 
 def test_live_episode_is_blocked_when_manifest_has_provider_disabled() -> None:

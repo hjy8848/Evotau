@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .records import EpisodeRecord, EpisodeStatus, FailureRecord
+from .records import EpisodeRecord, EpisodeStatus, FailureRecord, service_strategy_id
 from .strategies import (
     MAX_SERVICE_PATCH_TOKENS,
     MAX_SERVICE_RULES,
@@ -133,17 +133,30 @@ def evaluate_repair_gate(
     if sum(unit.panel == "historical" for unit in units) > 1:
         reasons.append("the MVP gate permits at most one historical replay unit")
     for unit in units:
-        ok, reason = _check_unit(unit)
+        ok, reason = _check_unit(
+            unit,
+            incumbent_service_id=service_strategy_id(incumbent),
+            candidate_service_id=service_strategy_id(candidate),
+        )
         results.append((unit.key, ok, reason))
         if not ok:
             reasons.append(f"{unit.key}: {reason}")
     return GateReport(not reasons, tuple(reasons), candidate if not reasons else None, tuple(results))
 
 
-def _check_unit(unit: GateUnit) -> tuple[bool, str]:
+def _check_unit(
+    unit: GateUnit,
+    *,
+    incumbent_service_id: str,
+    candidate_service_id: str,
+) -> tuple[bool, str]:
     old, new = unit.incumbent, unit.candidate
     if (old.task_id, old.seed) != (new.task_id, new.seed):
         return False, "incumbent and candidate must use the same task and seed"
+    if old.customer_strategy_id != new.customer_strategy_id:
+        return False, "Service gate pairs must keep the Customer strategy fixed"
+    if old.service_strategy_id != incumbent_service_id or new.service_strategy_id != candidate_service_id:
+        return False, "paired episodes do not match the incumbent and candidate Service strategies"
     if old.status != EpisodeStatus.COMPLETE or new.status != EpisodeStatus.COMPLETE:
         return False, "incomplete or invalid episode evidence"
     if old.customer_valid is not True or new.customer_valid is not True:

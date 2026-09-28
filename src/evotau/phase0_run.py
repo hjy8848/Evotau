@@ -32,9 +32,28 @@ def _load_pinned_task(
     data_dir: str | Path,
     task_selection: Mapping[str, Any],
 ) -> Any:
+    return _load_pinned_tasks(
+        manifest,
+        data_dir=data_dir,
+        task_selection=task_selection,
+        task_ids=(manifest.evolution_task_ids[0],),
+    )[manifest.evolution_task_ids[0]]
+
+
+def _load_pinned_tasks(
+    manifest: Any,
+    *,
+    data_dir: str | Path,
+    task_selection: Mapping[str, Any],
+    task_ids: tuple[str, ...],
+) -> dict[str, Any]:
+    """Load requested official-train tasks after verifying every pinned source blob."""
+
     data_root = Path(data_dir).expanduser().resolve()
     if not data_root.is_dir():
         raise ValueError(f"τ-bench data directory does not exist: {data_root}")
+    if not task_ids or len(set(task_ids)) != len(task_ids):
+        raise ValueError("requested pinned task IDs must be non-empty and unique")
     os.environ["TAU2_DATA_DIR"] = str(data_root)
     verify_tau2_installation()
 
@@ -57,21 +76,28 @@ def _load_pinned_task(
         tasks_data = json.load(handle)
     with split_path.open("r", encoding="utf-8") as handle:
         split_data = json.load(handle)
+    evolution_ids = getattr(manifest, "evolution_task_ids", None)
+    validation_ids = getattr(manifest, "validation_task_ids", None)
+    if evolution_ids is None:
+        evolution_ids = (manifest.evolution_task_id,)
+    if validation_ids is None:
+        validation_ids = (manifest.validation_task_id,)
     validate_smoke_selection(
         tasks_data,
         split_data,
-        evolution_task_id=manifest.evolution_task_ids[0],
-        validation_task_id=manifest.validation_task_ids[0],
+        evolution_task_id=evolution_ids[0],
+        validation_task_id=validation_ids[0],
         excluded_task_ids=task_selection.get("excluded", ()),
     )
     selected = get_tasks(
         manifest.domain,
         task_split_name=manifest.split_name,
-        task_ids=[manifest.evolution_task_ids[0]],
+        task_ids=list(task_ids),
     )
-    if len(selected) != 1:
-        raise ValueError("pinned τ-bench did not return exactly the selected evolution task")
-    return selected[0]
+    tasks_by_id = {str(task.id): task for task in selected}
+    if set(tasks_by_id) != set(task_ids):
+        raise ValueError("pinned τ-bench did not return exactly the requested official-train tasks")
+    return tasks_by_id
 
 
 def _parse_strategies(

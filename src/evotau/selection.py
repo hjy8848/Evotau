@@ -73,6 +73,9 @@ def select_customer(
         )
     if incumbent_confirm.panel_name != "confirmation" or challenger_confirm.panel_name != "confirmation":
         raise ValueError("confirmation results must be marked with panel_name='confirmation'")
+    if (incumbent_confirm.strategy_id != incumbent.strategy_id
+            or challenger_confirm.strategy_id != winner.strategy_id):
+        raise ValueError("confirmation results must match the incumbent and selected challenger IDs")
     if _episode_keys(incumbent_confirm) != _episode_keys(challenger_confirm):
         raise ValueError("incumbent and challenger must use the same confirmation task/seed panel")
     if _episode_keys(incumbent_confirm) & _episode_keys(incumbent):

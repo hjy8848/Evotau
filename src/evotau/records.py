@@ -82,6 +82,7 @@ class EpisodeRecord:
     workflow_stage: str | None = None
     evidence: tuple[EvidenceRef, ...] = ()
     trajectory_ref: str | None = None
+    audit_ref: str | None = None
     tool_calls: int = 0
     raw_review: Mapping[str, Any] = field(default_factory=dict)
     notes: str = ""
@@ -204,6 +205,33 @@ class CandidateEvaluation:
     verified_failures: tuple[FailureRecord, ...] = ()
     panel_name: str = "discovery"
 
+    def __post_init__(self) -> None:
+        if not self.strategy_id:
+            raise ValueError("candidate evaluation requires a strategy ID")
+        episode_ids = [episode.episode_id for episode in self.episodes]
+        if len(episode_ids) != len(set(episode_ids)):
+            raise ValueError("candidate evaluation cannot contain duplicate episode IDs")
+        by_id = {episode.episode_id: episode for episode in self.episodes}
+        for episode in self.episodes:
+            if episode.customer_strategy_id != self.strategy_id:
+                raise ValueError("episode Customer strategy does not match its candidate evaluation")
+        for failure in self.verified_failures:
+            episode = by_id.get(failure.episode_id)
+            if episode is None:
+                raise ValueError("verified failure must refer to an episode in this evaluation")
+            if not episode.has_attributable_failure_candidate:
+                raise ValueError("verified failure episode is not a complete valid failure candidate")
+            if (
+                failure.task_id != episode.task_id
+                or failure.customer_strategy_id != episode.customer_strategy_id
+                or failure.service_strategy_id != episode.service_strategy_id
+                or failure.policy_ref != episode.policy_rule_id
+                or failure.signature.workflow_stage != episode.workflow_stage
+                or failure.signature.mistake_type != episode.mistake_type
+                or failure.evidence != episode.evidence
+            ):
+                raise ValueError("verified failure fields do not match their episode evidence")
+
     @property
     def fitness(self) -> int:
         """Count distinct failed tasks, with at most one point per task."""
@@ -216,11 +244,25 @@ class CandidateEvaluation:
 
     @property
     def valid_episode_count(self) -> int:
-        return sum(item.status == EpisodeStatus.COMPLETE for item in self.episodes)
+        return sum(
+            item.status == EpisodeStatus.COMPLETE
+            and item.customer_valid is True
+            and item.customer_strategy_adherent is True
+            for item in self.episodes
+        )
 
     @property
     def invalid_episode_count(self) -> int:
-        return len(self.episodes) - self.valid_episode_count
+        return sum(
+            item.status in {EpisodeStatus.INVALID_CUSTOMER, EpisodeStatus.INVALID_STRATEGY}
+            or item.customer_valid is False
+            or item.customer_strategy_adherent is False
+            for item in self.episodes
+        )
+
+    @property
+    def uncertain_episode_count(self) -> int:
+        return len(self.episodes) - self.valid_episode_count - self.invalid_episode_count
 
     @property
     def task_coverage(self) -> int:
@@ -234,6 +276,7 @@ class CandidateEvaluation:
             "signature_count": self.signature_count,
             "valid_episode_count": self.valid_episode_count,
             "invalid_episode_count": self.invalid_episode_count,
+            "uncertain_episode_count": self.uncertain_episode_count,
             "episodes": [item.to_dict() for item in self.episodes],
             "failure_ids": [item.failure_id for item in self.verified_failures],
         }

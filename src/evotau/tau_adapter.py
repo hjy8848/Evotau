@@ -154,6 +154,7 @@ def run_with_budget(
     *,
     reviewer_model: str,
     on_simulation: Callable[[Any], None] | None = None,
+    after_review: Callable[[Any, Any], None] | None = None,
 ) -> Any:
     """Run, score, and review natively under one provider-request budget."""
 
@@ -187,6 +188,8 @@ def run_with_budget(
         )
         result.review = review
         result.auth_classification = auth_classification
+        if after_review is not None:
+            after_review(result, orchestrator)
         return result
 
 

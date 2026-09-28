@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner implemented; environment/orchestrator construction and prompt injection verified; Phase 1–3 mechanism implementation complete; full native episode pending
+Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, and balanced cross-play summaries implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (32 tests pass with the pinned-runtime integration check enabled; all 19 manifest source blobs match the pinned τ-bench commit; native runtime construction and prompt injection pass without provider calls; live `run_simulation` has not been run)
+Last verified: 2026-09-29 (46 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1449,3 +1449,22 @@ Phase 0 之后的实现顺序建议：
 - Phase 0、Phase 3 eligibility preflight 均以本地固定 task/split 文件通过；E=73、V=93 的实体仍不同。总计 32 项测试、Ruff、`compileall` 和 `git diff --check` 通过。
 
 **当前边界**：这完成了 Phase 0 的可运行入口与 pinned API 构造验证，不等于完成 Phase 0 Engineering Exit。计划中的完整 native `run_simulation` episode、native scoring/reviewer 的真实轨迹与实际 provider-attempt 计数尚未验证；checked-in manifest 仍设置 `real_provider_enabled=false` 且没有模型 ID，因此本轮没有启动真实 episode。Phase 1–3 机制代码已经由注入式离线 runner 测试；10–25 episode 的研究 smoke、Pilot 和 Formal 也仍未启动。
+
+**Implementation audit update（2026-09-29）**
+
+- 在 Python 3.12 环境实际安装 τ-bench 1.0.1 pinned Git commit 和 Retail task/split/database/policy/guidelines 文件后，`test_pinned_tau_runtime_builds_adapters_without_provider_calls` 通过；它逐一校验全部 19 个上游 blob、读取 task 73、构造真实 Retail `Environment`/`Orchestrator` 并核对两个最终 system prompt。未调用 `run_simulation` 或模型。
+- 该集成检查发现 tau2 1.0.1 顶层导入会加载 voice provider，而 `websockets` 仅列在其可选 `voice` extra。EvoTau 的 `tau-bench` extra 显式加入 `websockets>=13.0`，使官方 text runtime 的导入路径可用，不安装整套 voice extra。
+- 生命周期完整性加固：`CandidateEvaluation` 验证 failure 与精确 episode/strategy/证据绑定；Service gate 验证配对运行固定 Customer、且服务策略 ID 与门控双方匹配；冻结 manifest 会校验初始策略哈希；generation 只能从 0 连续提交；Customer confirmation 在 E task 上使用保留的新 seed；Service transition 收到选择后的 Customer。
+- 新增 `crossplay.py`：只接受完整平衡的 task/seed 面板，分别统计 valid、invalid、infrastructure、uncertain 和 native-success 数；failure rate 只使用与轨迹匹配的独立 verified `FailureRecord`，同时报告唯一 `(task, signature)` 数。它不执行 episode，也不调用 provider。
+- 修正对历史不可变 Phase 0 manifest 的测试：保留它当时的 provenance，仅要求其自带 hash 有效、experiment protocol 与当前 YAML 一致，不再错误地要求历史记录的 git HEAD 随代码更新。
+- 当前 Python 3.12 验证：**37 tests passed**；Ruff、`compileall`、`git diff --check` 均通过；Phase 0 与 Phase 3 preflight 对 pinned tasks/split 文件均通过。
+
+**Native Phase 3 bridge update（2026-09-29）**
+
+- 新增 `native_runner.py`：把 `TwoGenerationSmoke` 的注入式 episode runner 接到 pinned τ-bench 原生 orchestrator、`run_simulation`、EvaluationType.ALL 与 native reviewer，并将 native simulation、`EpisodeRecord`、rendered prompt hashes、independent audit 和 provider-budget delta 保存到每个 episode 目录。
+- 每个 EpisodeAudit 由调用者独立提供 Customer validity、策略遵循和 policy violation 判断；缺少独立审计时记录为 uncertain，不能产生 fitness 或 verified failure。verified Service failure 若没有 `ServiceTransition` 则拒绝代际提交。
+- `run_native_phase3` 要求已完成的 Phase 0 result、相邻 manifest 和 native simulation 三者一致，校验上游 pin、E task、source blobs、角色模型、seed、原生模拟 ID 与请求预算；Phase 0 结果的 SHA-256 被写入只写一次的 `run-context.json` 并绑定到 checkpoint manifest hash。Phase 0 的一次 Episode 与请求 attempt 同时计入 Phase 3 的 23-episode / 1,800-attempt 总上限。
+- controller 允许一个 `ServiceTransition` 回调在相同预算作用域内启动嵌套 native EpisodeRunner；τ-bench/LiteLLM 重试设为零，子阶段 budget 只能在总 cap 内吸收到全局计数。恢复时使用 checkpoint 中的累计预算，不重复吸收 Phase 0 用量。
+- 新增 native adapter 的无真实 provider 测试，以及 phase0 artifact identity/budget gate、global episode cap、failure/evidence integrity 等测试。设置 `EVOTAU_TAU2_DATA_DIR` 后，此版本验证结果为 **46 passed**，包括 pinned runtime 集成构造检查；Ruff、compileall、两项 eligibility preflight 和 `git diff --check` 均通过。测试没有运行 provider episode。
+
+**仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以此轮没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、归因校准（至少 30 条）、任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。

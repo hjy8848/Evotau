@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from threading import Lock, RLock
+from threading import Lock, RLock, local
 from types import ModuleType
 from typing import Any
 
@@ -50,6 +50,7 @@ class RequestBudget:
         self._cache_hits = 0
         self._lock = Lock()
         self._patch_lock = RLock()
+        self._active_patches = local()
 
     def _begin(self, model: str | None) -> int:
         with self._lock:
@@ -135,18 +136,57 @@ class RequestBudget:
             self._usage_unavailable = snapshot.usage_unavailable
             self._cache_hits = snapshot.cache_hits
 
+    def absorb_usage(self, snapshot: BudgetSnapshot) -> None:
+        """Add attempts from a completed child phase to this run's global budget."""
+        counters = (
+            snapshot.attempts, snapshot.successes, snapshot.failures, snapshot.denied,
+            snapshot.prompt_tokens, snapshot.completion_tokens,
+            snapshot.usage_responses, snapshot.usage_unavailable, snapshot.cache_hits,
+        )
+        if any(value < 0 for value in counters):
+            raise ValueError("absorbed provider budget counters must be non-negative")
+        if snapshot.successes + snapshot.failures != snapshot.attempts:
+            raise ValueError("absorbed provider budget success/failure counts are inconsistent")
+        if snapshot.usage_responses + snapshot.usage_unavailable > snapshot.attempts:
+            raise ValueError("absorbed usage counters exceed provider attempts")
+        with self._lock:
+            if self._attempts + snapshot.attempts > self._cap:
+                raise ValueError("absorbed phase usage exceeds the global provider-attempt budget")
+            self._attempts += snapshot.attempts
+            self._successes += snapshot.successes
+            self._failures += snapshot.failures
+            self._denied += snapshot.denied
+            self._prompt_tokens += snapshot.prompt_tokens
+            self._completion_tokens += snapshot.completion_tokens
+            self._usage_responses += snapshot.usage_responses
+            self._usage_unavailable += snapshot.usage_unavailable
+            self._cache_hits += snapshot.cache_hits
+
     @contextmanager
     def instrument_tau_llm_utils(self, llm_utils: ModuleType | Any) -> Iterator[None]:
-        """Guard tau2.utils.llm_utils.completion and disable its default retries."""
+        """Guard the τ-bench and LiteLLM completion boundaries with retries disabled."""
 
         with self._patch_lock:
+            active = getattr(self._active_patches, "modules", None)
+            if active is None:
+                active = self._active_patches.modules = set()
+            module_key = id(llm_utils)
+            if module_key in active:
+                yield
+                return
+
             original_completion = llm_utils.completion
             original_default_retries = llm_utils.DEFAULT_MAX_RETRIES
+            litellm_module = getattr(llm_utils, "litellm", None)
+            original_litellm_completion = getattr(litellm_module, "completion", None)
 
             def guarded_completion(*args: Any, **kwargs: Any) -> Any:
                 model = kwargs.get("model")
                 if model is None and args:
                     model = str(args[0])
+                # The manifest freezes transport retries to zero for every role.
+                if litellm_module is not None:
+                    kwargs["num_retries"] = 0
                 self._begin(None if model is None else str(model))
                 try:
                     result = original_completion(*args, **kwargs)
@@ -158,8 +198,14 @@ class RequestBudget:
 
             llm_utils.completion = guarded_completion
             llm_utils.DEFAULT_MAX_RETRIES = 0
+            if litellm_module is not None and callable(original_litellm_completion):
+                litellm_module.completion = guarded_completion
+            active.add(module_key)
             try:
                 yield
             finally:
                 llm_utils.completion = original_completion
                 llm_utils.DEFAULT_MAX_RETRIES = original_default_retries
+                if litellm_module is not None and callable(original_litellm_completion):
+                    litellm_module.completion = original_litellm_completion
+                active.remove(module_key)
