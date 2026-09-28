@@ -365,6 +365,7 @@ def test_service_repair_audit_and_paired_gate():
                         policy_violation=False, tool_calls=3)
     new_clean = replace(old_clean, episode_id="new-clean", service_strategy_id=candidate_service_id,
                         tool_calls=4)
+    initial_s0_clean = replace(old_clean, episode_id="initial-s0-clean")
     old_valid = replace(old_target, episode_id="old-valid", task_id="validation", task_success=True,
                         policy_violation=False)
     new_valid = replace(old_valid, episode_id="new-valid", service_strategy_id=candidate_service_id)
@@ -377,12 +378,13 @@ def test_service_repair_audit_and_paired_gate():
     units = (
         GateUnit("target-1", "target", old_target, new_target, failure.failure_id),
         GateUnit("target-2", "target", old_target_2, new_target_2, failure.failure_id),
-        GateUnit("clean", "clean", old_clean, new_clean),
+        GateUnit("clean", "clean", old_clean, new_clean, initial_s0=initial_s0_clean),
         GateUnit("validation", "validation", old_valid, new_valid),
     )
     units += (GateUnit("history", "historical", historical_old, historical_new),)
     report = evaluate_repair_gate(
         incumbent, candidate, units, target_failure=failure, proposal=proposal, audit=audit,
+        initial_service_strategy_id=old_service_id,
         token_counter=lambda text: len(text.split()),
     )
     assert report.accepted
@@ -390,14 +392,18 @@ def test_service_repair_audit_and_paired_gate():
     assert serialized_report["evaluated_candidate"] == candidate.to_dict()
     assert serialized_report["proposal"]["verification_hypothesis"] == proposal.verification_hypothesis
     assert serialized_report["audit"]["verifier_ref"] == audit.verifier_ref
+    assert serialized_report["initial_service_strategy_id"] == old_service_id
+    assert serialized_report["initial_s0_episode_refs"] == [["clean", "initial-s0-clean"]]
     bad_audit = replace(audit, permission_delta=True)
     with pytest.raises(ValueError, match="permissions"):
         build_repair_candidate(ServiceStrategy(), proposal, failure,
                                bad_audit, token_counter=lambda text: len(text.split()))
     regressed = replace(new_clean, task_success=False)
     rejected = evaluate_repair_gate(ServiceStrategy(), candidate,
-        units[:2] + (GateUnit("clean", "clean", old_clean, regressed),) + units[3:],
+        units[:2] + (GateUnit("clean", "clean", old_clean, regressed,
+                              initial_s0=initial_s0_clean),) + units[3:],
         target_failure=failure, proposal=proposal, audit=audit,
+        initial_service_strategy_id=old_service_id,
         token_counter=lambda text: len(text.split()))
     assert not rejected.accepted and any("regresses" in reason for reason in rejected.reasons)
     assert rejected.candidate_strategy is None
@@ -409,6 +415,7 @@ def test_service_repair_audit_and_paired_gate():
                   failure.failure_id),
          *units[1:]),
         target_failure=failure, proposal=proposal, audit=audit,
+        initial_service_strategy_id=old_service_id,
         token_counter=lambda text: len(text.split()),
     )
     assert not misbound.accepted and any("do not match" in reason for reason in misbound.reasons)
@@ -421,10 +428,75 @@ def test_service_repair_audit_and_paired_gate():
         (GateUnit("target-1", "target", inapplicable_attack, new_target, failure.failure_id),
          *units[1:]),
         target_failure=failure, proposal=proposal, audit=audit,
+        initial_service_strategy_id=old_service_id,
         token_counter=lambda text: len(text.split()),
     )
     assert not rejected_not_applicable.accepted
     assert any("applicable and adherent" in reason for reason in rejected_not_applicable.reasons)
+
+    incumbent_regressed_clean = replace(old_clean, episode_id="old-clean-regressed", task_success=False)
+    candidate_still_regressed_clean = replace(
+        new_clean, episode_id="new-clean-regressed", task_success=False,
+    )
+    anchor_regression = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        units[:2] + (
+            GateUnit("clean", "clean", incumbent_regressed_clean,
+                     candidate_still_regressed_clean, initial_s0=initial_s0_clean),
+        ) + units[3:],
+        target_failure=failure,
+        proposal=proposal,
+        audit=audit,
+        initial_service_strategy_id=old_service_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert not anchor_regression.accepted
+    assert any("initial S0" in reason for reason in anchor_regression.reasons)
+
+    missing_anchor = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        units[:2] + (GateUnit("clean", "clean", old_clean, new_clean),) + units[3:],
+        target_failure=failure,
+        proposal=proposal,
+        audit=audit,
+        initial_service_strategy_id=old_service_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert not missing_anchor.accepted
+    assert any("missing its initial S0" in reason for reason in missing_anchor.reasons)
+
+    wrong_s0 = replace(initial_s0_clean, service_strategy_id="wrong-initial-checkpoint")
+    misbound_anchor = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        units[:2] + (
+            GateUnit("clean", "clean", old_clean, new_clean, initial_s0=wrong_s0),
+        ) + units[3:],
+        target_failure=failure,
+        proposal=proposal,
+        audit=audit,
+        initial_service_strategy_id=old_service_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert not misbound_anchor.accepted
+    assert any("frozen Service checkpoint ID" in reason for reason in misbound_anchor.reasons)
+
+    restored_anchor = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        units[:2] + (
+            GateUnit("clean", "clean", incumbent_regressed_clean, new_clean,
+                     initial_s0=initial_s0_clean),
+        ) + units[3:],
+        target_failure=failure,
+        proposal=proposal,
+        audit=audit,
+        initial_service_strategy_id=old_service_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert restored_anchor.accepted
 
 
 def test_checkpoint_atomic_roundtrip_and_manifest_binding(tmp_path):

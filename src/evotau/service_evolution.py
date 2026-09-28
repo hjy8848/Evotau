@@ -83,6 +83,17 @@ class GateUnit:
     incumbent: EpisodeRecord
     candidate: EpisodeRecord
     target_failure_id: str | None = None
+    initial_s0: EpisodeRecord | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or not self.key.strip():
+            raise ValueError("gate unit key must be non-empty")
+        if self.panel not in {"target", "historical", "clean", "validation"}:
+            raise ValueError(f"unsupported Service gate panel: {self.panel!r}")
+        if self.initial_s0 is not None and self.panel != "clean":
+            raise ValueError("initial S0 evidence is only valid for a clean gate unit")
+        if self.initial_s0 is not None and not isinstance(self.initial_s0, EpisodeRecord):
+            raise TypeError("initial S0 anchor must be an EpisodeRecord")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +106,8 @@ class GateReport:
     proposal: RepairProposal
     audit: RepairAudit
     evaluated_candidate: ServiceStrategy
+    initial_service_strategy_id: str | None = None
+    initial_s0_episode_refs: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.accepted) is not bool:
@@ -109,6 +122,17 @@ class GateReport:
             or self.candidate_strategy != self.evaluated_candidate or not self.audit.approved
         ):
             raise ValueError("accepted gate report must have no rejection reasons and identify its candidate")
+        if self.accepted and (
+            not self.initial_service_strategy_id or not self.initial_s0_episode_refs
+        ):
+            raise ValueError("accepted gate report must retain its frozen S0 checkpoint and clean anchors")
+        if any(
+            not key or not episode_id
+            for key, episode_id in self.initial_s0_episode_refs
+        ):
+            raise ValueError("initial S0 anchor references must identify gate units and episodes")
+        if len({key for key, _ in self.initial_s0_episode_refs}) != len(self.initial_s0_episode_refs):
+            raise ValueError("each clean gate unit must have exactly one initial S0 anchor reference")
         if not self.accepted and self.candidate_strategy is not None:
             raise ValueError("rejected gate report cannot expose an accepted candidate strategy")
 
@@ -120,6 +144,8 @@ class GateReport:
             "proposal": self.proposal.to_dict(),
             "audit": self.audit.to_dict(),
             "evaluated_candidate": self.evaluated_candidate.to_dict(),
+            "initial_service_strategy_id": self.initial_service_strategy_id,
+            "initial_s0_episode_refs": [list(item) for item in self.initial_s0_episode_refs],
             "accepted_candidate": (
                 None if self.candidate_strategy is None else self.candidate_strategy.to_dict()
             ),
@@ -173,12 +199,15 @@ def evaluate_repair_gate(
     target_failure: FailureRecord,
     proposal: RepairProposal,
     audit: RepairAudit,
+    initial_service_strategy_id: str,
     token_counter: Callable[[str], int],
 ) -> GateReport:
-    """Apply target/replay/clean/validation checks to paired episode evidence."""
+    """Apply target/replay/clean/validation checks, retaining the initial clean anchor."""
     reasons: list[str] = []
     results: list[tuple[str, bool, str]] = []
     target_failure_id = target_failure.failure_id
+    if not isinstance(initial_service_strategy_id, str) or not initial_service_strategy_id.strip():
+        reasons.append("repair gate requires the frozen initial S0 Service checkpoint ID")
     if proposal.target_failure_id != target_failure_id:
         reasons.append("repair proposal must identify the exact supplied target failure")
     try:
@@ -222,6 +251,7 @@ def evaluate_repair_gate(
             unit,
             incumbent_service_id=service_strategy_id(incumbent),
             candidate_service_id=service_strategy_id(candidate),
+            initial_service_strategy_id=initial_service_strategy_id,
         )
         results.append((unit.key, ok, reason))
         if not ok:
@@ -235,6 +265,12 @@ def evaluate_repair_gate(
         proposal=proposal,
         audit=audit,
         evaluated_candidate=candidate,
+        initial_service_strategy_id=initial_service_strategy_id,
+        initial_s0_episode_refs=tuple(
+            (unit.key, unit.initial_s0.episode_id)
+            for unit in units
+            if unit.panel == "clean" and unit.initial_s0 is not None
+        ),
     )
 
 
@@ -243,6 +279,7 @@ def _check_unit(
     *,
     incumbent_service_id: str,
     candidate_service_id: str,
+    initial_service_strategy_id: str,
 ) -> tuple[bool, str]:
     old, new = unit.incumbent, unit.candidate
     if (old.task_id, old.seed) != (new.task_id, new.seed):
@@ -258,6 +295,19 @@ def _check_unit(
     if unit.panel == "clean":
         if old.strategy_applicable is not False or new.strategy_applicable is not False:
             return False, "clean gate must use the native Customer without an EvoTau strategy overlay"
+        initial = unit.initial_s0
+        if initial is None:
+            return False, "clean gate unit is missing its initial S0 success anchor"
+        if (initial.status != EpisodeStatus.COMPLETE or initial.customer_valid is not True
+                or initial.strategy_applicable is not False or initial.customer_strategy_adherent is not None):
+            return False, "initial S0 anchor must be a complete, valid native-Customer episode"
+        if (initial.task_id, initial.seed) != (old.task_id, old.seed):
+            return False, "initial S0 anchor must match the clean task and seed"
+        if (initial.customer_strategy_id != old.customer_strategy_id
+                or initial.customer_strategy_id != new.customer_strategy_id):
+            return False, "initial S0 anchor must use the same native Customer identity"
+        if initial.service_strategy_id != initial_service_strategy_id:
+            return False, "initial S0 anchor does not match the frozen Service checkpoint ID"
     elif (old.strategy_applicable is not True or new.strategy_applicable is not True
           or old.customer_strategy_adherent is not True
           or new.customer_strategy_adherent is not True):
@@ -281,14 +331,23 @@ def _check_unit(
                 return False, "candidate introduces a policy violation on historical replay"
         if new.tool_calls > 1.25 * old.tool_calls + 1:
             return False, "tool-call efficiency regression exceeds 25% plus one call"
-    elif unit.panel in {"clean", "validation"}:
-        if old.task_success is not True:
-            return False, "clean/validation baseline is not a success"
-        if new.task_success is not True:
-            return False, "candidate regresses clean/validation task success"
-        if unit.panel == "clean" and new.policy_violation:
+    elif unit.panel == "clean":
+        initial = unit.initial_s0
+        assert initial is not None  # checked above
+        if old.task_success is True and new.task_success is not True:
+            return False, "candidate regresses a clean task success of the incumbent"
+        if initial.task_success is True and new.task_success is not True:
+            return False, "candidate regresses a clean success anchored by initial S0"
+        if new.policy_violation:
             return False, "candidate introduces a policy violation on clean task"
-        if unit.panel == "validation" and new.policy_violation:
+        if new.tool_calls > 1.25 * old.tool_calls + 1:
+            return False, "tool-call efficiency regression exceeds 25% plus one call"
+    elif unit.panel == "validation":
+        if old.task_success is not True:
+            return False, "validation baseline is not a success"
+        if new.task_success is not True:
+            return False, "candidate regresses validation task success"
+        if new.policy_violation:
             old_signature = (old.policy_rule_id, old.mistake_type, old.workflow_stage)
             new_signature = (new.policy_rule_id, new.mistake_type, new.workflow_stage)
             if not old.policy_violation or new_signature != old_signature:

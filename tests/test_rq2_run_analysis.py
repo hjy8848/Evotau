@@ -97,6 +97,8 @@ def gate(failure: FailureRecord, candidate: ServiceStrategy, *, accepted: bool) 
         proposal=proposal,
         audit=audit,
         evaluated_candidate=candidate,
+        initial_service_strategy_id=service_strategy_id(ServiceStrategy()),
+        initial_s0_episode_refs=(("clean", "s0-clean-anchor"),),
     )
 
 

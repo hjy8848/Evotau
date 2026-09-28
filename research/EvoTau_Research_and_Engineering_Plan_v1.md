@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, and complete Service repair audit journaling implemented; live Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, complete Service repair audit journaling, and initial-S0 clean-success gate implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (74 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
+Last verified: 2026-09-29 (74 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; S₀ clean-success gate retains its source episode references; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1536,3 +1536,10 @@ Phase 0 之后的实现顺序建议：
 - 新增多 run、E/V/H、预算、seed、面板缺项和 incomplete-denominator 测试；全量验证为 **74 passed**（含 pinned runtime integration test），Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
 
 **仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。RQ2 的独立-run 分析代码已具备，但正式推断所需预注册假设/非劣效 margin、pilot-informed 样本量和真实 run artifacts 尚不存在。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。
+
+**Initial S₀ clean-success anchor update（2026-09-29）**
+
+- 对照第 15 节发现，旧 gate 只比较当前 incumbent 与 candidate，未把 clean task 的初始 Service S₀ 成功锚点带入多代接受判断。现 `GateUnit` 的 clean 记录要求提供同一 task、seed、native Customer 的初始 S₀ `EpisodeRecord`，且 `evaluate_repair_gate()` 必须取得冻结初始 Service checkpoint ID 并验证三者身份绑定。
+- 候选不能回退当前 incumbent 已成功任务；如果 S₀ 在该 clean 单元成功，候选也必须成功。若后续 incumbent 在某个 S₀ 成功锚点上已经失败，candidate 可通过恢复该成功来满足 gate。缺失或 checkpoint 不匹配的 S₀ evidence 会 fail closed。
+- `GateReport` 持久化初始 S₀ checkpoint ID 与每个 clean gate unit 对应的 S₀ episode ID，拒绝报告也保留完整锚点 provenance。
+- 新增 S₀ 锚点保留、从回归状态恢复、缺失锚点和错误 checkpoint 绑定测试；全量验证为 **74 passed**（含 pinned runtime integration test），Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
