@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play summaries, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, and complete Service repair audit journaling implemented; live Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play and arms-race response analysis, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, and complete Service repair audit journaling implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (60 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
+Last verified: 2026-09-29 (63 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1507,5 +1507,11 @@ Phase 0 之后的实现顺序建议：
 - `RepairProposal` 现在必须保存精确 target failure 和可证伪的验证假设；静态 `RepairAudit` 保留 reviewer 引用、批准的 policy refs、权限/任务特定性/答案泄漏检查与非空理由。
 - `GateReport` 将此 proposal/audit 与实际评估过的候选 Service 绑定到同一 verified failure。候选被拒时仍保留完整规则、假设、静态审核和 target/history/clean/validation 结果；`prepared_generation` checkpoint 通过 `GateReport.to_dict()` 持久化这份完整材料，不会只留下 incumbent 或一句拒绝说明。
 - 补充测试验证已接受和拒绝 gate 均可审计。当前验证为 **60 passed**，Ruff、`compileall` 与 `git diff --check` 通过。
+
+**Fresh-seed arms-race response analysis**
+
+- 新增 `analyze_adaptation_response()`，将计划第 17 节的四格 `p(C,S)` 比较编码为报告：旧 Customer/旧 Service、旧 Customer/新 Service、新 Customer/新 Service、新 Customer/旧 Service。它计算 repair reduction、repair 后 Customer failure-rate increase 和差分中的差分交互量。
+- 仅当确认矩阵使用相同冻结 task 与策略、但使用未参与 discovery 的 seed 时才运行判定；无 adherent 分母标为 `inconclusive`。输出保留 discovery/confirmation 矩阵 hash，`observed` 仅表示描述性方向条件在确认面板出现，不表示统计支持；正式 claim 仍需多个独立 evolution runs 的分析。
+- 当前完整验证为 **63 passed**，Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
 
 **仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。
