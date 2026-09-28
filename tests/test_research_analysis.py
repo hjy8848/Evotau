@@ -19,6 +19,7 @@ def matrix(customer, service, seeds, rates):
         for service_id in service_ids:
             failures = round(rates[(customer_id, service_id)] * attempts)
             adherent = attempts if rates[(customer_id, service_id)] is not None else 0
+            signature_keys = tuple(f"{index + 1:016x}" for index in range(failures))
             cells.append(CrossPlayCell(
                 customer_strategy_id=customer_id,
                 service_strategy_id=service_id,
@@ -30,12 +31,18 @@ def matrix(customer, service, seeds, rates):
                 strategy_opportunities=attempts,
                 strategy_adherent_episodes=adherent,
                 strategy_not_applicable_episodes=0,
-                strategy_adherence_rate=1.0 if attempts else None,
+                strategy_adherence_rate=(adherent / attempts if attempts else None),
                 successful_episodes=attempts - failures,
                 verified_failure_episodes=failures,
                 verified_failure_rate=(failures / adherent if adherent else None),
                 unique_task_signature_failures=failures,
                 unique_signatures=failures,
+                native_success_rate=((attempts - failures) / attempts if attempts else None),
+                policy_violation_episodes=failures,
+                policy_violation_rate=(failures / attempts if attempts else None),
+                recurrent_verified_failure_rate=(0.0 if adherent else None),
+                verified_signature_keys=signature_keys,
+                verified_signature_episode_counts=tuple((key, 1) for key in signature_keys),
             ))
     return CrossPlayMatrix(customer_ids, service_ids, ("task-1",), tuple(seeds), tuple(cells))
 
@@ -125,7 +132,20 @@ def test_adaptation_response_requires_a_fresh_panel_and_marks_missing_denominato
         no_customer_opportunity.seeds,
         tuple(
             cell if cell.customer_strategy_id != ids[1]
-            else replace(cell, strategy_adherent_episodes=0, verified_failure_rate=None)
+            else replace(
+                cell,
+                strategy_opportunities=0,
+                strategy_adherent_episodes=0,
+                strategy_not_applicable_episodes=cell.attempted_episodes,
+                strategy_adherence_rate=None,
+                verified_failure_episodes=0,
+                verified_failure_rate=None,
+                unique_task_signature_failures=0,
+                unique_signatures=0,
+                verified_signature_keys=(),
+                verified_signature_episode_counts=(),
+                recurrent_verified_failure_rate=None,
+            )
             for cell in no_customer_opportunity.cells
         ),
     )
