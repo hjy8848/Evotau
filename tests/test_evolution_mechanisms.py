@@ -478,6 +478,76 @@ def test_mid_generation_resume_reuses_completed_episode_records(tmp_path):
     assert final.state["episode_attempts"] == 7
 
 
+def test_prepared_generation_resume_reuses_persisted_selection_and_service_decision(tmp_path):
+    customer, service = CustomerStrategy(), ServiceStrategy()
+    dispatches = 0
+    service_transitions = 0
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        nonlocal dispatches
+        dispatches += 1
+        customer_id = customer_strategy_id(customer)
+        service_id = service_strategy_id(service)
+        return episode(
+            name=f"{panel_name}:{task_id}:{seed}:{customer_id}", task=task_id, seed=seed,
+            customer=customer_id, service=service_id,
+        )
+
+    def transition(_generation, _customer, current_service, failures, _runner, _budget):
+        nonlocal service_transitions
+        service_transitions += 1
+        assert failures
+        return current_service, None, "audited no-op repair decision"
+
+    class InterruptBeforeCommit(TwoGenerationSmoke):
+        def commit_generation(self, generation, *args, **kwargs):
+            if generation == 0:
+                raise RuntimeError("crash after decision journal, before commit")
+            return super().commit_generation(generation, *args, **kwargs)
+
+    checkpoint = tmp_path / "prepared.json"
+    archive_path = tmp_path / "archive.sqlite"
+    manifest = {"fixture": "prepared-generation"}
+    archive = FailureArchive(archive_path)
+    first = InterruptBeforeCommit(
+        manifest=manifest, checkpoint_path=str(checkpoint), runner=runner,
+        task_ids=("E", "V"), seed=9, failure_archive=archive,
+    )
+    with pytest.raises(RuntimeError, match="decision journal"):
+        first.run(
+            customer, service,
+            failure_verifier=lambda _item: "audit:durability-fixture",
+            service_transition=transition,
+        )
+
+    prepared = load_checkpoint(checkpoint, expected_manifest_hash=manifest_fingerprint(manifest))
+    prepared_generation = prepared.state["progress"]["prepared_generation"]
+    assert prepared_generation["commit"]["generation"] == 0
+    decision = prepared_generation["commit"]["decision_record"]
+    assert decision["customer"]["selection"]["evolved"] is False
+    assert len(decision["customer"]["evaluations"]) == 3
+    assert decision["service"]["transition_ran"] is True
+    assert len(decision["verified_failures"]) >= 1
+    assert service_transitions == 1
+    assert dispatches == 3
+
+    resumed = TwoGenerationSmoke(
+        manifest=manifest, checkpoint_path=str(checkpoint), runner=runner,
+        task_ids=("E", "V"), seed=9, failure_archive=FailureArchive(archive_path),
+    )
+    commits = resumed.run(
+        customer, service,
+        failure_verifier=lambda _item: "audit:durability-fixture",
+        service_transition=transition,
+    )
+    assert tuple(item.generation for item in commits) == (0, 1)
+    assert service_transitions == 2  # only generation 1 is newly evaluated after resume
+    assert dispatches == 5  # generation 0's three cached episodes are not rerun
+    final = load_checkpoint(checkpoint, expected_manifest_hash=manifest_fingerprint(manifest))
+    assert final.state["progress"] is None
+    assert final.state["commits"][0]["decision_record"] == decision
+
+
 def test_controller_applies_episode_and_shared_request_caps(tmp_path):
     invoked = 0
 

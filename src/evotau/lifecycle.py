@@ -6,6 +6,7 @@ silently interprets a task failure as an attributed Service failure.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -46,6 +47,7 @@ class CustomerRound:
     candidates: tuple[CandidateEvaluation, ...]
     selection: SelectionDecision
     verified_failures: tuple[FailureRecord, ...]
+    confirmation_evaluations: tuple[CandidateEvaluation, ...] = ()
 
 
 def evaluate_customer_panel(
@@ -153,7 +155,10 @@ def run_customer_round(
     failures = incumbent_eval.verified_failures + tuple(
         failure for evaluation in evaluations for failure in evaluation.verified_failures
     )
-    return CustomerRound(incumbent_eval, candidates, evaluations, selection, failures)
+    return CustomerRound(
+        incumbent_eval, candidates, evaluations, selection, failures,
+        () if confirmations is None else tuple(confirmations.values()),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +170,7 @@ class GenerationCommit:
     service_evolved: bool
     completed: bool
     note: str = ""
+    decision_record: dict[str, Any] | None = None
 
 
 ServiceTransition = Callable[
@@ -244,6 +250,7 @@ class TwoGenerationSmoke:
             "service": self._progress["service"],
             "seen_strategy_ids": list(self._progress["seen_strategy_ids"]),
             "episodes": {key: episode.to_dict() for key, episode in self._progress["episodes"].items()},
+            "prepared_generation": self._progress.get("prepared_generation"),
         }
         state = {
             "customer": customer.to_dict(), "service": service.to_dict(),
@@ -263,21 +270,18 @@ class TwoGenerationSmoke:
 
     def commit_generation(self, generation: int, customer: CustomerStrategy,
                           service: ServiceStrategy, *, note: str = "",
-                          customer_evolved: bool = False, service_evolved: bool = False) -> GenerationCommit:
+                          customer_evolved: bool = False, service_evolved: bool = False,
+                          decision_record: dict[str, Any] | None = None) -> GenerationCommit:
         if generation not in (0, 1):
             raise ValueError("minimal smoke has exactly two generations (0 and 1)")
         # The controller accepts only immutable strategy snapshots after their
         # selection/gate decisions have completed.
         commit = GenerationCommit(generation, customer_strategy_id(customer),
-                                  service_strategy_id(service), customer_evolved, service_evolved, True, note)
+                                  service_strategy_id(service), customer_evolved, service_evolved,
+                                  True, note, decision_record)
         state = {
             "customer": customer.to_dict(), "service": service.to_dict(),
-            "commits": [commit.__dict__ if hasattr(commit, "__dict__") else {
-                "generation": commit.generation, "customer_id": commit.customer_id,
-                "service_id": commit.service_id, "customer_evolved": commit.customer_evolved,
-                "service_evolved": commit.service_evolved, "completed": commit.completed,
-                "note": commit.note,
-            }],
+            "commits": [_commit_to_dict(commit)],
             "seed": self.seed,
             "episode_attempts": self.episode_attempts,
             "run_context": self.manifest_context,
@@ -358,6 +362,7 @@ class TwoGenerationSmoke:
                     "seen_strategy_ids": tuple(progress["seen_strategy_ids"]),
                     "episodes": {key: EpisodeRecord.from_dict(value)
                                  for key, value in progress["episodes"].items()},
+                    "prepared_generation": progress.get("prepared_generation"),
                 }
                 customer = CustomerStrategy(**self._progress["customer"])
                 service = _service_from_dict(self._progress["service"])
@@ -374,7 +379,24 @@ class TwoGenerationSmoke:
                     "seen_strategy_ids": tuple(self.failure_archive.customer_strategy_ids()
                                                 if self.failure_archive is not None else ()),
                     "episodes": {},
+                    "prepared_generation": None,
                 }
+            prepared = self._progress.get("prepared_generation")
+            if prepared is not None:
+                customer = CustomerStrategy(**prepared["customer"])
+                service = _service_from_dict(prepared["service"])
+                _append_prepared_archive(self.failure_archive, prepared["archive"])
+                expected = GenerationCommit(**prepared["commit"])
+                commit = self.commit_generation(
+                    generation, customer, service, note=expected.note,
+                    customer_evolved=expected.customer_evolved,
+                    service_evolved=expected.service_evolved,
+                    decision_record=expected.decision_record,
+                )
+                if commit != expected:
+                    raise ValueError("prepared generation differs from its persisted decision record")
+                commits.append(commit)
+                continue
             seed = self.seed + generation
             round_result = run_customer_round(
                 self._run_episode, incumbent=customer, service=service,
@@ -395,6 +417,8 @@ class TwoGenerationSmoke:
             old_service = service
             service_evolved = False
             note = round_result.selection.reason
+            gate: GateReport | None = None
+            service_note = note
             failure_pool = {failure.failure_id: failure for failure in round_result.verified_failures}
             if self.failure_archive is not None:
                 failure_pool.update({failure.failure_id: failure for failure in self.failure_archive.recent()})
@@ -418,32 +442,50 @@ class TwoGenerationSmoke:
                 service, service_evolved, note = proposed, accepted and proposed != old_service, service_note
             elif service_transition is not None:
                 note = "no verified failure is available for a Service repair"
+                service_note = note
             elif failure_pool:
                 raise ValueError(
                     "verified Service failures require an audited ServiceTransition before generation commit"
                 )
-            if self.failure_archive is not None:
-                self.failure_archive.append_customer_strategy(
-                    old_customer, parent_id=None, operator="incumbent", generation=generation,
-                )
-                for proposal in round_result.proposals:
-                    self.failure_archive.append_customer_strategy(
-                        proposal.strategy, parent_id=proposal.parent_id,
-                        operator=proposal.operator, generation=generation,
-                    )
-                for failure in round_result.verified_failures:
-                    self.failure_archive.append(failure)
-                self.failure_archive.append_service_strategy(
-                    old_service, parent_id=None, operator="incumbent", generation=generation,
-                )
-                if service != old_service:
-                    self.failure_archive.append_service_strategy(
-                        service, parent_id=service_strategy_id(old_service),
-                        operator="verified_repair", generation=generation,
-                    )
-            commit = self.commit_generation(generation, customer, service, note=note,
-                                            customer_evolved=customer != old_customer,
-                                            service_evolved=service_evolved)
+            decision_record = _generation_decision_record(
+                generation=generation,
+                old_customer=old_customer,
+                new_customer=customer,
+                old_service=old_service,
+                new_service=service,
+                round_result=round_result,
+                failure_pool=tuple(failure_pool.values()),
+                service_transition_ran=service_transition is not None and bool(failure_pool),
+                service_gate=gate,
+                service_note=service_note,
+            )
+            decision_record = json.loads(json.dumps(decision_record, ensure_ascii=False))
+            commit = GenerationCommit(
+                generation, customer_strategy_id(customer), service_strategy_id(service),
+                customer != old_customer, service_evolved, True, note, decision_record,
+            )
+            archive_payload = _prepared_archive_payload(
+                generation=generation,
+                old_customer=old_customer,
+                proposals=round_result.proposals,
+                failures=round_result.verified_failures,
+                old_service=old_service,
+                new_service=service,
+            )
+            self._progress["prepared_generation"] = {
+                "customer": customer.to_dict(),
+                "service": service.to_dict(),
+                "commit": _commit_to_dict(commit),
+                "archive": archive_payload,
+            }
+            self._persist_progress()
+            _append_prepared_archive(self.failure_archive, archive_payload)
+            commit = self.commit_generation(
+                generation, customer, service, note=note,
+                customer_evolved=customer != old_customer,
+                service_evolved=service_evolved,
+                decision_record=decision_record,
+            )
             commits.append(commit)
         return tuple(commits)
 
@@ -459,6 +501,124 @@ def _budget_snapshot_dict(budget: RequestBudget | None) -> dict | None:
     if budget is None:
         return None
     return asdict(budget.snapshot())
+
+
+def _commit_to_dict(commit: GenerationCommit) -> dict[str, Any]:
+    return {
+        "generation": commit.generation,
+        "customer_id": commit.customer_id,
+        "service_id": commit.service_id,
+        "customer_evolved": commit.customer_evolved,
+        "service_evolved": commit.service_evolved,
+        "completed": commit.completed,
+        "note": commit.note,
+        "decision_record": commit.decision_record,
+    }
+
+
+def _generation_decision_record(
+    *,
+    generation: int,
+    old_customer: CustomerStrategy,
+    new_customer: CustomerStrategy,
+    old_service: ServiceStrategy,
+    new_service: ServiceStrategy,
+    round_result: CustomerRound,
+    failure_pool: tuple[FailureRecord, ...],
+    service_transition_ran: bool,
+    service_gate: GateReport | None,
+    service_note: str,
+) -> dict[str, Any]:
+    return {
+        "generation": generation,
+        "customer": {
+            "incumbent_before": old_customer.to_dict(),
+            "incumbent_after": new_customer.to_dict(),
+            "proposals": [
+                {
+                    "strategy_id": proposal.strategy_id,
+                    "strategy": proposal.strategy.to_dict(),
+                    "parent_id": proposal.parent_id,
+                    "operator": proposal.operator,
+                    "rationale": proposal.rationale,
+                }
+                for proposal in round_result.proposals
+            ],
+            "evaluations": [
+                round_result.incumbent.to_dict(),
+                *(item.to_dict() for item in round_result.candidates),
+                *(item.to_dict() for item in round_result.confirmation_evaluations),
+            ],
+            "selection": asdict(round_result.selection),
+        },
+        "service": {
+            "incumbent_before": old_service.to_dict(),
+            "incumbent_after": new_service.to_dict(),
+            "transition_ran": service_transition_ran,
+            "failure_ids": [failure.failure_id for failure in failure_pool],
+            "note": service_note,
+            "gate": None if service_gate is None else {
+                "accepted": service_gate.accepted,
+                "reasons": list(service_gate.reasons),
+                "unit_results": [list(item) for item in service_gate.unit_results],
+            },
+        },
+        "verified_failures": [failure.to_dict() for failure in round_result.verified_failures],
+    }
+
+
+def _prepared_archive_payload(
+    *,
+    generation: int,
+    old_customer: CustomerStrategy,
+    proposals: tuple[CustomerCandidate, ...],
+    failures: tuple[FailureRecord, ...],
+    old_service: ServiceStrategy,
+    new_service: ServiceStrategy,
+) -> dict[str, Any]:
+    customers = [{
+        "strategy": old_customer.to_dict(), "parent_id": None,
+        "operator": "incumbent", "generation": generation,
+    }]
+    customers.extend({
+        "strategy": proposal.strategy.to_dict(), "parent_id": proposal.parent_id,
+        "operator": proposal.operator, "generation": generation,
+    } for proposal in proposals)
+    services = [{
+        "strategy": old_service.to_dict(), "parent_id": None,
+        "operator": "incumbent", "generation": generation,
+    }]
+    if new_service != old_service:
+        services.append({
+            "strategy": new_service.to_dict(),
+            "parent_id": service_strategy_id(old_service),
+            "operator": "verified_repair", "generation": generation,
+        })
+    return {
+        "customers": customers,
+        "services": services,
+        "failures": [failure.to_dict() for failure in failures],
+    }
+
+
+def _append_prepared_archive(
+    archive: FailureArchive | None,
+    payload: Mapping[str, Any],
+) -> None:
+    if archive is None:
+        return
+    for item in payload["customers"]:
+        archive.append_customer_strategy(
+            CustomerStrategy(**item["strategy"]), parent_id=item["parent_id"],
+            operator=item["operator"], generation=int(item["generation"]),
+        )
+    for item in payload["services"]:
+        archive.append_service_strategy(
+            _service_from_dict(item["strategy"]), parent_id=item["parent_id"],
+            operator=item["operator"], generation=int(item["generation"]),
+        )
+    for item in payload["failures"]:
+        archive.append(FailureRecord.from_dict(item))
 
 
 def _runner_cache_key(*, task_id: str, seed: int, customer: CustomerStrategy,

@@ -1,6 +1,6 @@
 Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, and balanced cross-play summaries implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (46 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
+Last verified: 2026-09-29 (47 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1466,5 +1466,11 @@ Phase 0 之后的实现顺序建议：
 - `run_native_phase3` 要求已完成的 Phase 0 result、相邻 manifest 和 native simulation 三者一致，校验上游 pin、E task、source blobs、角色模型、seed、原生模拟 ID 与请求预算；Phase 0 结果的 SHA-256 被写入只写一次的 `run-context.json` 并绑定到 checkpoint manifest hash。Phase 0 的一次 Episode 与请求 attempt 同时计入 Phase 3 的 23-episode / 1,800-attempt 总上限。
 - controller 允许一个 `ServiceTransition` 回调在相同预算作用域内启动嵌套 native EpisodeRunner；τ-bench/LiteLLM 重试设为零，子阶段 budget 只能在总 cap 内吸收到全局计数。恢复时使用 checkpoint 中的累计预算，不重复吸收 Phase 0 用量。
 - 新增 native adapter 的无真实 provider 测试，以及 phase0 artifact identity/budget gate、global episode cap、failure/evidence integrity 等测试。设置 `EVOTAU_TAU2_DATA_DIR` 后，此版本验证结果为 **46 passed**，包括 pinned runtime 集成构造检查；Ruff、compileall、两项 eligibility preflight 和 `git diff --check` 均通过。测试没有运行 provider episode。
+
+**Generation decision durability update**
+
+- 计划第 16 节要求在代际提交前先持久化运行结果、验证结果与 selection/gate 决定。现将每代 incumbent/candidate/confirmation evaluations、proposal lineage、selection 分数与原因、verified failure records、Service gate 与摘要、待更新 archive 项写入 `prepared_generation` checkpoint，再幂等写 archive 并提交 generation。
+- 若进程在决策已生成、generation 尚未提交时退出，恢复路径直接复用 prepared Customer/Service、决策和 archive payload，不再次运行 Customer panel 或调用 ServiceTransition；如 archive 已先写入，则稳定 ID 插入保持幂等。
+- 新增故障注入恢复测试：在 generation 0 的决策 checkpoint 完成后、commit 前中断，随后恢复并验证策略决策逐字一致、完成的 episode 没有重跑、ServiceTransition 只在后续新 generation 再调用。当前测试数更新为 **47 passed**。
 
 **仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以此轮没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、归因校准（至少 30 条）、任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。

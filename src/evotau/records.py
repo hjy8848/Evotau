@@ -161,6 +161,16 @@ class FailureRecord:
         if self.signature.policy_rule_id != self.policy_ref:
             raise ValueError("failure signature and policy reference must agree")
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> FailureRecord:
+        fields = dict(value)
+        fields["signature"] = FailureSignature(**fields["signature"])
+        fields["evidence"] = tuple(EvidenceRef(**item) for item in fields.get("evidence", ()))
+        return cls(**fields)
+
     @property
     def evidence_refs(self) -> tuple[str, ...]:
         return tuple(ref.stable_ref(self.episode_id) for ref in self.evidence)
