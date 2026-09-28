@@ -8,8 +8,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from evotau.budget import RequestBudget
+from evotau.checkpoint import manifest_fingerprint
 from evotau.manifest import ExperimentManifest, MechanismManifest
 from evotau.native_runner import (
     IndependentEpisodeAudit,
@@ -435,3 +437,158 @@ def test_pinned_native_run_simulation_evaluation_and_review_without_provider_cal
         result["provider_budget"]["successes"] + result["provider_budget"]["failures"]
     )
     assert result["provider_budget"]["attempts"] >= 6
+
+
+def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
+    tmp_path: Path, monkeypatch,
+):
+    """Exercise the full Phase 0 → native Phase 3 artifact and budget handoff offline."""
+    try:
+        distribution("tau2")
+    except PackageNotFoundError:
+        pytest.skip("install the tau-bench optional extra to run native integration checks")
+    data_dir = os.environ.get("EVOTAU_TAU2_DATA_DIR")
+    if not data_dir:
+        pytest.skip("set EVOTAU_TAU2_DATA_DIR to the pinned tau-bench data directory")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TAU2_DATA_DIR", data_dir)
+    from litellm import ModelResponse
+    from tau2.utils import llm_utils
+
+    models = {
+        "agent": "evotau-full-offline-agent",
+        "customer": "evotau-full-offline-customer",
+        "reviewer": "evotau-full-offline-reviewer",
+    }
+    phase0_config = load_config(ROOT / "configs/mvp.yaml")
+    phase0_config["experiment"]["real_provider_enabled"] = True
+    phase0_config["experiment"]["models"] = models
+    phase0_config["experiment"]["output_path"] = "runs/full-offline-phase0"
+    phase0_manifest = ExperimentManifest.from_mapping(phase0_config)
+    phase0_task = _load_pinned_task(
+        phase0_manifest,
+        data_dir=data_dir,
+        task_selection=phase0_config["experiment"]["task_selection"],
+    )
+
+    calls: list[str] = []
+    replies = {models["customer"]: 0, models["agent"]: 0}
+
+    def completion(*, model: str, messages: list[dict], **kwargs):
+        assert kwargs.get("num_retries") == 0
+        calls.append(model)
+        if model == models["customer"]:
+            replies[model] += 1
+            content = (
+                "I want help returning items from my recent order. "
+                "My email is fatima.wilson5721@example.com."
+                if replies[model] % 2 == 1 else "###STOP###"
+            )
+            message = {"role": "assistant", "content": content}
+        elif model == models["agent"]:
+            replies[model] += 1
+            if replies[model] % 2 == 1:
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": f"call-user-lookup-{replies[model]}",
+                        "type": "function",
+                        "function": {
+                            "name": "find_user_id_by_email",
+                            "arguments": json.dumps({"email": "fatima.wilson5721@example.com"}),
+                        },
+                    }],
+                }
+            else:
+                message = {"role": "assistant", "content": "I found the account."}
+        elif model == models["reviewer"]:
+            system_prompt = messages[0]["content"]
+            if "Classify the user authentication outcome" in system_prompt:
+                content = json.dumps({"status": "succeeded", "reasoning": "Offline fixture."})
+            else:
+                content = json.dumps({"errors": [], "summary": "Offline fixture review."})
+            message = {"role": "assistant", "content": content}
+        else:
+            task = phase0_task
+            content = json.dumps({"results": [
+                {
+                    "expectedOutcome": assertion,
+                    "reasoning": "Offline fixture; no model judgment was requested.",
+                    "metExpectation": False,
+                }
+                for assertion in (task.evaluation_criteria.nl_assertions or ())
+            ]})
+            message = {"role": "assistant", "content": content}
+        return ModelResponse(
+            model=model,
+            choices=[{
+                "index": 0,
+                "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
+                "message": message,
+            }],
+            usage={"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
+        )
+
+    monkeypatch.setattr(llm_utils, "completion", completion)
+    monkeypatch.setattr(llm_utils, "get_response_cost", lambda _response: 0.0)
+    phase0_result = execute_phase0(
+        manifest=phase0_manifest,
+        config=phase0_config,
+        task=phase0_task,
+    )
+
+    phase3_config = load_config(ROOT / "configs/phase3-mechanism.yaml")
+    phase3_config["experiment"]["real_provider_enabled"] = True
+    phase3_config["experiment"]["models"] = models
+    phase3_config["experiment"]["output_path"] = "runs/full-offline-phase3"
+    phase3_config["experiment"]["checkpoint_path"] = "checkpoints/full-offline-phase3.json"
+    phase3_path = tmp_path / "phase3-offline.yaml"
+    phase3_path.write_text(yaml.safe_dump(phase3_config, sort_keys=False), encoding="utf-8")
+    audit_calls: list[tuple[str, str, int, str]] = []
+
+    def audit_provider(simulation, task, customer, _service, panel_name):
+        audit_calls.append((str(simulation.id), str(task.id), int(simulation.seed), panel_name))
+        return IndependentEpisodeAudit(
+            verifier_ref=f"offline-audit:{simulation.id}",
+            customer_valid=True,
+            strategy_applicable=customer is not None,
+            customer_strategy_adherent=True if customer is not None else None,
+            policy_violation=False,
+            invalid_repeated_write_calls=0,
+        )
+
+    def forbidden_service_transition(*_args):
+        raise AssertionError("no-failure fixture should not request a Service repair")
+
+    commits, budget = run_native_phase3(
+        config_path=phase3_path,
+        data_dir=data_dir,
+        phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
+        audit_provider=audit_provider,
+        service_transition=forbidden_service_transition,
+    )
+
+    assert phase0_result["status"] == "complete"
+    assert len(commits) == 2
+    assert all(not item.customer_evolved and not item.service_evolved for item in commits)
+    assert audit_calls
+    assert {task_id for _episode_id, task_id, _seed, _panel in audit_calls} == {"73"}
+    assert len({episode_id for episode_id, *_rest in audit_calls}) == len(audit_calls)
+    assert budget.attempts == len(calls)
+    assert budget.attempts > phase0_result["provider_budget"]["attempts"]
+    assert budget.attempts <= budget.cap == 1800
+
+    run_context = json.loads(
+        (tmp_path / "runs/full-offline-phase3/run-context.json").read_text(encoding="utf-8")
+    )
+    assert run_context["phase0_result_sha256"]
+    checkpoint = json.loads(
+        (tmp_path / "checkpoints/full-offline-phase3.json").read_text(encoding="utf-8")
+    )
+    phase3_manifest = MechanismManifest.from_mapping(phase3_config)
+    assert checkpoint["manifest_hash"] == manifest_fingerprint({
+        "manifest": phase3_manifest.to_payload(), "run_context": run_context,
+    })
+    assert checkpoint["state"]["request_budget"]["attempts"] == budget.attempts

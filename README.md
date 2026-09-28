@@ -33,7 +33,7 @@ The pinned native Retail environment and `Orchestrator` construction, including 
 
     EVOTAU_TAU2_DATA_DIR=/path/to/tau2-bench/data python -m pytest -q -k pinned_tau_runtime
 
-This check verifies all 19 pinned τ-bench source fingerprints, loads the real Retail task, constructs the native environment and `Orchestrator`, and checks both prompt adapters without provider calls. It does not run `run_simulation`; the one-episode Phase 0 exit remains pending because the manifest still disables provider use and has no frozen model IDs.
+The native integration checks verify all 19 pinned τ-bench source fingerprints, load the Retail tasks, construct the native environment and `Orchestrator`, check both prompt adapters, and run the actual `run_simulation`/`EvaluationType.ALL`/reviewer path using deterministic local completions. A further offline integration test carries the Phase 0 result into a complete two-generation native Phase 3 controller run and checks the shared budget and checkpoint context. These tests make no provider calls and produce no research evidence. The provider-backed Phase 0 exit remains pending because the checked-in manifest disables provider use and has no frozen model IDs.
 
 ## Phases 1–3 mechanism layer
 
