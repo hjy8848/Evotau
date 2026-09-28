@@ -10,7 +10,11 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from evotau.budget import ProviderBudgetExceeded, RequestBudget
-from evotau.eligibility import TaskEligibilityError, validate_smoke_selection
+from evotau.eligibility import (
+    TaskEligibilityError,
+    validate_generalization_selection,
+    validate_smoke_selection,
+)
 from evotau.manifest import (
     ExperimentManifest,
     git_blob_sha1,
@@ -116,6 +120,49 @@ def test_customer_strategy_is_a_separate_subordinate_block() -> None:
 def test_customer_strategy_rejects_inconsistent_challenge_budget() -> None:
     with pytest.raises(ValueError, match="must agree"):
         CustomerStrategy(challenge_style="ask_reason", challenge_budget=0)
+
+
+def test_generalization_selection_keeps_train_and_heldout_entities_disjoint():
+    tasks = [
+        _example_task("1", email="e1@example.test", order="W1000001", items=2),
+        _example_task("2", email="e2@example.test", order="W1000002", items=1),
+        _example_task("3", email="e3@example.test", order="W1000003", items=1),
+    ]
+    result = validate_generalization_selection(
+        tasks,
+        {"train": ("1", "2"), "test": ("3",)},
+        evolution_task_ids=("1",),
+        validation_task_ids=("2",),
+        heldout_task_ids=("3",),
+    )
+    assert result.evolution_task_ids == ("1",)
+    assert result.validation_task_ids == ("2",)
+    assert result.heldout_task_ids == ("3",)
+    assert set(result.evolution_entity_keys).isdisjoint(result.heldout_entity_keys)
+
+
+def test_generalization_selection_rejects_entity_leakage_and_wrong_split():
+    tasks = [
+        _example_task("1", email="e1@example.test", order="W1000001", items=2),
+        _example_task("2", email="e2@example.test", order="W1000002", items=1),
+        _example_task("3", email="e3@example.test", order="W1000001", items=1),
+    ]
+    with pytest.raises(TaskEligibilityError, match="share business entities"):
+        validate_generalization_selection(
+            tasks,
+            {"train": ("1", "2"), "test": ("3",)},
+            evolution_task_ids=("1",),
+            validation_task_ids=("2",),
+            heldout_task_ids=("3",),
+        )
+    with pytest.raises(TaskEligibilityError, match="official test split"):
+        validate_generalization_selection(
+            tasks,
+            {"train": ("1", "2", "3"), "test": ()},
+            evolution_task_ids=("1",),
+            validation_task_ids=("2",),
+            heldout_task_ids=("3",),
+        )
 
 
 def test_service_rules_require_policy_evidence_and_a_model_tokenizer() -> None:

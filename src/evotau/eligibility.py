@@ -36,6 +36,18 @@ class SmokeTaskSelection:
     validation_entity_keys: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class GeneralizationTaskSelection:
+    """A leakage-checked E/V/H task partition for multi-task pilot studies."""
+
+    evolution_task_ids: tuple[str, ...]
+    validation_task_ids: tuple[str, ...]
+    heldout_task_ids: tuple[str, ...]
+    evolution_entity_keys: tuple[str, ...]
+    validation_entity_keys: tuple[str, ...]
+    heldout_entity_keys: tuple[str, ...]
+
+
 def _scenario_text(task: Mapping[str, Any]) -> str:
     scenario = task.get("user_scenario") or {}
     instructions = scenario.get("instructions") or {}
@@ -156,3 +168,92 @@ def validate_smoke_selection(
         evolution_entity_keys=e_entities,
         validation_entity_keys=v_entities,
     )
+
+
+def validate_generalization_selection(
+    tasks: Sequence[Mapping[str, Any]],
+    split_data: Mapping[str, Sequence[str]],
+    *,
+    evolution_task_ids: Sequence[str],
+    validation_task_ids: Sequence[str],
+    heldout_task_ids: Sequence[str],
+    excluded_task_ids: Sequence[str] = ("46", "47"),
+) -> GeneralizationTaskSelection:
+    """Validate train E/V and official-test H without shared business entities.
+
+    This is a conservative ID-based leakage check, not semantic task-family,
+    policy/tool-conflict, or satisfiability adjudication. All selected tasks
+    are checked ex ante; the function never drops an ineligible task and
+    silently changes the requested sample. Those semantic judgments remain a
+    required pre-run review.
+    """
+
+    groups = {
+        "evolution": _task_id_tuple(evolution_task_ids, "evolution"),
+        "validation": _task_id_tuple(validation_task_ids, "validation"),
+        "heldout": _task_id_tuple(heldout_task_ids, "heldout"),
+    }
+    if any(not ids for ids in groups.values()):
+        raise TaskEligibilityError("pilot E, V, and H selections must each be non-empty")
+    all_ids = tuple(task_id for ids in groups.values() for task_id in ids)
+    if len(set(all_ids)) != len(all_ids):
+        raise TaskEligibilityError("E, V, and H task IDs must be unique and disjoint")
+
+    by_id = {str(task.get("id")): task for task in tasks}
+    if len(by_id) != len(tasks):
+        raise TaskEligibilityError("task data contains duplicate task IDs")
+    missing = set(all_ids) - by_id.keys()
+    if missing:
+        raise TaskEligibilityError(f"selected task IDs are absent from the task set: {sorted(missing)}")
+    train = {str(item) for item in split_data.get("train", ())}
+    test = {str(item) for item in split_data.get("test", ())}
+    if not set(groups["evolution"] + groups["validation"]) <= train:
+        raise TaskEligibilityError("E and V tasks must belong to the official train split")
+    if not set(groups["heldout"]) <= test:
+        raise TaskEligibilityError("H tasks must belong to the official test split")
+    if set(all_ids) & (train & test):
+        raise TaskEligibilityError("selected tasks cannot be in both official train and test splits")
+
+    excluded = {str(item) for item in excluded_task_ids}
+    entities: dict[str, set[str]] = {}
+    for group_name, ids in groups.items():
+        keys: set[str] = set()
+        for task_id in ids:
+            task = by_id[task_id]
+            _is_ex_ante_eligible(task, excluded)
+            task_keys = set(business_entity_keys(task))
+            if not task_keys:
+                raise TaskEligibilityError(
+                    f"could not derive stable business-entity keys for {group_name} task {task_id}"
+                )
+            keys.update(task_keys)
+        entities[group_name] = keys
+
+    names = ("evolution", "validation", "heldout")
+    for index, left in enumerate(names):
+        for right in names[index + 1:]:
+            shared = entities[left] & entities[right]
+            if shared:
+                raise TaskEligibilityError(
+                    f"{left} and {right} share business entities: {sorted(shared)}"
+                )
+
+    return GeneralizationTaskSelection(
+        evolution_task_ids=groups["evolution"],
+        validation_task_ids=groups["validation"],
+        heldout_task_ids=groups["heldout"],
+        evolution_entity_keys=tuple(sorted(entities["evolution"])),
+        validation_entity_keys=tuple(sorted(entities["validation"])),
+        heldout_entity_keys=tuple(sorted(entities["heldout"])),
+    )
+
+
+def _task_id_tuple(values: Sequence[str], label: str) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)):
+        raise TypeError(f"{label} task IDs must be a sequence of IDs, not one string")
+    result = tuple(str(value) for value in values)
+    if any(not value.strip() for value in result):
+        raise TaskEligibilityError(f"{label} task IDs must not be empty")
+    if len(set(result)) != len(result):
+        raise TaskEligibilityError(f"{label} task IDs must be unique")
+    return result
