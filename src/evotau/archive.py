@@ -77,6 +77,17 @@ class FailureArchive:
             rows = db.execute("SELECT strategy_id FROM customer_strategies").fetchall()
         return frozenset(row["strategy_id"] for row in rows)
 
+    def get_customer_strategy(self, strategy_id: str) -> CustomerStrategy | None:
+        """Resolve one immutable Customer snapshot by its canonical strategy ID."""
+        if not isinstance(strategy_id, str) or not strategy_id.strip():
+            raise ValueError("Customer strategy lookup requires a non-empty strategy ID")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT payload FROM customer_strategies WHERE strategy_id=?",
+                (strategy_id,),
+            ).fetchone()
+        return None if row is None else CustomerStrategy(**json.loads(row["payload"]))
+
     def customer_strategies(self, limit: int = 100) -> tuple[dict, ...]:
         if limit < 0:
             raise ValueError("limit must be non-negative")

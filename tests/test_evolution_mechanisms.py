@@ -280,6 +280,16 @@ def test_crossplay_separates_native_clean_customer_from_not_applicable_attack():
 
 def test_archive_is_append_only_idempotent_and_deduplicates_representatives(tmp_path):
     archive = FailureArchive(tmp_path / "failures.sqlite")
+    customer = CustomerStrategy()
+    customer_id = customer_strategy_id(customer)
+    assert archive.append_customer_strategy(
+        customer, parent_id=None, operator="incumbent", generation=0,
+    )
+    assert archive.get_customer_strategy(customer_id) == customer
+    assert archive.get_customer_strategy("missing-customer") is None
+    with pytest.raises(ValueError, match="non-empty strategy ID"):
+        archive.get_customer_strategy(" ")
+
     one = verified(episode(name="one"), 0)
     two = replace(verified(episode(name="two"), 1), signature=one.signature)
     assert archive.append(one)
