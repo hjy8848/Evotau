@@ -154,6 +154,24 @@ def test_rq2_reports_exact_target_effect_gate_acceptance_and_clean_preservation(
     assert len(report.gate_report_sha256) == 2
     assert report.to_dict()["panel_scope"] == "target"
 
+    partial_gate = replace(
+        gate_for(target_failures[1], candidate_service, accepted=False),
+        inconclusive=True,
+    )
+    incomplete = analyze_service_repair_crossplay(
+        old_matrix,
+        new_matrix,
+        panel_scope="target",
+        gate_reports=(gate_for(target_failures[0], candidate_service, accepted=True), partial_gate),
+        target_failures=target_failures,
+        request_budget_cap=100,
+        provider_attempts=90,
+    )
+    assert incomplete.proposed_repairs == 2
+    assert incomplete.accepted_repairs == 1 and incomplete.rejected_repairs == 0
+    assert incomplete.inconclusive_repairs == 1
+    assert incomplete.repair_acceptance_rate is None
+
 
 def test_rq2_reports_recurrence_against_the_frozen_repaired_signature_set():
     attack = CustomerStrategy()

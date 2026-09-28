@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner, pinned environment/orchestrator construction, and stubbed native end-to-end episode/evaluation/reviewer verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, complete Service repair audit journaling, and initial-S0 clean-success gate implemented; provider-backed Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner, pinned environment/orchestrator construction, and stubbed native end-to-end episode/evaluation/reviewer verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, concrete budget-gated ServiceTransition, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, complete Service repair audit journaling, and initial-S0 clean-success gate implemented; provider-backed Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (75 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; pinned native `run_simulation`/evaluator/full-reviewer path passes with offline completions; S₀ clean-success gate retains its source episode references; no provider episode has been run)
+Last verified: 2026-09-29 (80 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; pinned native `run_simulation`/evaluator/full-reviewer path passes with offline completions; S₀ clean-success gate retains its source episode references; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1535,7 +1535,7 @@ Phase 0 之后的实现顺序建议：
 - 区间和方向统计仍是描述性的，不能替代 pilot-informed 样本量、预注册假设/非劣效 margin 或 formal 推断。目前没有真实多 seed RQ2 数据，测试只验证计算和输入门禁，不产生研究证据。
 - 新增多 run、E/V/H、预算、seed、面板缺项和 incomplete-denominator 测试；全量验证为 **74 passed**（含 pinned runtime integration test），Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
 
-**仍未完成的计划项**：Phase 0 Engineering Exit 仍要求 provider-backed native `run_simulation`、真实 native reviewer 轨迹与实际 provider-attempt/token 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。live Phase 3 还需要端到端 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。RQ2 的独立-run 分析代码已具备，但正式推断所需预注册假设/非劣效 margin、pilot-informed 样本量和真实 run artifacts 尚不存在。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。
+**仍未完成的计划项**：Phase 0 Engineering Exit 仍要求 provider-backed native `run_simulation`、真实 native reviewer 轨迹与实际 provider-attempt/token 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。RQ2 的独立-run 分析代码已具备，但正式推断所需预注册假设/非劣效 margin、pilot-informed 样本量和真实 run artifacts 尚不存在。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。
 
 **Initial S₀ clean-success anchor update（2026-09-29）**
 
@@ -1549,3 +1549,12 @@ Phase 0 之后的实现顺序建议：
 - 新增 pinned-runtime 集成测试，构造实际 Retail task 73 与 EvoTau adapters，运行原生半双工 `Orchestrator`，通过真实 Retail `find_user_id_by_email` 工具，调用 `run_simulation` 和原生 `EvaluationType.ALL` evaluator，再调用 τ-bench full conversation reviewer 与 authentication classifier。
 - 仅 LiteLLM `completion` 边界替换成确定性的本地 `ModelResponse` stub；测试核对每次尝试都被共享 budget 计数、序列化轨迹包含真实工具调用/结果，最终 `native-simulation.json` 与 `phase0-result.json` 一致。该轨迹故意没有执行退货，因此 native reward 为 0；这只是接口集成夹具，不是基准结果。
 - 全量验证为 **75 passed**（含 pinned integration test），Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。provider-backed Phase 0 episode 和真实模型 reviewer 仍未运行。
+
+**End-to-end gated ServiceTransition update（2026-09-29）**
+
+- 新增 `GatedServiceTransition`，从本代和 archive 的 verified E failures 中确定 target，恢复 target/historical Customer 快照，并要求有 incumbent 当前 E-task 的有效成功记录作为 historical replay 基线。
+- proposal provider 与独立 repair-audit provider 分离注入；transition 先按初始 S₀ 状态预检 10/11 个完整 gate episode 和最小 request 余量，再执行两个 target seeds、historical replay、native Customer clean/S₀ anchor 和固定 V validation 的成对面板。target incumbent 必须在两个 seed 上重现 FailureRecord 的精确 signature。gate seed 与 discovery/confirmation seed 区间分开。
+- episode/request 预算不足时保留 incumbent，记录明确的 `inconclusive` 结果；途中耗尽时 `GateReport.inconclusive` 保留已完成 gate units。静态 policy audit 拒绝不派发 gate episode。成功执行 target replay 会通过 prepared archive journal 幂等更新 coverage。
+- `run_native_phase3()` 可直接接受 proposal/audit provider 并组装内置 transition，也继续支持调用者传入完整自定义 transition。当前测试覆盖完整接受、episode/request preflight、缺历史证据、静态拒绝和 gate 中途预算耗尽；未调用真实 provider。
+- RQ2 panel analysis 单独报告 `inconclusive_repairs`，只要 gate 存在未完成项就将 acceptance rate 标为缺失，避免把预算中断误计成拒绝或完整分母。
+- 当前完整验证为 **80 passed**（含 pinned-runtime 集成），Ruff、`compileall`、Phase 0/3 preflight 与 diff 检查通过。真实 provider Phase 0/3 和 Pilot/Formal 仍未运行。

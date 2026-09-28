@@ -108,10 +108,13 @@ class GateReport:
     evaluated_candidate: ServiceStrategy
     initial_service_strategy_id: str | None = None
     initial_s0_episode_refs: tuple[tuple[str, str], ...] = ()
+    inconclusive: bool = False
 
     def __post_init__(self) -> None:
         if type(self.accepted) is not bool:
             raise TypeError("gate report accepted must be a boolean")
+        if type(self.inconclusive) is not bool or (self.inconclusive and self.accepted):
+            raise ValueError("an inconclusive repair gate cannot be accepted")
         if (not isinstance(self.target_failure_id, str) or not self.target_failure_id
                 or self.proposal.target_failure_id != self.target_failure_id):
             raise ValueError("gate report must retain its exact verified target failure")
@@ -139,6 +142,7 @@ class GateReport:
     def to_dict(self) -> dict[str, object]:
         return {
             "accepted": self.accepted,
+            "inconclusive": self.inconclusive,
             "reasons": list(self.reasons),
             "target_failure_id": self.target_failure_id,
             "proposal": self.proposal.to_dict(),
@@ -201,6 +205,7 @@ def evaluate_repair_gate(
     audit: RepairAudit,
     initial_service_strategy_id: str,
     token_counter: Callable[[str], int],
+    inconclusive: bool = False,
 ) -> GateReport:
     """Apply target/replay/clean/validation checks, retaining the initial clean anchor."""
     reasons: list[str] = []
@@ -244,6 +249,14 @@ def evaluate_repair_gate(
     elif len({(unit.incumbent.policy_rule_id, unit.incumbent.mistake_type,
                unit.incumbent.workflow_stage) for unit in target_units}) != 1:
         reasons.append("both target trials must reproduce the same failure signature")
+    if target_units and any(
+        (unit.incumbent.policy_rule_id, unit.incumbent.mistake_type,
+         unit.incumbent.workflow_stage)
+        != (target_failure.signature.policy_rule_id, target_failure.signature.mistake_type,
+            target_failure.signature.workflow_stage)
+        for unit in target_units
+    ):
+        reasons.append("target baseline trials do not reproduce the verified target failure signature")
     if sum(unit.panel == "historical" for unit in units) > 1:
         reasons.append("the MVP gate permits at most one historical replay unit")
     for unit in units:
@@ -271,6 +284,7 @@ def evaluate_repair_gate(
             for unit in units
             if unit.panel == "clean" and unit.initial_s0 is not None
         ),
+        inconclusive=inconclusive,
     )
 
 

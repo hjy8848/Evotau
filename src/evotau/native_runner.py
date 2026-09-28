@@ -288,15 +288,18 @@ def run_native_phase3(
     data_dir: str | Path,
     phase0_result_path: str | Path,
     audit_provider: AuditProvider,
-    service_transition: Callable[..., Any],
+    service_transition: Callable[..., Any] | None = None,
+    service_proposal_provider: Callable[..., Any] | None = None,
+    service_repair_audit_provider: Callable[..., Any] | None = None,
 ) -> tuple[tuple[Any, ...], BudgetSnapshot]:
     """Run the frozen two-generation controller on native τ-bench episodes.
 
     A config must explicitly enable the provider and freeze all three role
     models. `audit_provider` must return independent Customer validity,
     adherence, and policy-attribution judgments; the native τ-bench reviewer
-    alone is intentionally insufficient. A verified failure also requires a
-    `service_transition` callback before the generation can commit.
+    alone is intentionally insufficient. A verified failure requires either
+    a complete `service_transition` callback or separate repair proposal and
+    audit providers that are assembled into the built-in paired gate.
     """
 
     from .archive import FailureArchive
@@ -309,8 +312,6 @@ def run_native_phase3(
         raise RuntimeError("native Phase 3 is disabled in the frozen manifest")
     if audit_provider is None:
         raise ValueError("native Phase 3 requires an independent EpisodeAudit provider")
-    if service_transition is None:
-        raise ValueError("native Phase 3 requires an audited ServiceTransition provider")
     phase0_budget, run_context = _validate_phase0_parent(phase0_result_path, manifest)
     customer, service = _parse_strategies(config["experiment"])
     customer = customer or CustomerStrategy()
@@ -318,6 +319,24 @@ def run_native_phase3(
     from litellm import token_counter
 
     service_token_counter = lambda text: token_counter(model=agent_model, text=text)
+    if service_transition is None:
+        if service_proposal_provider is None or service_repair_audit_provider is None:
+            raise ValueError(
+                "native Phase 3 requires a ServiceTransition or both repair proposal and audit providers"
+            )
+        from .service_transition import GatedServiceTransition
+
+        service_transition = GatedServiceTransition(
+            evolution_task_id=manifest.evolution_task_id,
+            validation_task_id=manifest.validation_task_id,
+            seed=manifest.seed,
+            initial_service=service,
+            proposal_provider=service_proposal_provider,
+            audit_provider=service_repair_audit_provider,
+            token_counter=service_token_counter,
+        )
+    elif service_proposal_provider is not None or service_repair_audit_provider is not None:
+        raise ValueError("pass either a complete ServiceTransition or repair providers, not both")
     budget = RequestBudget(manifest.request_budget_cap)
     output_directory = Path(manifest.output_path)
     context_path = output_directory / "run-context.json"

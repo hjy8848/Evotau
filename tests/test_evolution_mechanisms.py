@@ -429,6 +429,24 @@ def test_service_repair_audit_and_paired_gate():
         token_counter=lambda text: len(text.split()),
     )
     assert not misbound.accepted and any("do not match" in reason for reason in misbound.reasons)
+    wrong_target_signature = replace(
+        old_target,
+        policy_rule_id="retail.policy:identity_verification",
+        mistake_type="missing_identity_verification",
+    )
+    mismatched_target = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        (GateUnit("target-1", "target", wrong_target_signature, new_target, failure.failure_id),
+         *units[1:]),
+        target_failure=failure,
+        proposal=proposal,
+        audit=audit,
+        initial_service_strategy_id=old_service_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert not mismatched_target.accepted
+    assert any("verified target failure signature" in reason for reason in mismatched_target.reasons)
     inapplicable_attack = replace(
         old_target, strategy_applicable=False, customer_strategy_adherent=None,
     )

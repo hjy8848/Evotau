@@ -40,6 +40,52 @@ class EpisodeRunner(Protocol):
                  service: ServiceStrategy, panel_name: str) -> EpisodeRecord: ...
 
 
+@dataclass(slots=True)
+class ServiceTransitionEpisodeRunner:
+    """Episode capability plus the frozen history needed by a gated Service repair."""
+
+    episode_runner: EpisodeRunner
+    remaining_episodes: int
+    customer_strategies: Mapping[str, CustomerStrategy]
+    episode_history: tuple[EpisodeRecord, ...]
+
+    def __post_init__(self) -> None:
+        if self.remaining_episodes < 0:
+            raise ValueError("remaining episode capacity cannot be negative")
+
+    def __call__(self, *, task_id: str, seed: int, customer: CustomerStrategy | None,
+                 service: ServiceStrategy, panel_name: str) -> EpisodeRecord:
+        if self.remaining_episodes <= 0:
+            raise RuntimeError("episode cap reached before Service gate dispatch")
+        self.remaining_episodes -= 1
+        return self.episode_runner(
+            task_id=task_id, seed=seed, customer=customer, service=service,
+            panel_name=panel_name,
+        )
+
+    def resolve_customer_strategy(self, strategy_id: str) -> CustomerStrategy | None:
+        return self.customer_strategies.get(strategy_id)
+
+    def find_failure_episode(self, failure: FailureRecord) -> EpisodeRecord | None:
+        return next((item for item in self.episode_history if item.episode_id == failure.episode_id), None)
+
+    def passing_history(self, *, task_id: str, service_id: str) -> tuple[EpisodeRecord, ...]:
+        return tuple(sorted(
+            (
+                item for item in self.episode_history
+                if item.task_id == task_id
+                and item.service_strategy_id == service_id
+                and item.status.value == "complete"
+                and item.task_success is True
+                and not item.policy_violation
+                and item.customer_valid is True
+                and item.strategy_applicable is True
+                and item.customer_strategy_adherent is True
+            ),
+            key=lambda item: (item.seed, item.episode_id),
+        ))
+
+
 @dataclass(frozen=True, slots=True)
 class CustomerRound:
     incumbent: CandidateEvaluation
@@ -447,10 +493,36 @@ class TwoGenerationSmoke:
                     )
                 })
             if service_transition is not None and failure_pool:
+                strategy_snapshots = {
+                    customer_strategy_id(item): item
+                    for item in (old_customer, customer, *(proposal.strategy for proposal in round_result.proposals))
+                }
+                observed_episodes = tuple({
+                    episode.episode_id: episode
+                    for episode in (
+                        *self._episode_history.values(),
+                        *round_result.incumbent.episodes,
+                        *(episode for evaluation in round_result.candidates for episode in evaluation.episodes),
+                        *(episode for evaluation in round_result.confirmation_evaluations for episode in evaluation.episodes),
+                    )
+                }.values())
+                if self.failure_archive is not None:
+                    for failure in failure_pool.values():
+                        strategy_id = failure.customer_strategy_id
+                        if strategy_id not in strategy_snapshots:
+                            archived_strategy = self.failure_archive.get_customer_strategy(strategy_id)
+                            if archived_strategy is not None:
+                                strategy_snapshots[strategy_id] = archived_strategy
+                transition_runner = ServiceTransitionEpisodeRunner(
+                    self._run_episode,
+                    max(0, self.max_episodes - self.episode_attempts),
+                    strategy_snapshots,
+                    observed_episodes,
+                )
                 if self.request_budget is None:
                     proposed, gate, service_note = service_transition(
                         generation, customer, service, tuple(failure_pool.values()),
-                        self._run_episode, None,
+                        transition_runner, None,
                     )
                 else:
                     from tau2.utils import llm_utils
@@ -458,7 +530,7 @@ class TwoGenerationSmoke:
                     with self.request_budget.instrument_tau_llm_utils(llm_utils):
                         proposed, gate, service_note = service_transition(
                             generation, customer, service, tuple(failure_pool.values()),
-                            self._run_episode, self.request_budget,
+                            transition_runner, self.request_budget,
                         )
                 accepted = gate is not None and gate.accepted and gate.candidate_strategy == proposed
                 if gate is not None and gate.accepted and proposed != gate.candidate_strategy:
@@ -497,6 +569,7 @@ class TwoGenerationSmoke:
                 failures=round_result.verified_failures,
                 old_service=old_service,
                 new_service=service,
+                service_gate=gate,
             )
             self._progress["prepared_generation"] = {
                 "customer": customer.to_dict(),
@@ -600,6 +673,7 @@ def _prepared_archive_payload(
     failures: tuple[FailureRecord, ...],
     old_service: ServiceStrategy,
     new_service: ServiceStrategy,
+    service_gate: GateReport | None,
 ) -> dict[str, Any]:
     customers = [{
         "strategy": old_customer.to_dict(), "parent_id": None,
@@ -619,10 +693,16 @@ def _prepared_archive_payload(
             "parent_id": service_strategy_id(old_service),
             "operator": "verified_repair", "generation": generation,
         })
+    replayed_target = (
+        service_gate is not None
+        and any(key.startswith("target-") for key, _passed, _reason in service_gate.unit_results)
+    )
     return {
         "customers": customers,
         "services": services,
         "failures": [failure.to_dict() for failure in failures],
+        "replays": ([{"failure_id": service_gate.target_failure_id, "generation": generation}]
+                    if replayed_target else []),
     }
 
 
@@ -644,6 +724,8 @@ def _append_prepared_archive(
         )
     for item in payload["failures"]:
         archive.append(FailureRecord.from_dict(item))
+    for replay in payload.get("replays", ()):
+        archive.mark_replayed(replay["failure_id"], generation=int(replay["generation"]))
 
 
 def _runner_cache_key(*, task_id: str, seed: int, customer: CustomerStrategy | None,

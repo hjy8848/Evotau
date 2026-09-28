@@ -54,6 +54,7 @@ class ServiceRepairAnalysis:
     proposed_repairs: int
     accepted_repairs: int
     rejected_repairs: int
+    inconclusive_repairs: int
     repair_acceptance_rate: float | None
     task_success_rate_change: float | None
     policy_violation_rate_change: float | None
@@ -217,6 +218,7 @@ def analyze_service_repair_crossplay(
 
     accepted = sum(report.accepted for report in gate_reports)
     proposed = len(gate_reports)
+    inconclusive = sum(report.inconclusive for report in gate_reports)
     all_old = tuple(old_by_customer.values())
     all_new = tuple(new_by_customer.values())
     total_old_valid = sum(cell.valid_episodes for cell in all_old)
@@ -261,8 +263,11 @@ def analyze_service_repair_crossplay(
         ),
         proposed_repairs=proposed,
         accepted_repairs=accepted,
-        rejected_repairs=proposed - accepted,
-        repair_acceptance_rate=(accepted / proposed if proposed else None),
+        rejected_repairs=proposed - accepted - inconclusive,
+        inconclusive_repairs=inconclusive,
+        repair_acceptance_rate=(
+            None if inconclusive else (accepted / proposed if proposed else None)
+        ),
         task_success_rate_change=_difference(old_success_rate, new_success_rate),
         policy_violation_rate_change=_difference(old_policy_rate, new_policy_rate),
         attributable_failure_rate_change=_difference(old_failure_rate, new_failure_rate),
