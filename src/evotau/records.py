@@ -180,11 +180,19 @@ class FailureRecord:
     policy_ref: str
     evidence: tuple[EvidenceRef, ...]
     verification_ref: str
+    reproduction_episode_id: str
+    reproduction_verification_ref: str
     severity: str = "material"
 
     def __post_init__(self) -> None:
-        if not all((self.failure_id, self.episode_id, self.task_id, self.policy_ref, self.verification_ref)):
+        if not all((
+            self.failure_id, self.episode_id, self.task_id, self.policy_ref,
+            self.verification_ref, self.reproduction_episode_id,
+            self.reproduction_verification_ref,
+        )):
             raise ValueError("verified failure identifiers and policy/verification refs are required")
+        if self.episode_id == self.reproduction_episode_id:
+            raise ValueError("failure reproduction must reference a distinct episode")
         if self.generation < 0:
             raise ValueError("generation must be non-negative")
         if not self.evidence:
@@ -213,13 +221,34 @@ class FailureRecord:
         cls,
         episode: EpisodeRecord,
         *,
+        reproduction_episode: EpisodeRecord,
         generation: int,
         verifier: str,
+        reproduction_verifier: str,
     ) -> FailureRecord:
-        """Promote a fully evidenced candidate after an explicit independent audit."""
+        """Promote only when independent audits confirm a matching fresh-seed rerun."""
 
         if not episode.has_attributable_failure_candidate:
             raise ValueError("episode lacks complete valid, adherent, policy-linked failure evidence")
+        if not reproduction_episode.has_attributable_failure_candidate:
+            raise ValueError("reproduction episode lacks complete valid, adherent failure evidence")
+        if (not isinstance(verifier, str) or not verifier.strip()
+                or not isinstance(reproduction_verifier, str) or not reproduction_verifier.strip()):
+            raise ValueError("source and reproduction episodes each require an independent audit reference")
+        if (episode.task_id, episode.customer_strategy_id, episode.service_strategy_id) != (
+            reproduction_episode.task_id,
+            reproduction_episode.customer_strategy_id,
+            reproduction_episode.service_strategy_id,
+        ):
+            raise ValueError("failure reproduction must keep task and both strategies fixed")
+        if episode.seed == reproduction_episode.seed:
+            raise ValueError("failure reproduction must use a fresh seed")
+        if (episode.policy_rule_id, episode.workflow_stage, episode.mistake_type) != (
+            reproduction_episode.policy_rule_id,
+            reproduction_episode.workflow_stage,
+            reproduction_episode.mistake_type,
+        ):
+            raise ValueError("failure reproduction must match the exact verified signature")
         assert episode.policy_rule_id and episode.mistake_type and episode.workflow_stage
         signature = FailureSignature(
             "retail", episode.workflow_stage, episode.policy_rule_id, episode.mistake_type
@@ -227,7 +256,13 @@ class FailureRecord:
         if not is_mvp_failure_signature(signature):
             raise ValueError("episode failure is outside the frozen Retail MVP taxonomy")
         failure_id = sha256_json(
-            {"episode": episode.episode_key, "signature": signature.to_dict(), "verifier": verifier}
+            {
+                "episode": episode.episode_key,
+                "reproduction_episode": reproduction_episode.episode_key,
+                "signature": signature.to_dict(),
+                "verifier": verifier.strip(),
+                "reproduction_verifier": reproduction_verifier.strip(),
+            }
         )[:20]
         return cls(
             failure_id=failure_id,
@@ -239,7 +274,9 @@ class FailureRecord:
             signature=signature,
             policy_ref=episode.policy_rule_id,
             evidence=episode.evidence,
-            verification_ref=verifier,
+            verification_ref=verifier.strip(),
+            reproduction_episode_id=reproduction_episode.episode_id,
+            reproduction_verification_ref=reproduction_verifier.strip(),
         )
 
 
@@ -249,6 +286,8 @@ class CandidateEvaluation:
     episodes: tuple[EpisodeRecord, ...]
     verified_failures: tuple[FailureRecord, ...] = ()
     panel_name: str = "discovery"
+    failure_audit_refs: tuple[tuple[str, str], ...] = ()
+    replication_episodes: tuple[EpisodeRecord, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.strategy_id:
@@ -257,6 +296,18 @@ class CandidateEvaluation:
         if len(episode_ids) != len(set(episode_ids)):
             raise ValueError("candidate evaluation cannot contain duplicate episode IDs")
         by_id = {episode.episode_id: episode for episode in self.episodes}
+        replication_ids = [episode.episode_id for episode in self.replication_episodes]
+        if len(replication_ids) != len(set(replication_ids)) or set(replication_ids) & set(by_id):
+            raise ValueError("failure replication episodes must be unique and separate from the scored panel")
+        evidence_by_id = by_id | {episode.episode_id: episode for episode in self.replication_episodes}
+        audit_episode_ids = [episode_id for episode_id, _ref in self.failure_audit_refs]
+        if len(audit_episode_ids) != len(set(audit_episode_ids)):
+            raise ValueError("failure audit references must be unique per episode")
+        for episode_id, ref in self.failure_audit_refs:
+            episode = evidence_by_id.get(episode_id)
+            if (episode is None or not isinstance(ref, str) or not ref.strip()
+                    or not episode.has_attributable_failure_candidate):
+                raise ValueError("failure audit reference must name an independently reviewed failure episode")
         for episode in self.episodes:
             if episode.customer_strategy_id != self.strategy_id:
                 raise ValueError("episode Customer strategy does not match its candidate evaluation")
@@ -276,12 +327,48 @@ class CandidateEvaluation:
                 or failure.evidence != episode.evidence
             ):
                 raise ValueError("verified failure fields do not match their episode evidence")
+            reproduction_episode = evidence_by_id.get(failure.reproduction_episode_id)
+            if reproduction_episode is None:
+                raise ValueError("verified failure reproduction must be present in the evaluation evidence")
+            if reproduction_episode.episode_id not in replication_ids:
+                raise ValueError("verified failure reproduction must be retained outside the scored panel")
+            if (reproduction_episode.task_id, reproduction_episode.customer_strategy_id,
+                    reproduction_episode.service_strategy_id, reproduction_episode.seed) == (
+                episode.task_id, episode.customer_strategy_id, episode.service_strategy_id, episode.seed,
+            ):
+                raise ValueError("failure reproduction must be a distinct-seed strategy-level rerun")
+            audit_refs = dict(self.failure_audit_refs)
+            if (audit_refs.get(episode.episode_id) != failure.verification_ref
+                    or audit_refs.get(reproduction_episode.episode_id)
+                    != failure.reproduction_verification_ref):
+                raise ValueError("verified failure audit refs must match both reviewed episodes")
 
     @property
     def fitness(self) -> int:
         """Count distinct failed tasks, with at most one point per task."""
 
         return len({failure.task_id for failure in self.verified_failures})
+
+    @property
+    def provisional_failure_events(self) -> frozenset[tuple[str, str]]:
+        """Audited single-episode signals used only to choose a replay probe."""
+        audited = dict(self.failure_audit_refs)
+        events: set[tuple[str, str]] = set()
+        for episode in self.episodes:
+            if episode.episode_id not in audited or not episode.has_attributable_failure_candidate:
+                continue
+            signature = FailureSignature(
+                "retail", episode.workflow_stage or "", episode.policy_rule_id or "",
+                episode.mistake_type or "",
+            )
+            if is_mvp_failure_signature(signature):
+                events.add((episode.task_id, signature.key))
+        return frozenset(events)
+
+    @property
+    def provisional_failure_count(self) -> int:
+        """Distinct task count before replay; never used as Customer fitness."""
+        return len({task_id for task_id, _signature in self.provisional_failure_events})
 
     @property
     def signature_count(self) -> int:
@@ -345,6 +432,8 @@ class CandidateEvaluation:
             "strategy_id": self.strategy_id,
             "panel_name": self.panel_name,
             "fitness": self.fitness,
+            "provisional_failure_count": self.provisional_failure_count,
+            "provisional_failure_events": [list(item) for item in sorted(self.provisional_failure_events)],
             "signature_count": self.signature_count,
             "valid_episode_count": self.valid_episode_count,
             "invalid_episode_count": self.invalid_episode_count,
@@ -354,7 +443,9 @@ class CandidateEvaluation:
             "strategy_not_applicable_count": self.strategy_not_applicable_count,
             "strategy_adherence_rate": self.strategy_adherence_rate,
             "episodes": [item.to_dict() for item in self.episodes],
+            "replication_episodes": [item.to_dict() for item in self.replication_episodes],
             "failure_ids": [item.failure_id for item in self.verified_failures],
+            "failure_audit_refs": [list(item) for item in self.failure_audit_refs],
         }
 
 

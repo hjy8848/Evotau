@@ -43,6 +43,15 @@ def make_episode(*, episode_id: str, task: str, seed: int, customer: CustomerStr
     )
 
 
+def verified_failure(item: EpisodeRecord, generation: int = 0) -> FailureRecord:
+    reproduction = replace(item, episode_id=f"{item.episode_id}:replay", seed=item.seed + 10_000)
+    return FailureRecord.verify(
+        item, reproduction_episode=reproduction, generation=generation,
+        verifier=f"review:{item.episode_id}",
+        reproduction_verifier=f"review:{reproduction.episode_id}",
+    )
+
+
 def matrix(*, task: str, seeds: tuple[int, ...], service: ServiceStrategy,
            attack: CustomerStrategy, failures: set[tuple[str, int]],
            verified_failures: tuple[FailureRecord, ...] = (),
@@ -111,10 +120,7 @@ def test_rq2_reports_exact_target_effect_gate_acceptance_and_clean_preservation(
         )
         for seed in (1, 2)
     )
-    target_failures = tuple(
-        FailureRecord.verify(item, generation=0, verifier=f"review:{item.episode_id}")
-        for item in target_episodes
-    )
+    target_failures = tuple(verified_failure(item) for item in target_episodes)
     candidate_service = ServiceStrategy((ServiceRule(
         "confirm-before-write",
         "retail.policy:explicit_confirmation",
@@ -206,9 +212,7 @@ def test_rq2_reports_recurrence_against_the_frozen_repaired_signature_set():
         episode_id="source:target:1", task="source", seed=1, customer=attack,
         service=old_service, failure=True,
     )
-    source_failure = FailureRecord.verify(
-        target_episode, generation=0, verifier="review:source-target",
-    )
+    source_failure = verified_failure(target_episode)
     repaired_signature = source_failure.signature.key
     candidate_service = ServiceStrategy((ServiceRule(
         "historical-regression",
@@ -218,18 +222,14 @@ def test_rq2_reports_recurrence_against_the_frozen_repaired_signature_set():
         source_failure.evidence_refs,
     ),))
     historical_failures = tuple(
-        FailureRecord.verify(
-            make_episode(
+        verified_failure(make_episode(
                 episode_id=(
                     f"{service_strategy_id(candidate_service)[:6]}:history:{seed}:"
                     f"{customer_strategy_id(attack)[:6]}"
                 ),
                 task="history", seed=seed,
                 customer=attack, service=candidate_service, failure=True,
-            ),
-            generation=1,
-            verifier=f"review:history:{seed}",
-        )
+            ), generation=1)
         for seed in (4, 5)
     )
     old_matrix = matrix(

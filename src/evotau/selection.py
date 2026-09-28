@@ -80,11 +80,13 @@ def select_customer(
         raise ValueError("incumbent and challenger must use the same confirmation task/seed panel")
     if _episode_keys(incumbent_confirm) & _episode_keys(incumbent):
         raise ValueError("confirmation must use a fresh task/seed panel")
+    incumbent_confirm_fitness = _reproduced_task_count(incumbent, incumbent_confirm)
+    challenger_confirm_fitness = _reproduced_task_count(winner, challenger_confirm)
     confirmation_scores = (
-        (incumbent.strategy_id, incumbent_confirm.fitness),
-        (winner.strategy_id, challenger_confirm.fitness),
+        (incumbent.strategy_id, incumbent_confirm_fitness),
+        (winner.strategy_id, challenger_confirm_fitness),
     )
-    if challenger_confirm.fitness <= incumbent_confirm.fitness:
+    if challenger_confirm_fitness <= incumbent_confirm_fitness:
         return SelectionDecision(
             incumbent.strategy_id,
             incumbent.strategy_id,
@@ -108,3 +110,28 @@ def _episode_keys(evaluation: CandidateEvaluation) -> frozenset[tuple[str, int]]
     if len(keys) != len(set(keys)):
         raise ValueError("evaluation contains duplicate task/seed episodes")
     return frozenset(keys)
+
+
+def _reproduced_task_count(discovery: CandidateEvaluation,
+                           confirmation: CandidateEvaluation) -> int:
+    """Count only discovery failures independently repeated in this fresh panel."""
+    confirmation_by_id = {item.episode_id: item for item in confirmation.episodes}
+    audited = dict(confirmation.failure_audit_refs)
+    reproduced_tasks = set()
+    for failure in discovery.verified_failures:
+        replay = confirmation_by_id.get(failure.reproduction_episode_id)
+        if replay is None or not replay.has_attributable_failure_candidate:
+            continue
+        if (replay.task_id, replay.customer_strategy_id, replay.service_strategy_id) != (
+            failure.task_id, failure.customer_strategy_id, failure.service_strategy_id,
+        ) or audited.get(replay.episode_id) != failure.reproduction_verification_ref:
+            continue
+        if (replay.policy_rule_id, replay.workflow_stage, replay.mistake_type) != (
+            failure.policy_ref, failure.signature.workflow_stage, failure.signature.mistake_type,
+        ):
+            continue
+        source_seeds = {item.seed for item in discovery.episodes if item.episode_id == failure.episode_id}
+        if not source_seeds or replay.seed in source_seeds:
+            continue
+        reproduced_tasks.add(failure.task_id)
+    return len(reproduced_tasks)

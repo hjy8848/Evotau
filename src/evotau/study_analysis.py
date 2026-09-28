@@ -38,6 +38,7 @@ class StudyRun:
     provider_attempts: int
     episodes: tuple[EpisodeRecord, ...]
     verified_failures: tuple[FailureRecord, ...]
+    reproduction_episodes: tuple[EpisodeRecord, ...] = ()
 
     def __post_init__(self) -> None:
         if (not isinstance(self.run_id, str) or not self.run_id.strip()
@@ -59,6 +60,8 @@ class StudyRun:
             raise ValueError("study run must contain executed episode records")
         if any(not isinstance(item, EpisodeRecord) for item in self.episodes):
             raise TypeError("study run episodes must be EpisodeRecord values")
+        if any(not isinstance(item, EpisodeRecord) for item in self.reproduction_episodes):
+            raise TypeError("study run reproduction_episodes must be EpisodeRecord values")
         if any(not isinstance(item, FailureRecord) for item in self.verified_failures):
             raise TypeError("study run failures must be verified FailureRecord values")
 
@@ -67,11 +70,18 @@ class StudyRun:
             raise ValueError("study run episode IDs must be unique")
         if any(episode.task_id not in self.task_ids for episode in self.episodes):
             raise ValueError("study run episode falls outside its frozen task panel")
+        if any(episode.task_id not in self.task_ids for episode in self.reproduction_episodes):
+            raise ValueError("failure reproduction falls outside its frozen task panel")
         observed_tasks = {episode.task_id for episode in self.episodes}
         if observed_tasks != set(self.task_ids):
             raise ValueError("study run must include every task in the frozen task panel")
 
         by_episode = {episode.episode_id: episode for episode in self.episodes}
+        reproduction_ids = [episode.episode_id for episode in self.reproduction_episodes]
+        if (len(reproduction_ids) != len(set(reproduction_ids))
+                or set(reproduction_ids) & set(by_episode)):
+            raise ValueError("failure reproduction episodes must be unique and separate from scored episodes")
+        reproduction_by_id = {episode.episode_id: episode for episode in self.reproduction_episodes}
         failure_episode_ids = [failure.episode_id for failure in self.verified_failures]
         if len(failure_episode_ids) != len(set(failure_episode_ids)):
             raise ValueError("study run permits only the earliest verified failure per episode")
@@ -92,34 +102,22 @@ class StudyRun:
                 or failure.evidence != episode.evidence
             ):
                 raise ValueError("verified failure fields do not match its episode evidence")
+            reproduction = reproduction_by_id.get(failure.reproduction_episode_id)
+            if reproduction is None:
+                raise ValueError("verified failure is missing its strategy-level reproduction episode")
+            if (not reproduction.has_attributable_failure_candidate
+                    or (reproduction.task_id, reproduction.customer_strategy_id,
+                        reproduction.service_strategy_id, reproduction.policy_rule_id,
+                        reproduction.workflow_stage, reproduction.mistake_type) != (
+                        failure.task_id, failure.customer_strategy_id, failure.service_strategy_id,
+                        failure.policy_ref, failure.signature.workflow_stage, failure.signature.mistake_type,
+                    )
+                    or reproduction.seed == episode.seed):
+                raise ValueError("failure reproduction does not preserve its exact task, strategy, seed, and signature")
 
     @property
     def input_sha256(self) -> str:
         """Fingerprint the exact non-sensitive records used by the analysis."""
-
-        episode_rows = []
-        for episode in self.episodes:
-            episode_rows.append({
-                "episode_id": episode.episode_id,
-                "task_id": episode.task_id,
-                "seed": episode.seed,
-                "customer_strategy_id": episode.customer_strategy_id,
-                "service_strategy_id": episode.service_strategy_id,
-                "status": episode.status.value,
-                "task_success": episode.task_success,
-                "native_reward": episode.native_reward,
-                "customer_valid": episode.customer_valid,
-                "strategy_applicable": episode.strategy_applicable,
-                "customer_strategy_adherent": episode.customer_strategy_adherent,
-                "policy_violation": episode.policy_violation,
-                "policy_rule_id": episode.policy_rule_id,
-                "mistake_type": episode.mistake_type,
-                "workflow_stage": episode.workflow_stage,
-                "evidence": [asdict(item) for item in episode.evidence],
-                "trajectory_ref": episode.trajectory_ref,
-                "audit_ref": episode.audit_ref,
-                "tool_calls": episode.tool_calls,
-            })
         return sha256_json({
             "run_id": self.run_id,
             "seed_block_id": self.seed_block_id,
@@ -128,7 +126,8 @@ class StudyRun:
             "task_ids": list(self.task_ids),
             "request_budget_cap": self.request_budget_cap,
             "provider_attempts": self.provider_attempts,
-            "episodes": episode_rows,
+            "episodes": [episode.to_dict() for episode in self.episodes],
+            "reproduction_episodes": [episode.to_dict() for episode in self.reproduction_episodes],
             "verified_failures": [failure.to_dict() for failure in self.verified_failures],
         })
 
@@ -142,6 +141,7 @@ class StudyRun:
             "request_budget_cap": self.request_budget_cap,
             "provider_attempts": self.provider_attempts,
             "episodes": [episode.to_dict() for episode in self.episodes],
+            "reproduction_episodes": [episode.to_dict() for episode in self.reproduction_episodes],
             "verified_failures": [failure.to_dict() for failure in self.verified_failures],
         }
 
@@ -150,6 +150,7 @@ class StudyRun:
         required = {
             "run_id", "seed_block_id", "evolution_seed", "condition", "task_ids",
             "request_budget_cap", "provider_attempts", "episodes", "verified_failures",
+            "reproduction_episodes",
         }
         if not isinstance(value, dict) or set(value) != required:
             raise ValueError("study run has missing or unknown fields")
@@ -157,12 +158,17 @@ class StudyRun:
             isinstance(item, str) for item in value["task_ids"]
         ):
             raise ValueError("study run task_ids must be a JSON array of strings")
-        if not isinstance(value["episodes"], list) or not isinstance(value["verified_failures"], list):
-            raise TypeError("study run episodes and verified_failures must be JSON arrays")
+        if (not isinstance(value["episodes"], list)
+                or not isinstance(value["verified_failures"], list)
+                or not isinstance(value["reproduction_episodes"], list)):
+            raise TypeError("study run episodes, reproduction_episodes, and verified_failures must be JSON arrays")
         episode_fields = {item.name for item in fields(EpisodeRecord)}
         failure_fields = {item.name for item in fields(FailureRecord)}
         if any(not isinstance(item, dict) or set(item) != episode_fields for item in value["episodes"]):
             raise ValueError("study episode row has missing or unknown fields")
+        if any(not isinstance(item, dict) or set(item) != episode_fields
+               for item in value["reproduction_episodes"]):
+            raise ValueError("study reproduction episode row has missing or unknown fields")
         if any(not isinstance(item, dict) or set(item) != failure_fields
                for item in value["verified_failures"]):
             raise ValueError("verified failure row has missing or unknown fields")
@@ -178,6 +184,9 @@ class StudyRun:
                 episodes=tuple(EpisodeRecord.from_dict(item) for item in value["episodes"]),
                 verified_failures=tuple(FailureRecord.from_dict(item)
                                         for item in value["verified_failures"]),
+                reproduction_episodes=tuple(
+                    EpisodeRecord.from_dict(item) for item in value["reproduction_episodes"]
+                ),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"invalid study run: {exc}") from exc
@@ -216,7 +225,8 @@ class StudyRun:
             input_sha256=self.input_sha256,
             request_budget_cap=self.request_budget_cap,
             provider_attempts=self.provider_attempts,
-            attempted_episodes=len(self.episodes),
+            attempted_episodes=len(self.episodes) + len(self.reproduction_episodes),
+            reproduction_episodes=len(self.reproduction_episodes),
             valid_episodes=len(valid),
             invalid_episodes=len(invalid),
             infrastructure_episodes=len(infrastructure),
@@ -244,6 +254,7 @@ class RunMetrics:
     request_budget_cap: int
     provider_attempts: int
     attempted_episodes: int
+    reproduction_episodes: int
     valid_episodes: int
     invalid_episodes: int
     infrastructure_episodes: int
@@ -401,7 +412,7 @@ def load_rq1_document(value: Any) -> tuple[StudyRun, ...]:
 
     if not isinstance(value, dict) or set(value) != {"schema_version", "runs"}:
         raise ValueError("RQ1 input must contain only schema_version and runs")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
         raise ValueError("unsupported RQ1 input schema_version")
     if not isinstance(value["runs"], list):
         raise TypeError("RQ1 runs must be a JSON array")
@@ -415,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Analyze budget-matched adaptive, static, and random Customer study runs."
     )
-    parser.add_argument("--input", required=True, type=Path, help="version 1 run-level study JSON")
+    parser.add_argument("--input", required=True, type=Path, help="version 2 run-level study JSON")
     parser.add_argument("--output", type=Path, help="write a new immutable report file; stdout by default")
     parser.add_argument("--bootstrap-seed", type=int, default=0)
     parser.add_argument("--bootstrap-replicates", type=int, default=10_000)

@@ -61,10 +61,8 @@ def make_matrix(*, run_name: str, panel: str, service: ServiceStrategy,
         )
         for customer in (None, attack) for seed in seeds
     )
-    failures = tuple(
-        FailureRecord.verify(episode, generation=0, verifier=f"audit:{episode.episode_id}")
-        for episode in episodes if episode.has_attributable_failure_candidate
-    )
+    failures = tuple(_verified_failure(episode) for episode in episodes
+                     if episode.has_attributable_failure_candidate)
     matrix = build_crossplay_matrix(
         episodes,
         failures,
@@ -75,6 +73,17 @@ def make_matrix(*, run_name: str, panel: str, service: ServiceStrategy,
         repaired_signature_keys=repaired_keys,
     )
     return matrix, failures
+
+
+def _verified_failure(episode: EpisodeRecord) -> FailureRecord:
+    reproduction = replace(
+        episode, episode_id=f"{episode.episode_id}:replay", seed=episode.seed + 10_000,
+    )
+    return FailureRecord.verify(
+        episode, reproduction_episode=reproduction, generation=0,
+        verifier=f"audit:{episode.episode_id}",
+        reproduction_verifier=f"audit:{reproduction.episode_id}",
+    )
 
 
 def gate(failure: FailureRecord, candidate: ServiceStrategy, *, accepted: bool) -> GateReport:

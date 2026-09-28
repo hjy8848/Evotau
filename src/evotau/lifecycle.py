@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .archive import FailureArchive
-from .attribution import promote_verified_failure
+from .attribution import confirm_failure_reproductions
 from .budget import BudgetSnapshot, ProviderBudgetExceeded, RequestBudget
 from .checkpoint import (
     EvolutionCheckpoint,
@@ -118,9 +118,12 @@ def evaluate_customer_panel(
 ) -> CandidateEvaluation:
     if not task_ids or not seeds:
         raise ValueError("evaluation panel needs at least one task and seed")
+    if (len(set(task_ids)) != len(task_ids) or len(set(seeds)) != len(seeds)
+            or any(type(seed) is not int or seed < 0 for seed in seeds)):
+        raise ValueError("evaluation panel task IDs and seeds must be unique and valid")
     customer_id, service_id = customer_strategy_id(strategy), service_strategy_id(service)
     episodes: list[EpisodeRecord] = []
-    failures: list[FailureRecord] = []
+    audit_refs: list[tuple[str, str]] = []
     for task_id in task_ids:
         for seed in seeds:
             if request_budget is not None and request_budget.snapshot().remaining <= 0:
@@ -139,13 +142,11 @@ def evaluate_customer_panel(
                     verification_ref = strategy_seen_failures.get(episode.episode_id) or episode.audit_ref
                 else:
                     verification_ref = episode.audit_ref
-            decision = promote_verified_failure(
-                episode, generation=generation,
-                independent_verification_ref=verification_ref,
-            )
-            if decision.failure:
-                failures.append(decision.failure)
-    return CandidateEvaluation(customer_id, tuple(episodes), tuple(failures), panel_name)
+            if episode.has_attributable_failure_candidate and verification_ref and verification_ref.strip():
+                audit_refs.append((episode.episode_id, verification_ref.strip()))
+    return CandidateEvaluation(
+        customer_id, tuple(episodes), (), panel_name, tuple(audit_refs),
+    )
 
 
 def run_customer_round(
@@ -161,11 +162,26 @@ def run_customer_round(
     verification_refs: dict[str, str] | None = None,
     failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
     already_seen: tuple[str, ...] | frozenset[str] = (),
+    prior_failures: tuple[FailureRecord, ...] = (),
     confirmation_task_ids: tuple[str, ...] = (),
     confirmation_seeds: tuple[int, ...] = (),
     request_budget: RequestBudget | None = None,
 ) -> CustomerRound:
-    """Evaluate incumbent and K candidates on the same panel; ties retain incumbent."""
+    """Evaluate a shared panel, then replay audited signals before scoring failures."""
+    if (not task_ids or not seeds or len(set(task_ids)) != len(task_ids)
+            or len(set(seeds)) != len(seeds)
+            or any(type(seed) is not int or seed < 0 for seed in seeds)):
+        raise ValueError("Customer discovery requires a unique frozen task/seed panel")
+    if bool(confirmation_task_ids) != bool(confirmation_seeds):
+        raise ValueError("failure confirmation requires both tasks and fresh seeds")
+    if confirmation_task_ids:
+        if (confirmation_task_ids != task_ids
+                or len(set(confirmation_task_ids)) != len(confirmation_task_ids)
+                or len(set(confirmation_seeds)) != len(confirmation_seeds)
+                or any(type(seed) is not int or seed < 0 for seed in confirmation_seeds)):
+            raise ValueError("failure confirmation must preserve the ordered discovery task panel")
+        if set(zip(task_ids, seeds)) & set(zip(confirmation_task_ids, confirmation_seeds)):
+            raise ValueError("failure confirmation requires fresh task/seed pairs")
     incumbent_eval = evaluate_customer_panel(
         runner, task_ids=task_ids, seeds=seeds, strategy=incumbent, service=service,
         panel_name="discovery", generation=generation, strategy_seen_failures=verification_refs,
@@ -173,45 +189,96 @@ def run_customer_round(
         request_budget=request_budget,
     )
     candidates = propose_customer_candidates(
-        incumbent, count, seed=proposal_seed, recent_failures=incumbent_eval.verified_failures,
+        incumbent, count, seed=proposal_seed, recent_failures=prior_failures,
         already_seen=already_seen,
     )
-    evaluations = tuple(evaluate_customer_panel(
+    evaluations = [evaluate_customer_panel(
         runner, task_ids=task_ids, seeds=seeds, strategy=candidate.strategy, service=service,
         panel_name="discovery", generation=generation, strategy_seen_failures=verification_refs,
         failure_verifier=failure_verifier,
         request_budget=request_budget,
-    ) for candidate in candidates)
+    ) for candidate in candidates]
     confirmations: dict[str, CandidateEvaluation] | None = None
-    if confirmation_task_ids and confirmation_seeds:
-        best = max((item.fitness for item in evaluations), default=incumbent_eval.fitness)
-        if best > incumbent_eval.fitness:
-            winner = min((item for item in evaluations if item.fitness == best), key=lambda item: item.strategy_id)
-            selected_strategy = next(item.strategy for item in candidates if item.strategy_id == winner.strategy_id)
-            incumbent_confirm = evaluate_customer_panel(
-                runner, task_ids=confirmation_task_ids, seeds=confirmation_seeds,
-                strategy=incumbent, service=service, panel_name="confirmation",
-                generation=generation, strategy_seen_failures=verification_refs,
-                failure_verifier=failure_verifier,
-                request_budget=request_budget,
-            )
-            winner_confirm = evaluate_customer_panel(
-                runner, task_ids=confirmation_task_ids, seeds=confirmation_seeds,
-                strategy=selected_strategy, service=service, panel_name="confirmation",
-                generation=generation, strategy_seen_failures=verification_refs,
-                failure_verifier=failure_verifier,
-                request_budget=request_budget,
-            )
-            confirmations = {incumbent_eval.strategy_id: incumbent_confirm,
-                             winner.strategy_id: winner_confirm}
+    confirmation_evaluations: list[CandidateEvaluation] = []
+    probe = _choose_failure_replay_probe(incumbent_eval, tuple(evaluations))
+    can_replay = bool(confirmation_task_ids and confirmation_seeds)
+    if probe is not None and can_replay:
+        selected_strategy = next(item.strategy for item in candidates if item.strategy_id == probe.strategy_id)
+        incumbent_confirm = evaluate_customer_panel(
+            runner, task_ids=confirmation_task_ids, seeds=confirmation_seeds,
+            strategy=incumbent, service=service, panel_name="confirmation",
+            generation=generation, strategy_seen_failures=verification_refs,
+            failure_verifier=failure_verifier,
+            request_budget=request_budget,
+        )
+        probe_confirm = evaluate_customer_panel(
+            runner, task_ids=confirmation_task_ids, seeds=confirmation_seeds,
+            strategy=selected_strategy, service=service, panel_name="confirmation",
+            generation=generation, strategy_seen_failures=verification_refs,
+            failure_verifier=failure_verifier,
+            request_budget=request_budget,
+        )
+        incumbent_eval, incumbent_confirm, _ = confirm_failure_reproductions(
+            incumbent_eval, incumbent_confirm, generation=generation,
+        )
+        probe, probe_confirm, _ = confirm_failure_reproductions(
+            probe, probe_confirm, generation=generation,
+        )
+        evaluations = [probe if item.strategy_id == probe.strategy_id else item for item in evaluations]
+        confirmations = {
+            incumbent_eval.strategy_id: incumbent_confirm,
+            probe.strategy_id: probe_confirm,
+        }
+        confirmation_evaluations.extend((incumbent_confirm, probe_confirm))
+    elif incumbent_eval.provisional_failure_events and can_replay:
+        # A verified incumbent failure may justify a Service repair even when no
+        # Customer candidate offers a novel or strictly stronger attack signal.
+        incumbent_confirm = evaluate_customer_panel(
+            runner, task_ids=confirmation_task_ids, seeds=confirmation_seeds,
+            strategy=incumbent, service=service, panel_name="confirmation",
+            generation=generation, strategy_seen_failures=verification_refs,
+            failure_verifier=failure_verifier,
+            request_budget=request_budget,
+        )
+        incumbent_eval, incumbent_confirm, _ = confirm_failure_reproductions(
+            incumbent_eval, incumbent_confirm, generation=generation,
+        )
+        confirmation_evaluations.append(incumbent_confirm)
     selection = select_customer(incumbent_eval, evaluations, confirmation=confirmations)
-    failures = incumbent_eval.verified_failures + tuple(
-        failure for evaluation in evaluations for failure in evaluation.verified_failures
-    )
+    failures_by_id = {
+        failure.failure_id: failure
+        for evaluation in (incumbent_eval, *evaluations, *confirmation_evaluations)
+        for failure in evaluation.verified_failures
+    }
     return CustomerRound(
-        incumbent_eval, candidates, evaluations, selection, failures,
-        () if confirmations is None else tuple(confirmations.values()),
+        incumbent_eval, candidates, tuple(evaluations), selection,
+        tuple(failures_by_id[key] for key in sorted(failures_by_id)),
+        tuple(confirmation_evaluations),
     )
+
+
+def _choose_failure_replay_probe(
+    incumbent: CandidateEvaluation,
+    candidates: tuple[CandidateEvaluation, ...],
+) -> CandidateEvaluation | None:
+    """Use audited signals only to ration one fresh-seed reproduction probe."""
+    base_score = incumbent.provisional_failure_count
+    base_events = incumbent.provisional_failure_events
+    strict = [item for item in candidates if item.provisional_failure_count > base_score]
+    if strict:
+        return min(strict, key=lambda item: (
+            -item.provisional_failure_count,
+            -len(item.provisional_failure_events - base_events),
+            item.strategy_id,
+        ))
+    novel = [item for item in candidates if item.provisional_failure_events - base_events]
+    if novel:
+        return min(novel, key=lambda item: (
+            -len(item.provisional_failure_events - base_events),
+            -item.provisional_failure_count,
+            item.strategy_id,
+        ))
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -477,6 +544,10 @@ class TwoGenerationSmoke:
                 verification_refs=verification_refs,
                 failure_verifier=failure_verifier,
                 already_seen=self._progress["seen_strategy_ids"],
+                prior_failures=(
+                    () if self.failure_archive is None
+                    else self.failure_archive.active_representatives(current_generation=generation)
+                ),
                 confirmation_task_ids=(self.task_ids[0],),
                 confirmation_seeds=(self.seed + 10_000 + generation,),
                 request_budget=self.request_budget,

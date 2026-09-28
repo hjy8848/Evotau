@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner, pinned environment/orchestrator construction, and stubbed native end-to-end episode/evaluation/reviewer verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, concrete budget-gated ServiceTransition, repeated-write audit gate, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, complete Service repair audit journaling, and initial-S0 clean-success gate implemented; provider-backed Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner, pinned environment/orchestrator construction, and stubbed native end-to-end episode/evaluation/reviewer verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, concrete budget-gated ServiceTransition, repeated-write audit gate, strategy-level failure reproduction, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, complete Service repair audit journaling, and initial-S0 clean-success gate implemented; provider-backed Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (81 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; pinned native `run_simulation`/evaluator/full-reviewer path passes with offline completions; S₀ clean-success gate retains its source episode references; no provider episode has been run)
+Last verified: 2026-09-29 (84 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; pinned native `run_simulation`/evaluator/full-reviewer path passes with offline completions; S₀ clean-success gate retains its source episode references; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -534,6 +534,7 @@ policy_ref
 evidence_turns / tool_call_refs
 mistake_and_outcome
 verification_status / verification_refs
+reproduction_episode_ref / reproduction_verification_ref
 ```
 
 `task_id`、domain、seed、模型、原生 reward 等从不可变 episode/manifest 引用读取，不重复保存完整轨迹。
@@ -1518,6 +1519,7 @@ Phase 0 之后的实现顺序建议：
 
 - 新增 `study_analysis.py`，对 adaptive Customer、预先冻结 static strategy set 和 random mutation 三个条件按独立 evolution seed block 配对。每个 block 必须拥有相同 ordered task panel、逐 episode task/seed 日程与 request-attempt cap；跨 block 要求 evolution seed 唯一，拒绝缺失条件、重复 episode、越界预算和未匹配设计。
 - 在每个独立 run 内汇总 verified unique `(task, signature)` discovery yield、policy-attributable failure rate、adherence 分母、无效/基础设施/不确定 episode 数和 provider attempts；输入记录生成 SHA-256。Bootstrap 只重采样 paired evolution-run blocks，不把对话 episode 当独立样本。至少三个独立 block 才计算 percentile interval；结果明确是描述性分析，不能替代预注册的正式统计方案或 pilot-informed power/sample-size 决定。
+- 每条用于 RQ1 的 verified failure 必须关联同任务、同 Customer/Service strategy、异 seed 且 exact signature 匹配的独立复现 episode，并同时保留两次审核引用；复现 episodes 计入 attempted-episode 成本，但不重复计为发现或分母。RQ1 严格输入格式升级为 schema v2，完整 episode 记录（含复现审计字段）参与 run fingerprint。
 - 该实现提供 RQ1 的分析和数据完整性校验，不含任何伪造的 study-run artifact。目前没有真实三条件、预算匹配、多 seed 数据，因此 adaptive advantage 研究结论仍未获得。
 - 当前完整验证为 **68 passed**（含 pinned runtime integration test）；Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
 
@@ -1565,3 +1567,11 @@ Phase 0 之后的实现顺序建议：
 - Cross-play cell/report 保留 repeated-write 总数与审计覆盖率；RQ2 只在 incumbent/candidate 都完整审计时比较 repeated-write rate，缺少覆盖时保留 `None`，不把未检查当作零次违规。
 - proposal 与 independent audit 现在共享显式 `ServiceRepairInput`：包括 target FailureRecord、对应 EpisodeRecord 和 native trajectory、经 τ-bench pinned-source 校验的 Retail policy 文本、当前 Service、同 signature 的历史 failures、攻击 Customer 和 incumbent-passing replay。Native runner 只允许在其 run directory 内解析 trajectory 引用，并校验读取的 ID/task/seed 与 EpisodeRecord 一致。
 - 新增具体 ServiceTransition 经两代 controller 接受修复并幂等标记 replay coverage 的离线端到端测试；native adapter 测试覆盖政策文本与受限轨迹解析。当前全量验证为 **81 passed**（含 pinned-runtime 集成），Ruff、`compileall`、Phase 0/3 pinned-data preflight 与 `git diff --check` 均通过。真实 provider Phase 0/3 和 Pilot/Formal 仍未运行。
+
+**Strategy-level failure reproduction closure update（2026-09-29）**
+
+- 计划第 11 节要求重跑策略本身，不能只对同一轨迹重复打分。现在 `FailureRecord.verify()` 和 `promote_verified_failure()` 要求 source 与 replay 两条 episode 各有审计引用，并验证同一 task、Customer/Service strategy ID、不同 seed 和完全相同的 frozen `(workflow_stage, policy_rule_id, mistake_type)`。`FailureRecord` 保存 reproduction episode 与其独立审查 artifact 引用。
+- 单条被 reviewer 标记的 Episode 只作为 provisional signal。`run_customer_round()` 复用原有 fresh confirmation panel：对严格候选或出现新 `(task, signature)` 的候选选一个确定性 probe；如果 candidate 无新信号但 incumbent 有 failure signal，则只 replay incumbent。只有精确 signature 在 fresh replay 中再次出现才进入 Customer fitness、Service repair 输入或 archive。confirmation row 是复现证据，不作为第二个发现计分。
+- 对同 task 的不同 signature，即使 candidate fitness 与 incumbent 相同，也会做一次 pair confirmation；匹配后合法的新失败可以进入 archive 和 Service repair，但 selector 仍按 tie 规则保留 incumbent。未重现和未被选作 replay 的候选失败保留在 episode/decision 诊断材料，不进入 verified-failure denominator。
+- 失败记录序列化、archive 读取和 generation checkpoint 均携带 source/reproduction references。该路径复用已预算的 paired confirmation episode，不抬高 Phase 3 的 23 episode / 1,800 provider-attempt 上限。
+- 新增 exact-signature/fresh-seed/reviewer 双证据门禁、confirmation 不双计和 tie-novel-signature archive 行为测试；RQ1 study-run schema 升级为 v2，要求携带 fresh-seed reproduction episode，并将完整复现记录纳入 run fingerprint。旧 SQLite archive 行保留为 v1 append-only 历史，不再计入 verified failure、replay representatives 或 coverage。当前全量验证为 **87 passed**（含 pinned-runtime 集成）；Ruff、`compileall`、Phase 0/3 pinned-data preflight 与 `git diff --check` 均通过。真实 provider Phase 0/3、Pilot/Formal、30 条真实双人归因校准和预注册/样本量研究仍未完成。

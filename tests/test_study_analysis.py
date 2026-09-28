@@ -58,10 +58,10 @@ def run(*, block: str, evolution_seed: int, condition: str, yield_count: int,
         )
         for index, task_id in enumerate(tasks)
     )
-    failures = tuple(
-        FailureRecord.verify(item, generation=0, verifier=f"audit:{item.episode_id}")
-        for item in episodes if item.has_attributable_failure_candidate
-    )
+    failures = tuple(_verified_failure(item) for item in episodes
+                     if item.has_attributable_failure_candidate)
+    reproductions = tuple(_reproduction_episode(item) for item in episodes
+                          if item.has_attributable_failure_candidate)
     return StudyRun(
         run_id=f"{block}-{condition}",
         seed_block_id=block,
@@ -72,6 +72,7 @@ def run(*, block: str, evolution_seed: int, condition: str, yield_count: int,
         provider_attempts=budget,
         episodes=episodes,
         verified_failures=failures,
+        reproduction_episodes=reproductions,
     )
 
 
@@ -86,6 +87,19 @@ def complete_blocks(blocks: tuple[tuple[str, int, int, int, int], ...]) -> tuple
     return tuple(runs)
 
 
+def _verified_failure(item: EpisodeRecord) -> FailureRecord:
+    reproduction = _reproduction_episode(item)
+    return FailureRecord.verify(
+        item, reproduction_episode=reproduction, generation=0,
+        verifier=f"audit:{item.episode_id}",
+        reproduction_verifier=f"audit:{reproduction.episode_id}",
+    )
+
+
+def _reproduction_episode(item: EpisodeRecord) -> EpisodeRecord:
+    return replace(item, episode_id=f"{item.episode_id}:replay", seed=item.seed + 10_000)
+
+
 def test_rq1_uses_paired_independent_seed_blocks_and_verified_run_level_yield():
     runs = complete_blocks((
         ("seed-block-11", 11, 2, 1, 0),
@@ -98,6 +112,13 @@ def test_rq1_uses_paired_independent_seed_blocks_and_verified_run_level_yield():
 
     static = report.comparisons[0]
     random = report.comparisons[1]
+    first_run = runs[0]
+    assert first_run.metrics().attempted_episodes == len(first_run.episodes) + len(
+        first_run.reproduction_episodes
+    )
+    assert first_run.metrics().reproduction_episodes == len(first_run.reproduction_episodes)
+    with pytest.raises(ValueError, match="missing its strategy-level reproduction"):
+        replace(first_run, reproduction_episodes=())
     assert report.status == "descriptive"
     assert static.baseline_condition == "static_customer"
     assert static.independent_seed_blocks == 3
@@ -189,7 +210,7 @@ def test_rq1_json_cli_is_strict_hashes_input_and_never_overwrites_report(tmp_pat
         ("seed-block-22", 22, 2, 1, 1),
         ("seed-block-33", 33, 1, 1, 0),
     ))
-    document = {"schema_version": 1, "runs": [item.to_dict() for item in runs]}
+    document = {"schema_version": 2, "runs": [item.to_dict() for item in runs]}
     parsed = load_rq1_document(document)
     assert parsed == runs
 
@@ -211,4 +232,18 @@ def test_rq1_json_cli_is_strict_hashes_input_and_never_overwrites_report(tmp_pat
     assert output_path.read_bytes() == saved
 
     with pytest.raises(ValueError, match="missing or unknown fields"):
-        load_rq1_document({"schema_version": 1, "runs": [runs[0].to_dict() | {"extra": 1}]})
+        load_rq1_document({"schema_version": 2, "runs": [runs[0].to_dict() | {"extra": 1}]})
+    with pytest.raises(ValueError, match="unsupported RQ1 input schema_version"):
+        load_rq1_document({"schema_version": 1, "runs": [item.to_dict() for item in runs]})
+
+
+def test_rq1_input_hash_covers_all_reproduction_audit_fields():
+    run = complete_blocks((
+        ("seed-block-11", 11, 2, 1, 0),
+        ("seed-block-22", 22, 2, 1, 0),
+        ("seed-block-33", 33, 2, 1, 0),
+    ))[0]
+    reproduction = run.reproduction_episodes[0]
+    changed = replace(reproduction, notes="additional audited replay note")
+    changed_run = replace(run, reproduction_episodes=(changed, *run.reproduction_episodes[1:]))
+    assert changed_run.input_sha256 != run.input_sha256

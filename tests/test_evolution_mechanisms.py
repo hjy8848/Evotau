@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from dataclasses import replace
 
 import pytest
 
 from evotau.archive import FailureArchive
-from evotau.attribution import promote_verified_failure
+from evotau.attribution import confirm_failure_reproductions, promote_verified_failure
 from evotau.budget import BudgetSnapshot, RequestBudget
 from evotau.checkpoint import (
     EvolutionCheckpoint,
@@ -14,7 +16,11 @@ from evotau.checkpoint import (
     save_checkpoint,
 )
 from evotau.crossplay import build_crossplay_matrix
-from evotau.lifecycle import TwoGenerationSmoke, evaluate_customer_panel
+from evotau.lifecycle import (
+    TwoGenerationSmoke,
+    evaluate_customer_panel,
+    run_customer_round,
+)
 from evotau.manifest import MVP_FAILURE_TAXONOMY, MechanismManifest, sha256_json
 from evotau.mutation import propose_customer_candidates
 from evotau.phase0 import load_config
@@ -53,14 +59,42 @@ def episode(*, name="e1", task="task-1", seed=1, customer="c", service="s",
     )
 
 
-def verified(ep, generation=0):
-    return FailureRecord.verify(ep, generation=generation, verifier="audit:review-1")
+def replay_of(ep):
+    return replace(ep, episode_id=f"{ep.episode_id}:replay", seed=ep.seed + 10_000)
+
+
+def verified(ep, generation=0, replay=None, verifier=None, reproduction_verifier=None):
+    replay = replay or replay_of(ep)
+    return FailureRecord.verify(
+        ep, reproduction_episode=replay, generation=generation,
+        verifier=verifier or f"audit:source:{ep.episode_id}",
+        reproduction_verifier=reproduction_verifier or f"audit:replay:{replay.episode_id}",
+    )
+
+
+def paired_evaluation(episode_record, replay, *, panel="discovery"):
+    failure = verified(episode_record, replay=replay)
+    refs = (
+        (episode_record.episode_id, failure.verification_ref),
+        (replay.episode_id, failure.reproduction_verification_ref),
+    )
+    return CandidateEvaluation(
+        episode_record.customer_strategy_id, (episode_record,), (failure,), panel,
+        refs, (replay,),
+    )
 
 
 def test_attribution_requires_validity_adherence_evidence_and_independent_audit():
     ep = episode()
+    replay = replay_of(ep)
     assert not promote_verified_failure(ep, generation=0, independent_verification_ref=None).promoted
-    assert promote_verified_failure(ep, generation=0, independent_verification_ref="audit:1").promoted
+    assert not promote_verified_failure(
+        ep, generation=0, independent_verification_ref="audit:1",
+    ).promoted
+    assert promote_verified_failure(
+        ep, generation=0, independent_verification_ref="audit:1",
+        reproduction_episode=replay, reproduction_verification_ref="audit:replay:1",
+    ).promoted
     assert not promote_verified_failure(replace(ep, customer_valid=False), generation=0,
                                         independent_verification_ref="audit:1").promoted
     assert not promote_verified_failure(replace(ep, evidence=()), generation=0,
@@ -71,15 +105,166 @@ def test_attribution_requires_validity_adherence_evidence_and_independent_audit(
     )
     decision = promote_verified_failure(
         out_of_scope, generation=0, independent_verification_ref="audit:out-of-scope",
+        reproduction_episode=replay_of(out_of_scope),
+        reproduction_verification_ref="audit:out-of-scope-replay",
     )
     assert not decision.promoted
     assert "outside the frozen MVP taxonomy" in decision.reason
     with pytest.raises(ValueError, match="outside the frozen Retail MVP taxonomy"):
-        FailureRecord.verify(out_of_scope, generation=0, verifier="audit:out-of-scope")
+        FailureRecord.verify(
+            out_of_scope, reproduction_episode=replay_of(out_of_scope), generation=0,
+            verifier="audit:out-of-scope", reproduction_verifier="audit:out-of-scope-replay",
+        )
     forged_policy_ref = replace(ep, policy_rule_id="retail.policy:refund_limit")
     assert not promote_verified_failure(
         forged_policy_ref, generation=0, independent_verification_ref="audit:wrong-policy-ref",
+        reproduction_episode=replay_of(forged_policy_ref),
+        reproduction_verification_ref="audit:wrong-policy-replay",
     ).promoted
+
+
+def test_failure_promotion_requires_audited_fresh_seed_strategy_reproduction():
+    source = episode(name="source", seed=17)
+    same_strategy_replay = replace(source, episode_id="replay", seed=117)
+    accepted = promote_verified_failure(
+        source, generation=0, independent_verification_ref="audit:source",
+        reproduction_episode=same_strategy_replay,
+        reproduction_verification_ref="audit:replay",
+    )
+    assert accepted.promoted
+    assert accepted.failure is not None
+    assert accepted.failure.episode_id == "source"
+    assert accepted.failure.reproduction_episode_id == "replay"
+    assert accepted.failure.reproduction_verification_ref == "audit:replay"
+
+    same_seed = promote_verified_failure(
+        source, generation=0, independent_verification_ref="audit:source",
+        reproduction_episode=replace(same_strategy_replay, seed=source.seed),
+        reproduction_verification_ref="audit:same-seed",
+    )
+    assert not same_seed.promoted and "fresh seed" in same_seed.reason
+    mismatched_signature = replace(
+        same_strategy_replay, workflow_stage="identity_verification",
+        policy_rule_id="retail.policy:identity_verification",
+        mistake_type="missing_identity_verification",
+    )
+    mismatched = promote_verified_failure(
+        source, generation=0, independent_verification_ref="audit:source",
+        reproduction_episode=mismatched_signature,
+        reproduction_verification_ref="audit:different-signature",
+    )
+    assert not mismatched.promoted and "exact failure signature" in mismatched.reason
+
+
+def test_confirmation_panel_reproduces_only_exact_adherent_failure_signatures():
+    source = episode(name="discovery", task="task-1", seed=3, customer="same-c", service="same-s")
+    replay = replace(source, episode_id="confirmation", seed=103)
+    discovery = CandidateEvaluation(
+        "same-c", (source,), panel_name="discovery",
+        failure_audit_refs=((source.episode_id, "audit:discovery"),),
+    )
+    confirmation = CandidateEvaluation(
+        "same-c", (replay,), panel_name="confirmation",
+        failure_audit_refs=((replay.episode_id, "audit:confirmation"),),
+    )
+    confirmed_source, confirmed_replay, failures = confirm_failure_reproductions(
+        discovery, confirmation, generation=2,
+    )
+    assert len(failures) == 1
+    assert confirmed_source.fitness == 1
+    assert confirmed_replay.fitness == 0
+    assert confirmed_source.verified_failures[0].reproduction_episode_id == "confirmation"
+    assert not confirmed_replay.verified_failures
+
+    different = replace(
+        replay, policy_rule_id="retail.policy:identity_verification",
+        workflow_stage="identity_verification", mistake_type="missing_identity_verification",
+    )
+    different_panel = CandidateEvaluation(
+        "same-c", (different,), panel_name="confirmation",
+        failure_audit_refs=((different.episode_id, "audit:different"),),
+    )
+    source_unmatched, replay_unmatched, no_failures = confirm_failure_reproductions(
+        discovery, different_panel, generation=2,
+    )
+    assert not no_failures
+    assert source_unmatched.fitness == replay_unmatched.fitness == 0
+
+
+def test_tied_customer_fitness_can_archive_a_reproduced_new_signature_without_replacement():
+    incumbent = CustomerStrategy()
+    service = ServiceStrategy()
+    candidate = propose_customer_candidates(incumbent, 2, seed=41)[0]
+    customer_id = customer_strategy_id(incumbent)
+    candidate_id = candidate.strategy_id
+    service_id = service_strategy_id(service)
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        strategy_id = customer_strategy_id(customer)
+        is_incumbent = strategy_id == customer_id
+        is_candidate = strategy_id == candidate_id
+        violation = is_incumbent or is_candidate
+        if is_incumbent:
+            policy, stage, mistake = (
+                "retail.policy:explicit_confirmation", "pre_write", "missing_explicit_confirmation",
+            )
+        else:
+            policy, stage, mistake = (
+                "retail.policy:identity_verification", "identity_verification",
+                "missing_identity_verification",
+            )
+        return EpisodeRecord(
+            episode_id=f"{panel_name}:{strategy_id}:{seed}",
+            task_id=task_id,
+            seed=seed,
+            customer_strategy_id=strategy_id,
+            service_strategy_id=service_id,
+            status=EpisodeStatus.COMPLETE,
+            task_success=not violation,
+            customer_valid=True,
+            strategy_applicable=True,
+            customer_strategy_adherent=True,
+            policy_violation=violation,
+            policy_rule_id=policy if violation else None,
+            workflow_stage=stage if violation else None,
+            mistake_type=mistake if violation else None,
+            evidence=(EvidenceRef(2, "tool", "policy step missing"),) if violation else (),
+        )
+
+    result = run_customer_round(
+        runner, incumbent=incumbent, service=service, task_ids=("E",), seeds=(7,),
+        generation=0, proposal_seed=41, count=2,
+        failure_verifier=lambda item: f"review:{item.episode_id}",
+        confirmation_task_ids=("E",), confirmation_seeds=(10007,),
+    )
+
+    assert not result.selection.evolved
+    assert result.selection.discovery_scores[0][1] == 1
+    candidate_eval = next(item for item in result.candidates if item.strategy_id == candidate_id)
+    assert candidate_eval.fitness == 1
+    assert candidate_eval.signature_count == 1
+    assert {failure.signature.key for failure in result.verified_failures} == {
+        candidate_eval.verified_failures[0].signature.key,
+        result.incumbent.verified_failures[0].signature.key,
+    }
+    assert len(result.verified_failures) == 2  # confirmation rows are evidence, not duplicate discoveries
+
+
+def test_customer_failure_confirmation_schedule_is_preflighted_before_dispatch():
+    dispatches = 0
+
+    def runner(**_kwargs):
+        nonlocal dispatches
+        dispatches += 1
+        raise AssertionError("invalid confirmation schedule must fail before an episode runs")
+
+    with pytest.raises(ValueError, match="fresh task/seed pairs"):
+        run_customer_round(
+            runner, incumbent=CustomerStrategy(), service=ServiceStrategy(),
+            task_ids=("E",), seeds=(13,), generation=0, proposal_seed=13,
+            confirmation_task_ids=("E",), confirmation_seeds=(13,),
+        )
+    assert dispatches == 0
 
 
 def test_customer_mutation_determinism_and_incumbent_retention_on_tie():
@@ -95,8 +280,8 @@ def test_customer_mutation_determinism_and_incumbent_retention_on_tie():
     assert all(candidate.expected_behavioral_effect for candidate in all_axes)
     incumbent_episode = episode(customer="inc", success=False)
     candidate_episode = episode(name="e2", customer="candidate", success=False)
-    base = CandidateEvaluation("inc", (incumbent_episode,), (verified(incumbent_episode),))
-    equal = CandidateEvaluation("candidate", (candidate_episode,), (verified(candidate_episode),))
+    base = paired_evaluation(incumbent_episode, replay_of(incumbent_episode))
+    equal = paired_evaluation(candidate_episode, replay_of(candidate_episode))
     decision = select_customer(base, (equal,))
     assert not decision.evolved and decision.selected_id == "inc"
 
@@ -117,19 +302,42 @@ def test_strict_customer_win_requires_fresh_paired_confirmation():
     base_2 = episode(name="b2", task="task-2", seed=2, customer="incumbent")
     candidate_1 = episode(name="c1", task="task-1", customer="challenger")
     candidate_2 = episode(name="c2", task="task-2", seed=2, customer="challenger")
-    incumbent = CandidateEvaluation("incumbent", (base_1, base_2), (verified(base_1),))
-    challenger = CandidateEvaluation("challenger", (candidate_1, candidate_2),
-                                     (verified(candidate_1), verified(candidate_2)))
+    old_v1 = replace(base_1, episode_id="old-v1", seed=101)
+    old_v2 = replace(base_2, episode_id="old-v2", seed=102)
+    new_v1 = replace(candidate_1, episode_id="new-v1", seed=101)
+    new_v2 = replace(candidate_2, episode_id="v2-new", seed=202)
+    incumbent = CandidateEvaluation(
+        "incumbent", (base_1, base_2),
+        (verified(base_1, replay=old_v1),),
+        failure_audit_refs=(
+            (base_1.episode_id, "audit:source:b1"), (old_v1.episode_id, "audit:replay:old-v1"),
+        ),
+        replication_episodes=(old_v1,),
+    )
+    challenger = CandidateEvaluation(
+        "challenger", (candidate_1, candidate_2),
+        (verified(candidate_1, replay=new_v1), verified(candidate_2, replay=new_v2)),
+        failure_audit_refs=(
+            (candidate_1.episode_id, "audit:source:c1"), (new_v1.episode_id, "audit:replay:new-v1"),
+            (candidate_2.episode_id, "audit:source:c2"), (new_v2.episode_id, "audit:replay:v2-new"),
+        ),
+        replication_episodes=(new_v1, new_v2),
+    )
     no_confirmation = select_customer(incumbent, (challenger,))
     assert not no_confirmation.evolved
-    old_v1 = replace(base_1, episode_id="v1-old", task_id="validation-1", task_success=False)
-    old_v2 = replace(base_2, episode_id="v2-old", task_id="validation-2", task_success=True,
+    old_v2 = replace(base_2, episode_id="v2-old", seed=202, task_success=True,
                      policy_violation=False, evidence=())
-    new_v1 = replace(candidate_1, episode_id="v1-new", task_id="validation-1")
-    new_v2 = replace(candidate_2, episode_id="v2-new", task_id="validation-2")
-    old_v = CandidateEvaluation("incumbent", (old_v1, old_v2), (verified(old_v1),), "confirmation")
-    new_v = CandidateEvaluation("challenger", (new_v1, new_v2),
-                                (verified(new_v1), verified(new_v2)), "confirmation")
+    old_v = CandidateEvaluation(
+        "incumbent", (old_v1, old_v2), panel_name="confirmation",
+        failure_audit_refs=((old_v1.episode_id, "audit:replay:old-v1"),),
+    )
+    new_v = CandidateEvaluation(
+        "challenger", (new_v1, new_v2), panel_name="confirmation",
+        failure_audit_refs=(
+            (new_v1.episode_id, "audit:replay:new-v1"),
+            (new_v2.episode_id, "audit:replay:v2-new"),
+        ),
+    )
     confirmed = select_customer(incumbent, (challenger,),
                                 confirmation={"incumbent": old_v, "challenger": new_v})
     assert confirmed.evolved and confirmed.selected_id == "challenger"
@@ -153,7 +361,8 @@ def test_customer_fitness_ignores_invalid_and_unverified_episodes():
         panel_name="discovery", generation=0,
         strategy_seen_failures={"a-1": "audit:fixture"},
     )
-    assert verified_result.fitness == 1
+    assert verified_result.fitness == 0  # one audited trace is still only a provisional signal
+    assert verified_result.provisional_failure_count == 1
 
 
 def test_strategy_not_applicable_is_separate_from_nonadherence_and_customer_invalidity():
@@ -313,6 +522,40 @@ def test_archive_is_append_only_idempotent_and_deduplicates_representatives(tmp_
     assert archive.mark_replayed(active.failure_id, generation=2)
     assert not archive.mark_replayed(active.failure_id, generation=2)
     assert archive.active_replay_coverage()["coverage_rate"] == 1.0
+
+
+def test_archive_keeps_legacy_single_episode_rows_but_never_reuses_them(tmp_path):
+    path = tmp_path / "legacy-failures.sqlite"
+    archive = FailureArchive(path)
+    legacy = verified(episode(name="legacy"), 0)
+    assert archive.append(legacy)
+
+    with sqlite3.connect(path) as db:
+        row = db.execute(
+            "SELECT payload FROM failures WHERE failure_id=?", (legacy.failure_id,),
+        ).fetchone()
+        payload = json.loads(row[0])
+        payload.pop("reproduction_episode_id")
+        payload.pop("reproduction_verification_ref")
+        db.execute(
+            "UPDATE failures SET payload=? WHERE failure_id=?",
+            (json.dumps(payload, sort_keys=True), legacy.failure_id),
+        )
+        db.execute(
+            "UPDATE failures SET protocol_version=1 WHERE failure_id=?", (legacy.failure_id,),
+        )
+
+    assert archive.recent() == ()
+    assert archive.representatives() == ()
+    assert archive.active_representatives() == ()
+    assert archive.recurrence_count(legacy.signature.key) == 0
+    with pytest.raises(ValueError, match="unreproduced"):
+        archive.mark_replayed(legacy.failure_id, generation=1)
+
+    reproduced = replace(legacy, failure_id="new-reproduced-row")
+    assert archive.append(reproduced)
+    assert archive.recent() == (reproduced,)
+    assert archive.recurrence_count(legacy.signature.key) == 1
 
 
 def test_archive_active_representatives_obey_cap_and_prioritize_recent_recurrence(tmp_path):
@@ -859,7 +1102,7 @@ def test_prepared_generation_resume_reuses_persisted_selection_and_service_decis
     assert prepared_generation["commit"]["generation"] == 0
     decision = prepared_generation["commit"]["decision_record"]
     assert decision["customer"]["selection"]["evolved"] is False
-    assert len(decision["customer"]["evaluations"]) == 3
+    assert len(decision["customer"]["evaluations"]) == 4  # discovery + one baseline replay
     assert decision["service"]["transition_ran"] is True
     assert decision["service"]["gate"]["accepted"] is False
     assert decision["service"]["gate"]["accepted_candidate"] is None
@@ -872,7 +1115,7 @@ def test_prepared_generation_resume_reuses_persisted_selection_and_service_decis
     assert decision["active_replay_coverage"]["active_signatures"] == 1
     assert decision["active_replay_coverage"]["uncovered_signatures"] == 1
     assert service_transitions == 1
-    assert dispatches == 3
+    assert dispatches == 4
 
     resumed = TwoGenerationSmoke(
         manifest=manifest, checkpoint_path=str(checkpoint), runner=runner,
@@ -885,7 +1128,7 @@ def test_prepared_generation_resume_reuses_persisted_selection_and_service_decis
     )
     assert tuple(item.generation for item in commits) == (0, 1)
     assert service_transitions == 2  # only generation 1 is newly evaluated after resume
-    assert dispatches == 5  # generation 0's three cached episodes are not rerun
+    assert dispatches == 7  # generation 0's four cached episodes are not rerun
     final = load_checkpoint(checkpoint, expected_manifest_hash=manifest_fingerprint(manifest))
     assert final.state["progress"] is None
     assert final.state["commits"][0]["decision_record"] == decision
@@ -943,15 +1186,18 @@ def test_generation_lifecycle_commits_only_independently_verified_discoveries(tm
     controller = TwoGenerationSmoke(manifest={"audit": "fixture"},
         checkpoint_path=str(tmp_path / "audited-run.json"), runner=runner,
         task_ids=("E", "V"), seed=5, failure_archive=archive)
-    refs = {f"discovery:E:{seed}": "audit:fixture" for seed in (5, 6)}
-    # Only matching episode IDs with a supplied audit reference can enter archive.
+    # Every failure trace receives its own independent audit artifact.
 
     def no_repair(_generation, _customer, current_service, failures, _episode_runner, budget):
         assert failures
         assert budget is None
         return current_service, None, "no repair proposal in fixture"
 
-    controller.run(customer, service, verification_refs=refs, service_transition=no_repair)
+    controller.run(
+        customer, service,
+        failure_verifier=lambda item: f"audit:{item.episode_id}",
+        service_transition=no_repair,
+    )
     assert archive.recent()
     assert archive.customer_strategies()
     assert archive.service_strategies()

@@ -65,7 +65,14 @@ def _fixture(*, remaining_episodes: int = 10, audit_approved: bool = True):
         "source-failure", task="E", seed=3, customer=customer, service=incumbent,
         success=False, violation=True,
     )
-    failure = FailureRecord.verify(source, generation=0, verifier="human:target-audit")
+    reproduction = _episode(
+        "source-failure-replay", task="E", seed=10_003, customer=customer,
+        service=incumbent, success=False, violation=True,
+    )
+    failure = FailureRecord.verify(
+        source, reproduction_episode=reproduction, generation=0,
+        verifier="human:target-audit", reproduction_verifier="human:target-replay-audit",
+    )
     historical = _episode(
         "source-pass", task="E", seed=4, customer=customer, service=incumbent,
         success=True,
@@ -270,7 +277,7 @@ def test_concrete_transition_completes_through_controller_and_archives_replay(tm
     def runner(*, task_id, seed, customer, service, panel_name):
         native = customer is None
         discovery_target = (
-            panel_name == "discovery"
+            panel_name in {"discovery", "confirmation"}
             and customer_strategy_id(customer) == customer_strategy_id(CustomerStrategy())
             and not service.rules
         )
