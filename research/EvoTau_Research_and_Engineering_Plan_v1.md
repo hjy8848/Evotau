@@ -1,0 +1,1426 @@
+Status: Phase 0 implemented; upstream runtime integration and live episode pending
+Owner: hjy8848
+Last verified: 2026-09-28 (Phase 0 implementation and offline mocks checked; selected upstream task/split blobs were inspected at the pinned commit, but local hash validation and live runtime execution remain pending)
+Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
+
+This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
+
+---
+# EvoTau：基于 τ-bench 的闭环 Customer–Service Co-Evolution 研究与工程规划
+
+**版本：v1.0（修订整合版）**
+
+> 本文基于 6Astra 的源码审计与初版规划整理，并做了四项关键修订：
+> 1. 严格分离 **工程正确性（Engineering PASS）** 与 **研究结果是否为正（Research Evidence）**；
+> 2. 首次两代 co-evolution smoke 缩小为机制验证，不承担统计证明；
+> 3. 强化 `ServiceStrategy` 是结构化执行规则、prompt 只是渲染载体的边界；
+> 4. 明确“没有发生 replacement / repair / counter-adaptation”可以是合法研究结果，不能为了 PASS 放宽规则。
+
+---
+
+**建议把 EvoTau 做成 τ-bench 上的薄研究层：保留原生环境、工具、对话运行和任务评分，只新增策略演化、失败归因、历史回放与接受门控。MVP 从 Retail 文本模式开始，不 fork runtime。**
+
+这一路线有源码支持，但需要修正三个前提：
+
+1. **固定 backend state 应指固定初始状态与状态转移语义**，不是禁止 episode 内通过工具改变状态。
+2. **原生 task failure 不能直接作为 Customer 的成功奖励**；必须先验证 Customer 合法性，再确认具体 Service 执行错误。
+3. **每代参与 repair 接受决策的数据属于 validation，不再是严格 heldout。**最终测试集必须封存。
+
+初始规划阶段仅进行了资料和源码读取。Phase 0 的本地实现情况记录在本文末尾；未创建远端仓库，也未调用模型实验 API。
+
+下文使用三种证据标签：
+
+- **[源码确认]**：直接检查实现或数据。
+- **[架构推断]**：由已检查实现推导，仍需 integration smoke 验证。
+- **[设计建议]**：EvoTau 的拟议规范，不是 τ-bench 已有能力。
+
+检查基线为：
+
+| 来源 | 本次固定版本 |
+|---|---|
+| `sierra-research/tau2-bench` | `b7ea9074c1cba482b30687fecdb5c8425fd6f619` |
+| `IBM/CRAFT` | `01ab049ef3a27f51205686a1c419ea75bbed0b27` |
+
+当前主仓库已使用 τ³-bench 名称，但核心 Python package 仍为 `tau2`。后续论文应准确报告“基于该 commit 的 τ-bench Retail”，不能将当前数据上的结果直接称为原始 τ²-bench 论文设置的复现。[当前仓库说明](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/README.md)
+
+---
+
+**1. Executive summary**
+
+[设计建议] EvoTau 的最小研究单位是一个**可验证的攻防响应链**：
+
+```text
+合法 Customer 策略暴露具体执行错误
+→ 最小 Service repair
+→ 当前攻击效果下降，正常任务能力保留
+→ Customer 针对新 Service 产生更有效的合法策略
+```
+
+推荐的主要决策如下：
+
+| 问题 | 推荐 |
+|---|---|
+| 首个 domain | Retail |
+| 交互模式 | 原生 text / half-duplex |
+| 模型参数 | 固定，不做权重训练 |
+| Customer 表示 | 4 个有限取值字段 |
+| Customer mutation | 3 类算子，无 crossover |
+| Customer fitness | 当前 Service 上，可复现且可归因的失败覆盖数 |
+| Novelty | 记录、入 archive；MVP 不覆盖严格 selection |
+| Service 表示 | 有 policy 引用的结构化执行规则；**规则是策略本体，prompt 只是渲染载体** |
+| Failure attribution | 原生 evaluator + 原生 reviewer + 少量证据核验 |
+| 历史回放 | 保存策略，重新运行交互 |
+| Service gate | target、historical、clean validation、adversarial validation |
+| 最终 heldout | 不参与逐代接受决策 |
+| Fresh adversary | MVP 不加入在线生成器 |
+| 更新顺序 | 每代 Customer-first，再 Service |
+| 首次闭环 | 2 generations，仅证明机制，不证明长期 arms race |
+
+最大的研究不确定性不是 adapter 能否接通，而是：**受约束的 Customer 行为变化，能否稳定暴露足够多可归因、可修复的执行错误。**
+
+---
+
+**2. Research hypothesis**
+
+[设计建议] 将研究假设拆成三个可否证命题。
+
+**H1：交互策略具有攻击价值。**  
+固定任务、工具、政策、初始状态和 Service 后，Customer 的披露、请求排序和有限追问会改变执行轨迹，并提高有效失败发现率。
+
+**H2：失败证据具有修复价值。**  
+针对具体错误生成的执行规则，能降低该错误及相关错误的发生率，同时保留正常任务能力。
+
+**H3：双方适应存在关联。**  
+Service repair 改变哪些 Customer 策略有效；Customer 随后产生的改进依赖新的 Service，而不只是随搜索预算增加发现一般性强攻击。
+
+H1、H2 成立并不自动推出 H3。EvoTau 应允许得出“有效的攻击搜索与修复系统，但未形成 arms race”的结果。
+
+---
+
+### 2.1 Engineering correctness 与 research outcome 必须分离
+
+[设计建议] EvoTau 从第一天起使用两套完全独立的状态判断。
+
+**Engineering status** 只回答：系统是否按照预先定义的协议正确执行。典型状态：
+
+```text
+PASS
+FAIL
+INCONCLUSIVE
+```
+
+例如：候选生成、执行、归因、selection 全部正常完成，即使所有候选都没有超过 incumbent，Customer-evolution 软件仍然可以是 `PASS`。
+
+**Research outcome** 只回答：预先定义的研究现象是否被观察到。典型状态：
+
+```text
+SUPPORTED
+NOT_OBSERVED
+INCONCLUSIVE
+```
+
+因此以下结果都必须被允许：
+
+```text
+Engineering PASS + no Customer replacement
+Engineering PASS + no accepted Service repair
+Engineering PASS + no counter-adaptation
+```
+
+它们属于潜在的 negative result，而不是工程失败。只有协议执行错误、证据污染、预算中断导致无法判断等情况，才能把软件阶段判为失败或 inconclusive。
+
+**禁止为了让某个 Phase “通过”而要求实验必须产生正向 evolution event。** 是否继续投入由预先定义的 pilot/kill criteria 决定，而不是通过修改 selection、fitness 或 gate 强行制造成功。
+
+---
+
+**3. Core invariants**
+
+[设计建议] 每个实验建立不可变 manifest，冻结以下项目：
+
+| 冻结项 | 精确定义 |
+|---|---|
+| Task truth | 原始 scenario、目标、偏好、已知/未知信息、条件分支 |
+| Policy | 原文及其 hash |
+| Environment | domain 实现、基础 DB、任务初始化数据与初始化动作 |
+| Tools | 定义、实现、参数语义和状态转移 |
+| Evaluation | task criteria、`reward_basis`、evaluation mode、judge 配置、归因规则版本 |
+| Model configuration | 各角色模型、采样参数、上下文预算 |
+| Experimental protocol | split、mutation 空间、selection、gate、预算和停止规则 |
+
+需要额外冻结四条信息边界：
+
+- Service runtime 不接收 task reference actions、评价答案、Customer 隐藏策略或用户尚未披露的事实。
+- Customer runtime 不接收隐藏 DB、评价答案或 Service 的内部状态。
+- Evolver 可以读取 evolution 数据的失败证据；生成的通用策略不能夹带用户 ID、订单 ID 或参考答案。
+- Validation、heldout 的轨迹不能进入 mutation/repair prompt。
+
+**固定事实不等于固定完整对话。**工具产生的合法状态变化、用户通过对话获知的信息都允许变化，但不能反向改写初始事实。
+
+---
+
+**4. System architecture**
+
+[源码确认] 当前 runner 分为实例构建、simulation 执行、batch 执行三层。`run_simulation` 接收已构造的 orchestrator；`build_orchestrator` 接收 config 和 task，并在内部构造组件。它不是直接接收自定义 agent/user 实例的装配函数。[构建实现](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/runner/build.py)、[执行实现](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/runner/simulation.py)
+
+[设计建议] EvoTau 的依赖方向如下：
+
+```mermaid
+flowchart TD
+    EC[EvolutionController] --> CE[CustomerEvolver / Selector]
+    EC --> SE[ServiceEvolver / Gate]
+    CE --> CS[CustomerStrategy]
+    SE --> SS[ServiceStrategy]
+
+    CS --> UA[Customer adapter]
+    SS --> AA[Service adapter]
+
+    UA --> R[原生 τ-bench runner / orchestrator]
+    AA --> R
+    W[固定 task / policy / DB / tools] --> R
+
+    R --> E[原生 evaluator / reviewer]
+    E --> F[有效性与归因核验]
+    F --> A[FailureArchive]
+    A --> CE
+    A --> SE
+    F --> EC
+```
+
+EvoTau 不新增对话调度器、工具执行器或另一套 task reward。
+
+**接入分两步：**
+
+- Phase 0：直接构造两个 adapter 与原生 `Orchestrator`，调用 `run_simulation`。
+- 之后：通过 registry 注册绑定不可变策略的 user class 和 agent factory，复用 `run_tasks`。
+
+[架构推断] registry 支持这条路径，但 user 注册对象必须是 class；不能把一个普通 closure 当 user factory 传入。MVP 使用本地进程、`workers=0`，每个 batch 绑定一对固定策略，避免跨进程注册和可变全局策略污染。
+
+---
+
+**5. τ-bench integration map 与源码结论**
+
+| Component | 已检查的 τ-bench 实现 | EvoTau action |
+|---|---|---|
+| Task/scenario loader | `runner/helpers.py`、domain `environment.py` | REUSE |
+| Domain policy | domain `policy.md`、`Environment.get_policy()` | REUSE |
+| Backend/environment | `environment/environment.py`、Retail DB | REUSE |
+| Tools | `domains/retail/tools.py` | REUSE |
+| User simulation loop | `UserSimulator.generate_next_message` | REUSE |
+| User prompt composition | `UserSimulator.system_prompt` | OVERRIDE |
+| Agent generation loop | `LLMAgent.generate_next_message` | REUSE |
+| Agent prompt composition | `LLMAgent.system_prompt` | OVERRIDE |
+| Orchestrator | `orchestrator/orchestrator.py` | REUSE |
+| Instance construction | `runner/build.py`、registry | WRAP |
+| Simulation execution | `runner/simulation.py` | REUSE |
+| Native evaluation | `evaluator/evaluator.py` | REUSE |
+| Conversation review | `reviewer.py`、`review_llm_judge.py` | WRAP |
+| Attribution/adherence | 原生信号不足以直接完成 | ADD |
+| Raw trajectory/logging | `SimulationRun`、batch logging | REUSE |
+| Episode checkpoint | `runner/checkpoint.py` | WRAP |
+| Batch/concurrency/retries | `runner/batch.py`、`progress.py` | REUSE |
+| Evolution checkpoint | 没有对应机制 | ADD |
+| Strategy/evolution/archive | 没有对应机制 | ADD |
+| 全角色请求总预算 | 未见覆盖整个演化运行的原生硬上限 | ADD |
+
+这里的 **OVERRIDE 仅指 EvoTau 子类覆盖 prompt property**，不修改 upstream 文件。
+
+必须写入实现计划的源码发现：
+
+1. **原生评分区分“执行哪些检查”和“哪些检查影响 reward”。**  
+   `ALL` 会计算若干诊断结果，但最终只按 task 的 `reward_basis` 合成分数。不能把所有诊断失败都升级为任务失败。
+
+2. **实际 Retail 数据与文档概述不同。**  
+   本次固定版本共 114 tasks：112 个配置 `DB + NL_ASSERTION`，2 个仅 `DB`；其中 40 个 task 有非空 NL assertions。空 assertions 会直接返回通过。不能假定 Retail 完全无 judge 调用。[实际任务数据](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/data/tau2/domains/retail/tasks.json)、[NL evaluator](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/evaluator/evaluator_nl_assertions.py)
+
+3. **当前 `run_tasks` 源码默认 `ALL`。**  
+   runner 文档写的是 `ALL_WITH_NL_ASSERTIONS`。实现必须显式传入 evaluation mode。[batch 源码](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/runner/batch.py)
+
+4. **低层 `run_simulation` 不附送 batch checkpoint/retry。**  
+   直接调用实例 API 时，不能声称自动继承第三层功能。
+
+5. **原生 auto-resume 不满足 EvoTau 的严格实验隔离。**  
+   checkpoint 使用 task/trial/seed 识别已完成项；配置变化时 auto-resume 可以继续，并且配置比较排除了 policy。EvoTau 必须先验证完整 manifest hash，且不同策略使用不同 batch 路径。[checkpoint 源码](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/runner/checkpoint.py)
+
+---
+
+**6. CustomerStrategy design 与注入方式**
+
+[设计建议] MVP 只保留四个行为字段，元数据另计：
+
+| 字段 | 类型/值 | 唯一职责 |
+|---|---|---|
+| `disclosure` | enum：`minimal_on_request` / `related_on_request` | 回答问题时披露多大的相关信息范围 |
+| `request_order` | enum：`scenario_order` / `reverse_independent` | 独立子请求的呈现顺序 |
+| `challenge_style` | enum：`none` / `ask_reason` / `rephrase_request` | 面对核验、限制或拒绝时采用何种追问 |
+| `challenge_budget` | integer：0、1、2 | 整个 episode 最多触发多少次挑战 |
+
+另有 `strategy_id`、父版本及 mutation 来源，但它们不参与 prompt 行为控制。
+
+**语义限制：**
+
+- `minimal_on_request` 不能漏答 agent 明确询问的必要信息。
+- `related_on_request` 只补充与当前问题相关的信息，不一次性泄露整个 scenario。
+- `reverse_independent` 只能改变没有依赖关系、也没有原文顺序要求的子请求。
+- 核验时可以追问原因，但应在同一回复提供已知的必要核验信息。
+- 拒绝后只能进行有限澄清；scenario 要求的 fallback 优先执行。
+- 不得虚假确认“全部事项都已提供”，不得为了失败奖励拒绝有效完成路径。
+
+**MVP 不允许自由 natural-language tactic。**四字段编译成固定模板即可。自由文本只会增加冲突、去重和事实核验难度。
+
+[源码确认] `UserSimulator` 的 system prompt 包含原始 guidelines 与 scenario；初始化后，`state.system_messages` 会在每次生成时重新随历史发送。因此只需覆盖 prompt composition，就能持续提供策略，不必重写每轮 generation。[UserSimulator 实现](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/user/user_simulator.py)
+
+推荐的 prompt 结构：
+
+```text
+原生 simulation guidelines
+原始 scenario，逐字保留
+EvoTau interaction strategy，独立区块
+冲突处理：guidelines 与 scenario 优先
+```
+
+不要把 strategy 拼进 `<scenario>`，否则会模糊“事实”和“行为控制”的边界。
+
+**持续注入不等于持续遵守。**MVP 用 episode 后审查核实实际行为；不宣称 prompt 能保证模型绝不编造。任何事实污染或无法判定的轨迹，都不能驱动演化。
+
+还有一个实际接入陷阱：`PersonaConfig` 的文本通过替换 `<PERSONA_GUIDELINES>` 插入，而本次检查的普通文本 guidelines 没有该占位符。因此不能依赖 persona 参数实现这些行为维度。[PersonaConfig](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/data_model/persona.py)、[文本 guidelines](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/data/tau2/user_simulator/simulation_guidelines.md)
+
+---
+
+**7. Customer attack space 与 mutation**
+
+[设计建议] 对候选维度进一步收缩：
+
+| 候选维度 | MVP 决定 | 理由 |
+|---|---|---|
+| 披露范围、渐进披露 | 保留 | 容易影响信息收集完整性 |
+| 延迟必要信息、拒绝核验 | 排除 | 易把任务变得不可完成 |
+| 独立请求排序 | 保留 | 可暴露一次性写操作的规划错误 |
+| Persistence | 保留，最多 2 次 | 易 mutation，也易核验 |
+| Rephrasing | 保留 | 检查拒绝/限制是否稳定 |
+| Policy questioning、justification | 合并为 `ask_reason` | 避免近义字段 |
+| Pressure level | 暂缓 | 易引入虚构紧急情况，且和 persistence 重叠 |
+| Escalation timing | 暂缓 | 容易改变终止路径和任务目标 |
+| 一般 workflow challenge | 不独立设字段 | 由排序与追问表达 |
+| Deception、belief mutation | 排除 | 独立未来 setting |
+
+三类 mutation：
+
+1. **Disclosure mutation**：在两种披露范围之间切换。
+2. **Ordering mutation**：改变独立子请求排序；无可用机会则拒绝该 mutation。
+3. **Challenge mutation**：调整追问方式或预算一档；规范化 `none ↔ budget=0` 的对应关系。
+
+每次 mutation 必须记录：
+
+```text
+parent
+operator
+changed_fields
+expected_behavioral_effect
+supporting_failure_ids / exploration_reason
+```
+
+**Exploration**：优先选择尚未测试的合法字段邻域。  
+**Exploitation**：根据具体失败，选择最可能影响该执行阶段的算子。
+
+例如发现 agent 过早执行一次性 exchange，则优先测试 request ordering，而不是增强无关的情绪语气。
+
+MVP 不做 crossover。搜索空间很小，单字段变异已经足以定位机制；重组会降低因果解释清晰度。
+
+---
+
+**8. Customer fitness 与 deterministic selection**
+
+[设计建议] **不推荐把“全局 archive 中新增 signature 数量”作为唯一 primary fitness。**
+
+原因是 archive 越大，这个分数越容易归零；同一个 workflow 错误在新 Service 上重新出现，也可能是重要攻击证据。
+
+推荐使用：
+
+\[
+F(C;S,P)=
+\#\{\text{评估面板 }P\text{ 中，出现可复现、合法且可归因失败的 task}\}
+\]
+
+约束：
+
+- 每个 task 最多贡献 1 分。
+- 同一 episode 的多个连锁错误只取最早的可归因根错误。
+- 多 seed 用于确认可靠性，不增加“独立漏洞数”。
+- Invalid episode 不计分。
+- 所有策略使用相同 task panel、seed schedule 与预算。
+
+另行记录 `unique signatures`、`new signatures`、severity，不做复杂加权。
+
+**Selection 的 MVP 流程：**
+
+1. 冻结当前 Service、评估面板和代初 archive。
+2. incumbent 与 K 个候选在同一 discovery panel 上运行。
+3. 没有严格胜者，保留 incumbent。
+4. 有胜者时，只挑一个 challenger；候选之间同分用稳定 fingerprint 排序。
+5. 用预留的新 seed 对 challenger 与 incumbent 做配对确认。
+6. discovery 与 confirmation 都严格改善，且有效性、行为遵循达标，才替换。
+7. 否则保留 incumbent，不不断加试直到获胜。
+
+**硬语义：**
+
+```text
+candidate <= incumbent
+→ retain incumbent
+```
+
+MVP 不设置 novel-failure override。平分候选发现的新失败可以进入 archive、触发 repair，但不能称为 Customer evolved。
+
+这种设计会牺牲部分“新颖但同样强”的策略替换机会，换来清晰、可审计的进化定义。
+
+---
+
+**9. ServiceStrategy design 与注入方式**
+
+[设计建议] 使用**结构化规则列表作为唯一的策略存储格式，固定模板把它渲染为 prompt patch**。
+
+这里必须保持一个硬边界：
+
+```text
+ServiceStrategy = policy-grounded structured execution rules
+prompt patch = runtime rendering of ServiceStrategy
+```
+
+EvoTau 不把任意自由文本 prompt 当作 ServiceStrategy。否则系统很容易退化为双边 prompt optimization，失去 workflow-level repair 的可解释性。
+
+每条规则只需要：
+
+| 字段 | 用途 |
+|---|---|
+| `policy_ref` | 指向固定政策段落 |
+| `trigger` | 何时适用 |
+| `required_execution` | 应进行的具体操作或检查 |
+| `evidence_refs` | 支持该 repair 的 FailureRecord |
+
+例如：
+
+> 在对同一订单执行一次性商品修改前，先确认用户已列出全部待修改商品；完整汇总本次修改，取得明确确认后，再调用修改工具。
+
+这类规则有当前 Retail policy 的直接依据：一次性修改/换货、完整收集商品和显式确认均在原政策中。[Retail policy](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/data/tau2/domains/retail/policy.md)
+
+建议：
+
+- 最多 6 条 active rules。
+- 总 rendered patch 不超过 600 tokens。
+- 每个 repair 最多新增或替换 1 条规则。
+- Checklist 由规则自动渲染，不再单独维护。
+- Tool preconditions 先作为 agent 执行指令，不新增阻断工具调用的中间件。
+
+否则，实验测到的可能是外部强制器的能力，而非 Service execution strategy 的改善。
+
+[源码确认] `LLMAgent.system_prompt` 可覆盖，原生生成流程会持续使用初始化时保存的 system messages。[LLMAgent](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/agent/llm_agent.py)
+
+Adapter 保留原始 policy 和 base instructions，添加独立 execution 区块，明确：
+
+```text
+固定 domain policy 约束所有执行规则；
+execution rules 不能新增资格要求、政策例外或业务权限。
+```
+
+不通过修改 `domain_policy` 字符串来承载 repair。
+
+---
+
+**10. Service repair generation**
+
+[设计建议] 每个 repair candidate 必须对应一个可审计命题：
+
+```text
+在触发条件 T 下，
+Service 未执行政策要求 R，
+导致证据 E 所示结果；
+增加/替换执行规则 P 应消除此错误。
+```
+
+输入仅包含 evolution 数据：
+
+- FailureRecord 与关联 trajectory；
+- 相关工具调用、返回结果；
+- 对应 policy 原文；
+- 当前 ServiceStrategy；
+- 相关历史 recurrence。
+
+MVP 每代只生成 1 个最小 repair；完整系统最多 2 个。
+
+生成后先做静态检查：
+
+- 是否引用真实 policy 段落；
+- 是否暗中改变资格条件、退款规则、用户目标；
+- 是否含 task ID、订单号、硬编码答案；
+- 是否与现有规则冲突；
+- 是否只是“更谨慎”等不可验证建议；
+- 是否超出长度限制。
+
+第一版对每个候选做人工 policy-preservation 审核。通过后才进入执行 gate。以后可以降低人工比例，但不能让生成器同时充当唯一裁判。
+
+---
+
+**11. Failure attribution 与 evaluator adapter**
+
+[源码确认] 原生 evaluator 已提供：
+
+| 原生信号 | 能说明什么 | 不能说明什么 |
+|---|---|---|
+| `db_check` | 最终状态是否等价于参考目标状态 | 哪一步违反了政策 |
+| `env_assertions` | 指定环境断言是否满足 | 完整政策合规 |
+| `action_checks` | 与参考工具调用的匹配情况 | 其他轨迹是否错误 |
+| `communicate_checks` | 指定字符串是否出现 | 一般沟通质量 |
+| `nl_assertions` | 指定自然语言条件的 judge 判断 | 可靠的完整归因 |
+| `termination_reason` | 正常结束、步数限制、错误等 | 自动判定责任方 |
+
+`EnvironmentEvaluator` 用新环境重建预测状态和 gold 状态，并比较 DB hash；reference actions 是生成 gold end state 的路径，不是一般意义上的强制执行序列。[环境 evaluator](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/evaluator/evaluator_env.py)
+
+此外，原生 **ConversationReviewer 已经能同时报告 user/agent 错误、严重程度、turn index 和修正建议**。EvoTau 不应再从零实现一个同类总评 judge。[reviewer API](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/evaluator/reviewer.py)、[review prompt 与实现](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/evaluator/review_llm_judge.py)
+
+但原生 reviewer 是候选证据来源，不是最终 ground truth。
+
+[设计建议] 增加一个短归因流程：
+
+1. **运行完整性**：区分 provider、环境、预算截止、协议错误。
+2. **Customer validity**：事实、目标、原始行为约束、终止是否有效。
+3. **Strategy adherence**：有触发机会时，实际行为是否对应策略。
+4. **错误定位**：必须引用具体 policy 条款、消息或工具结果。
+5. **责任判定**：Service 当时有足够信息，或政策明确要求其主动收集该信息。
+6. **结果关联**：证明该错误造成任务失败，或构成独立的实质政策违规。
+7. **复现确认**：策略级重新运行，而非只重新给同一轨迹打分。
+
+最终分类：
+
+| 分类 | 是否进入攻击 fitness |
+|---|---|
+| `service_execution_failure` | 通过验证后计入 |
+| `customer_invalid` | 不计 |
+| `infrastructure_or_environment_failure` | 不计 |
+| `task_unsupported_or_unsatisfiable` | 不计 |
+| `unattributed_task_failure` | 不计 |
+| `no_attributable_failure` | 不计 |
+
+另保留 `uncertain` 状态；不强行分到 Service。
+
+**MVP 只覆盖三类 workflow 错误：**
+
+- 缺少必要的身份定位/核验；
+- 未获得适用于该操作的显式确认就写入；
+- 一次性写操作前未按政策收集完整变更范围。
+
+这些规则在实验前冻结。其他错误可以留作 discovery notes，不能临时扩充判分标准来提高结果。
+
+特别注意：
+
+- **Reward=1 也可能有 policy violation**，如最终状态正确但缺少确认。
+- **Reward=0 也可能没有 Service vulnerability**，如用户编造信息。
+- **MAX_STEPS 不能直接奖励攻击者**。仅当存在此前独立可证的错误，才另行计入。
+- 工具拦截了违规调用，不能报告成已经造成违规 DB 变更。
+- 原生 hallucination retry 的专门检查目前限 full-duplex；不能以为 Retail text 自动获得同等保障。
+
+---
+
+**12. FailureRecord、Signature 与 Archive**
+
+[设计建议] `FailureRecord` 保留以下最小内容：
+
+```text
+failure_id
+episode_ref
+customer_strategy_id
+service_strategy_id
+generation
+signature
+policy_ref
+evidence_turns / tool_call_refs
+mistake_and_outcome
+verification_status / verification_refs
+```
+
+`task_id`、domain、seed、模型、原生 reward 等从不可变 episode/manifest 引用读取，不重复保存完整轨迹。
+
+Signature 不需要独立核心对象，作为固定 tuple 即可：
+
+```text
+(domain, workflow_stage, policy_rule_id, mistake_type)
+```
+
+例如：
+
+```text
+(retail, pre_write, explicit_confirmation, missing_confirmation)
+```
+
+不要加入订单号、用户姓名、自由文本描述或完整工具序列，否则会制造虚假 novelty。
+
+Archive 使用 SQLite 索引加原生 trajectory 文件引用，不使用向量数据库。
+
+规则：
+
+- **Insertion**：仅 verified failure 进入有效 archive。
+- **Dedup**：同 task、同 signature 合并为一个失败单元；保留不同 seed、策略和 Service 版本的 occurrence。
+- **Retention**：原始记录追加保存，不删除已修复失败。
+- **Active set**：MVP 最多 32 个 replay representatives。
+- **Pruning**：只调整 active representative，不删除研究历史。
+- **优先级**：当前 recurrence、严重错误、未覆盖 signature、较新记录。
+
+没有赢得 Customer selection 的候选，也可以贡献合法、已验证的 archive 记录。
+
+---
+
+**13. Historical replay**
+
+[设计建议] 必须区分两种 replay：
+
+| Replay | 用途 |
+|---|---|
+| 原始工具轨迹重放 | 核对历史 episode 的状态和评分 |
+| 历史 CustomerStrategy 重新运行 | 检验新 Service 是否仍会犯错 |
+
+Service gate 使用第二种。**不能把历史 user 台词逐条硬塞给新 Service**，因为 repair 可能改变提问顺序，使旧脚本失去语义。
+
+推荐每代最多 8 个历史 replay units：
+
+1. 最近 2 个 verified failures；
+2. 每个已发现 signature 的一个代表；
+3. 剩余名额按“最久未测试”轮换。
+
+去重后截断，并固定排序规则。首个 smoke 缩小到最多 2 个历史 units。
+
+“最近 N 个 + 每 family 一个代表”作为 MVP 足够，但达到上限后必须报告覆盖率。对于有限样本 gate，只能宣称“未在本次 replay panel 上观察到回归”。
+
+每 3 次 Service 接受，或最终评估前，再对全部 active representatives 做一次审计。
+
+---
+
+**14. Clean、validation 与 heldout**
+
+[源码确认] 当前 Retail 官方 split 为：
+
+- train：74 tasks；
+- test：40 tasks；
+- base：114 tasks。
+
+train/test 的 task ID 不重叠。但本次按 reference actions 中显式 `user_id/order_id/email` 做的静态检查发现，37 个 train tasks 与 test 至少共享一个这类标识。这是近邻泄漏风险提示，不等于完成了全部语义去重。[官方 split](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/data/tau2/domains/retail/split_tasks.json)
+
+[设计建议] 使用以下 split 语义：
+
+| Split | 允许用途 | 禁止用途 |
+|---|---|---|
+| Evolution E | mutation、repair、archive、selection | 无 |
+| Validation V | 接受 gate、预先固定的调参决策 | 将逐条轨迹回传给 evolver |
+| Heldout H | 最终冻结版本评估 | 逐代接受、mutation、repair、选择最佳 checkpoint |
+
+优先保留官方 test 作为 H。对 train 内按业务实体和近邻 scenario 分组，再 deterministic 划分 E/V。
+
+严格泛化设置中，将与 H 共享强业务实体的 train groups 从 E/V 排除。若规模不足，应报告限制；不能悄悄改为逐 task 随机切分。
+
+**Clean 的定义**：原生 `UserSimulator`，不附加 EvoTau strategy。原始 task 中固有的人格与要求保留。
+
+还需要 ex-ante eligibility filter：
+
+- 排除原 task 要求报错订单号、伪造声明或主动事实误导的情况；
+- 排除政策与工具约束冲突、无明确可行完成路径的任务；
+- 不修改原 task 来“修好”它；
+- 不因某模型做不好就删除 task。
+
+例如原 Retail task 46/47 明确要求先提供错误订单号。它们适合另一个 setting，不适合首批无 deception 实验。
+
+---
+
+**15. Service acceptance gate**
+
+[设计建议] 推荐的接受条件：
+
+```text
+policy-preserving static review passed
+AND target error reproducibly removed
+AND intended task outcome preserved
+AND no observed historical regression
+AND clean validation preserved
+AND adversarial validation preserved
+AND efficiency guard passed
+```
+
+各项具体语义：
+
+| Gate | MVP 规则 |
+|---|---|
+| Target | 旧 Service 在两个预设 trials 复现目标错误；新 Service 两次均消除，并完成正确任务/正确拒绝 |
+| Historical | 本次回放 panel 中，incumbent 已通过的 task 不得失败，也不得新增已验证违规 |
+| Clean validation | 不允许 incumbent 的成功 task 变失败；同时保留相对初始 S₀ 的成功锚点 |
+| Adversarial validation | 固定策略面板上不出现新增 attributable failures |
+| Efficiency | clean 平均 tool calls 不超过 incumbent 的 `1.25× + 1`；不得出现新的无效重复写调用 |
+| Validity | 被用户无效行为污染的 gate episode 不能作为 repair 成功 |
+| Incomplete budget | gate 未完成则不接受，记录 `inconclusive` |
+
+阈值是 MVP 的保守工程规则，不是统计显著性证明。Pilot 后可以预注册非劣效 margin，但不能看完正式结果再调。
+
+**不加入严格 heldout gate。**如果项目坚持每代用一组“未向 generator 展示的任务”投票接受，应将其命名为 validation，并额外保留最终 H。
+
+---
+
+**16. Generation lifecycle 与 co-evolution semantics**
+
+[设计建议] 推荐每代先 Customer、后 Service：
+
+1. 加载 manifest，验证哈希和预算。
+2. 冻结 `S_t`、代初 archive 和评估面板。
+3. 重评 `C_t` 对 `S_t`，不能沿用上一代 Service 上的 fitness。
+4. 生成 K 个合法且不同的 Customer candidates。
+5. 用相同面板评价 incumbent 与候选。
+6. 归因、验证，完成严格 selection。
+7. 将所有已验证 discovery 写入待提交 archive。
+8. 选择一个明确 target failure。
+9. 生成最小 Service repair。
+10. 比较 `S_t` 与候选 Service，运行 gate。
+11. 接受则产生 `S_{t+1}`，否则保持 `S_t`。
+12. 提交 generation summary、archive 更新和状态。
+13. 下一代重新评价 Customer。
+
+源码运行结果、验证结果与 selection/gate 决定都必须先落盘，最终状态提交具有幂等性。
+
+**Customer evolved**：新策略在执行证据上严格胜出并通过确认。  
+**Service evolved**：新规则通过 gate，且目标错误出现率真实下降。
+
+没有 replacement 时仍可计为一个 completed generation，但不能算 evolution event。
+
+选择 Customer-first，是因为 repair 需要针对当前 Service 新获得的失败证据。一代只更新一方没有必要成为默认，但可作为调试执行模式。
+
+---
+
+**17. Arms-race operational definition**
+
+[设计建议] “两边 prompt 都变了”不构成 arms race。
+
+设：
+
+\[
+p(C,S)=\text{固定审计面板上的 attributable failure rate}
+\]
+
+一个有效响应链至少需要：
+
+1. `C_old` 对 `S_old` 的失败可以复现；
+2. repair 后：
+   \[
+   p(C_{old},S_{new})<p(C_{old},S_{old})
+   \]
+3. Customer 更新后：
+   \[
+   p(C_{new},S_{new})>p(C_{old},S_{new})
+   \]
+4. 差异通过新 seed 确认，且没有事实污染、task panel 或评分规则变化。
+
+主要证据是保存的 Customer/Service checkpoints 的 **cross-play matrix**，而不只是每代在线 fitness。
+
+若要进一步声称“针对特定 repair 的 counter-adaptation”，比较：
+
+\[
+I=
+[p(C_{new},S_{new})-p(C_{old},S_{new})]
+-
+[p(C_{new},S_{old})-p(C_{old},S_{old})]
+\]
+
+显著正值支持 repair-specific adaptation；不是所有 co-adaptation 都必须满足它。
+
+论文层面的推荐标准：
+
+- 每条运行至少观察到两个相继的、确认过的 repair–counter-adaptation 链；
+- 至少三个独立 evolution seeds 出现可比现象；
+- 在固定任务面板上出现行为/失败分布的变化；
+- 与冻结 Service、随机 mutation 的预算匹配对照相比仍有差异。
+
+两代 smoke 最多证明第一次反适应出现，不能支撑 sustained arms race claim。
+
+---
+
+**18. Main research questions**
+
+[设计建议] 主文保留三个 RQs：
+
+| RQ | 问题 | 包含原候选 |
+|---|---|---|
+| RQ1 | 自适应 Customer 是否比同预算静态/随机策略发现更多有效失败？ | 原 RQ1 |
+| RQ2 | 验证驱动的 Service repair 是否改善鲁棒性并保留正常能力，且能泛化？ | 合并原 RQ2、RQ5 |
+| RQ3 | 交替更新是否形成可测量的相互响应？ | 原 RQ3 |
+
+Historical replay 的价值作为主要 mechanism ablation，放入 RQ2。详细 family 分布、全部轨迹示例和跨模型敏感性可放 appendix。
+
+---
+
+**19. Baselines**
+
+[设计建议] 避免所有维度做完整笛卡尔积。
+
+Customer 对照只保留：
+
+| Baseline | 回答什么 |
+|---|---|
+| 原生 τ-bench user | 无额外攻击时的正常能力 |
+| 固定手工策略组合 | adaptation 是否超过合理静态覆盖 |
+| Random mutation | failure-conditioned mutation 是否有用 |
+| EvoTau Customer | 完整攻击侧 |
+
+Static 应是一组预先冻结、覆盖相同字段空间的策略，不能只选一个弱的“aggressive user”。
+
+Service 对照只保留：
+
+| Baseline | 回答什么 |
+|---|---|
+| 原生 agent / S₀ | 未修复起点 |
+| One-shot repair | 循环 repair 是否优于一次集中修复 |
+| EvoTau Service | 完整修复侧 |
+
+One-shot repair 使用相同格式、长度上限和 gate；训练证据只来自预先规定的初始攻击收集阶段，不能偷看后续失败。
+
+CRAFT 原设置不作为直接数值基线，因为它的任务、攻击许可和评价目标不同。将来若裁剪 CRAFT 为 fixed-fact 版本，应明确称为适配后的 baseline。
+
+---
+
+**20. Ablations**
+
+[设计建议] 保留四个：
+
+1. **Frozen Customer**：判断 Service 是否仅适应固定攻击集合。
+2. **Frozen Service**：判断攻击变化是否只是不断搜索一个固定目标。
+3. **No historical replay**：判断修复是否重新引入旧错误。
+4. **Random instead of failure-conditioned mutation**：判断反馈是否真正指导进化。
+
+不优先做 no clean gate、no heldout gate、no attribution。这些更容易证明“不约束就会出现坏结果”，对主要机制的解释力有限。
+
+---
+
+**21. Metrics**
+
+[设计建议] Primary metrics 控制在六组：
+
+| Metric | 定义 |
+|---|---|
+| Verified discovery yield | 固定预算内唯一 `(task, signature)` 数，以及独立 signature 数 |
+| Attributable failure rate | 合法、完成核验的 episode 中，出现可归因失败的比例 |
+| Repair effectiveness | target 错误率变化及通过 gate 的 repair 比例 |
+| Clean task success | 原生 reward 成功率及政策违规率 |
+| Heldout robustness | H 上固定/冻结策略面板的任务成功率与可归因失败率 |
+| Historical recurrence | 历史已修复 signature 的再现率 |
+
+所有 failure rate 同时报告：
+
+- 总尝试次数；
+- valid episode 数；
+- invalid/uncertain/infra 比例。
+
+否则攻击者可以通过只保留少量有效 episode 制造虚高 ASR。
+
+Diagnostic metrics：
+
+- 实际触发的行为维度及遵循率；
+- cross-play 与 family 分布；
+- patch tokens / active rule 数；
+- tool calls 与 turns。
+
+正式统计以 task group 和独立 evolution run 为单位；不能把同一个 task 的多次对话当成大量独立样本。
+
+---
+
+**22. Fitness sparsity**
+
+[设计建议] 保持两个严格分开的信号：
+
+| 信号 | 用途 |
+|---|---|
+| 真实、合法、可归因失败 | 决定 incumbent replacement |
+| Exploration shaping | 决定下一轮尝试哪些 mutation |
+
+允许用于 exploration 的信号：
+
+- 是否触发目标 workflow；
+- 是否到达一次性写操作前的决策点；
+- Customer 的目标行为是否实际发生；
+- 是否出现不同但仍合法的工具轨迹。
+
+不把额外验证次数、对话长度、agent 困惑或重复拒绝作为攻击奖励。
+
+如果所有候选零分：
+
+1. 保留 incumbent；
+2. 优先尝试未覆盖算子；
+3. 在预先批准的 E task pool 中按固定计划轮换任务；
+4. 检查策略是否真实执行；
+5. 预算耗尽后报告失败，不用代理指标宣布 evolved。
+
+---
+
+**23. Minimal diversity mechanism**
+
+[设计建议] 只用三个机制：
+
+- **Canonical fingerprint**：规范化四字段 JSON 后计算 hash。
+- **Mutation coverage**：每代尽量覆盖不同算子。
+- **Behavioral verification**：策略不同但行为没有发生差异，不算有效多样性。
+
+无触发机会属于 `not_applicable`，不是策略执行失败；有机会却未遵守属于 adherence failure。
+
+每代限制重复 proposal 次数，超过上限减少 K 或结束 generation，不能无限重采样。
+
+不引入 embedding clustering，也不奖励自然语言措辞差异。
+
+---
+
+**24. Service patch-bloat control**
+
+[设计建议] 规则生命周期：
+
+```text
+propose → verify → accept → retain
+                     ↓
+              replace / consolidate
+                     ↓
+                 full gate
+```
+
+具体约束：
+
+- 新规则解决已有同类 trigger 时，优先替换或合并。
+- 不追加同义规则。
+- 达到 6 条或 600 tokens 时，不再 append。
+- 达到上限，或每 3 次接受后，允许提出一次 consolidation candidate。
+- Consolidation 与新 repair 一样需要 gate。
+- 不能因为规则最近没触发就删除；它可能防御低频历史攻击。
+
+MVP 两代内只需实现 append/replace 与长度上限；自动 consolidation 可以推迟到 pilot。
+
+---
+
+**25. Core data model**
+
+[设计建议] 七个核心对象足够：
+
+| 对象 | 职责 |
+|---|---|
+| `ExperimentManifest` | 固定版本、世界、模型、split、协议、预算 |
+| `CustomerStrategy` | 四字段行为策略及 lineage |
+| `ServiceStrategy` | 有界执行规则集及 lineage |
+| `CandidateEvaluation` | episode 引用、validity、adherence、fitness、gate 结果 |
+| `FailureRecord` | 归因证据和 signature |
+| `RepairCandidate` | 最小规则 diff、目标失败、验证命题 |
+| `GenerationState` | 当前 incumbents、阶段、预算、随机状态、提交状态 |
+
+不单独定义：
+
+- 第二套 `Task`；
+- 第二套 `Episode`；
+- `FailureSignature` 顶层对象；
+- `ArchiveEntry` 与 FailureRecord 的重复对象；
+- 自定义 `RewardInfo`。
+
+原生 `SimulationRun`、`Results`、task schema 直接复用。
+
+---
+
+**26. Repository structure**
+
+[设计建议] 后续创建的仓库保持研究层形态：
+
+```text
+evotau/
+  pyproject.toml
+  configs/
+    mvp.yaml
+    pilot.yaml
+    splits/
+  src/evotau/
+    models.py
+    controller.py
+    customer.py
+    service.py
+    failures.py
+    archive.py
+    evaluation.py
+    provenance.py
+    tau_adapter/
+      user.py
+      agent.py
+      runner.py
+  tests/
+    unit/
+    integration/
+    fixtures/
+  experiments/
+    protocols/
+    analysis/
+```
+
+τ-bench 作为固定 commit 的外部依赖，不复制其 `domains/`、tools、tasks、runner 或 evaluator。
+
+预计最难的模块应该是 `evaluation.py` 和实验协议，而不是 `tau_adapter/runner.py`。如果后者开始长成完整 runtime，说明设计需要收缩。
+
+---
+
+**27. Implementation phases**
+
+[设计建议] 以下阶段同时记录 **Engineering status** 与 **Research outcome**。进入下一工程阶段只要求软件机制正确；是否值得继续扩大研究规模，由 pilot signal 与 kill criteria 决定。请求预算计入 user、Service、evolver、native NL evaluation、review 和实际 provider retry。
+
+| Phase | Research / engineering scope | Suggested real-API cap | Engineering exit criteria | Research observation |
+|---|---|---:|---|---|
+| **0 — Integration proof** | 一个真实 task，base C/S，经 adapter 跑完整 episode | 1 episode；≤70 requests | 原生工具、状态转移、评分、prompt 注入、日志和 manifest 全部正确；无需修改 τ-bench 核心运行循环 | 不要求发现 failure |
+| **1 — Customer-only mechanism** | 固定 S，K=2；mutation、执行、validity/adherence、归因、fitness、selection | 建议 ≤12 episodes；≤900 requests | incumbent 与候选能在同 panel 上完成评价；invalid 不计；tie/no-improvement 正确保留 incumbent；confirmation 分支可正确执行或跳过 | replacement 可以发生，也可以不发生；无 replacement 是合法结果 |
+| **2 — Service-only mechanism** | 固定 verified attack；最小 repair；target/replay/clean/V gate | 建议 ≤12 episodes；≤900 requests | repair proposal、静态 policy-preservation review、gate、accept/reject 都按规则运行；被拒 repair 不得修改 incumbent | accepted repair 可以发生，也可以不发生 |
+| **3 — Minimal two-generation co-evolution smoke** | 完整 C→S→C→S，checkpoint/resume；只验证闭环机制 | **目标 10–25 episodes；硬上限 23 episodes 左右，≤1,800 requests** | 两代 lifecycle 能完整提交；无 replacement、无 failure、无 repair 时也能正确继续或结束；状态可恢复、结果幂等 | counter-adaptation 若出现则记录；不要求出现，更不能把它作为软件 PASS 条件 |
+| **4 — Pilot** | 扩到小规模 E/V/H、3 generations、≥3 evolution seeds；开始判断 signal 是否存在 | 依据前序实测重新预算，不预设大额固定消耗 | attribution calibration、strategy adherence、预算、split、cross-play pipeline 稳定 | 这里才判断 adaptive advantage、repair generalization、counter-adaptation 是否值得进入 formal |
+| **5 — Formal** | 预注册 RQs、预算匹配 baselines、关键 ablations、多 seed、最终 H | 根据 pilot 方差和资源确定 | 冻结配置、统计分析、独立人工抽审和可复现实验包完成 | 正向或负向结果均按预注册规则报告 |
+
+### Phase 解释原则
+
+- **Engineering PASS 不要求 research success。**
+- Phase 1 如果所有 candidate 都是 0 分，但系统正确保留 incumbent，则软件机制是 PASS。
+- Phase 2 如果所有 repair 都被 gate 拒绝，而拒绝理由正确且证据完整，则软件机制仍可 PASS。
+- Phase 3 如果两代完整运行但没有 reciprocal adaptation，则只能说“未观察到 counter-adaptation”，不能不断修改规则直到出现。
+- 是否停止项目或降低论文 claim，由第 34 节 kill criteria 决定。
+
+Phase 4/5 的任务数、episode 数和 provider 预算必须根据前面实测的每 episode 成本与有效失败率重新计算；不应在第一次实现前就承诺数十万请求。
+
+---
+
+**28. Smoke ladder**
+
+[设计建议] 使用逐级 smoke，但只有**工程正确性**决定能否进入下一软件阶段；研究信号用于决定是否值得扩大实验，而不是决定代码是否“通过”。
+
+```text
+离线 schema / selector / gate tests
+→ 原生 mock domain，无真实模型请求
+→ 一个真实 Retail episode
+→ Customer candidate 行为差异可执行
+→ Customer evaluation / selection 机制完整
+→ Service target repair / reject 机制完整
+→ Service gate 完整
+→ 极小两代 co-evolution smoke
+→ 多 seed pilot
+→ formal
+```
+
+每一级记录两列：
+
+| 维度 | 含义 |
+|---|---|
+| **Engineering status** | 状态流、证据、budget、selection/gate、checkpoint 是否按规范工作 |
+| **Research outcome** | replacement、accepted repair、counter-adaptation 等研究现象是否出现 |
+
+例如：
+
+```text
+Engineering: PASS
+Research: NOT_OBSERVED (no candidate strictly beat incumbent)
+```
+
+是完全合法的结果。
+
+禁止以下做法：
+
+- 因没有 winner 而降低 selection 标准；
+- 因没有 repair 被接受而放宽 clean/replay gate；
+- 因两代没有 arms-race signal 而追加未预注册的 reward；
+- 把“程序跑完了”称为研究假设成立。
+
+Pilot 才是第一次真正判断“signal 是否存在”的阶段。Formal 才承担统计可信度。
+
+---
+
+**29. API cost control**
+
+[源码确认] τ-bench 已有 max steps、max errors、concurrency、trial、batch retry、checkpoint 与 LiteLLM cache。底层 `generate` 也有重试设置，不能只限制 batch retry。[LLM 工具层](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/utils/llm_utils.py)、[batch retry](https://github.com/sierra-research/tau2-bench/blob/b7ea9074c1cba482b30687fecdb5c8425fd6f619/src/tau2/runner/progress.py)
+
+[设计建议] 不使用一个从 smoke 一直沿用到 formal 的统一大预算。预算随阶段升级。
+
+### Phase 0–3 的极小 smoke 配置
+
+| 控制项 | 推荐 |
+|---|---|
+| Customer candidates | 2 / generation |
+| Repair candidates | 1 / generation |
+| Smoke evolution tasks | 1 |
+| Smoke validation tasks | 1 |
+| Smoke heldout | 0；heldout 从 pilot 开始 |
+| Generation cap | 2 |
+| `max_steps` | 64 |
+| Concurrency | 1 |
+| Batch retries | 0 |
+| Hallucination retries | 0，除非 τ-bench 当前模式本身要求 |
+| Provider retries | 显式关闭；若后续开启，全部 transport attempts 计入 |
+| Customer challenge | 全 episode 最多 2 次 |
+| Active repair prompt | ≤600 tokens |
+| Historical replay | smoke 最多 1 个 unit |
+| Co-evolution smoke request cap | **≤1,800 actual provider attempts** |
+
+`max_steps` 包括环境交互步骤，不能直接解释为 64 轮完整 user–agent 对话。
+
+Pilot 开始前，根据 Phase 0–3 的实测数据重新估算：
+
+```text
+mean / p95 requests per episode
+mean / p95 tokens per episode
+attribution/reviewer overhead
+valid-episode rate
+verified-failure yield
+```
+
+再决定 Pilot/Formal 预算。
+
+全局预算采用一个轻量计数器，在 provider 请求前扣减，覆盖所有角色；若底层重试未关闭，必须按实际 transport attempts 计数。该拦截能力要在 Phase 0 用 mock 验证，不假定 native token totals 已包含失败请求和 judges。
+
+缓存区分：
+
+- **Resume cache**：完全相同 manifest、策略、task、seed 的已完成结果可复用。
+- **独立复现**：不得从同一响应缓存读取，然后宣称新 trial 成功。
+- **评审 cache**：固定轨迹和固定 judge 配置可复用，但不能算独立核验。
+- **语义缓存**：MVP 不用。
+
+---
+
+**30. Determinism and provenance**
+
+[设计建议] 最小 reproducibility contract：
+
+```text
+EvoTau git commit
+τ-bench git commit
+manifest/config hash
+task / policy / DB / tool / evaluator hashes
+split manifest
+role model IDs and sampling args
+master seed + trial seed schedule
+rendered Customer/Service prompt hashes
+strategy IDs and lineage
+native simulation IDs
+failure IDs and evidence references
+selection/gate decisions
+actual requests, tokens, failures, retries, cache hits
+```
+
+随机性至少分为：
+
+- mutation RNG；
+- task/panel 选择 RNG；
+- episode seed；
+- reviewer 配置。
+
+用稳定 hash 派生 seed，不用 Python 进程相关的 `hash()`。
+
+相同 seed 不保证远程 provider 返回相同 token。可复现承诺应是：
+
+> 输入、版本、证据、决策可重建；环境重放可验证；模型随机性通过重复实验量化。
+
+不同 C/S、policy、judge 或 evaluator 版本，绝不共享可继续写入的 checkpoint。
+
+---
+
+**31. EvoTau-Deception future track**
+
+[设计建议] 作为独立实验 setting，而不是给 MVP 增加一个布尔开关。
+
+未来至少显式区分：
+
+```text
+world truth
+user knowledge
+user claims
+allowed deception operations
+```
+
+可研究受控错误声明、错误信念、策略性矛盾和欺诈式话术，但须定义：
+
+- 哪些事实允许被错误陈述；
+- 哪些证据能识别真实状态；
+- 用户是否真的知道该事实；
+- 正确 Service 应怎样验证；
+- 攻击成功是否意味着越权、错误状态变更或错误披露。
+
+使用独立任务 eligibility、archive、评估协议和结果表，不能与 fixed-fact ASR 混合。
+
+---
+
+**32. Novelty positioning 与 paper claim**
+
+[源码确认] CRAFT 的关键链路是：
+
+```text
+LLMUserSimulationEnv.build_system_prompt
+→ base user instructions
+→ get_attack_prompt(...)
+→ 按 task 取缓存策略
+→ 整段 system prompt 持续参与多轮模拟
+```
+
+`CRAFT` 分支组合 DeceptionPlanner 与 AvoidanceAdvisor 的结果；生成脚本包含假设性误导、隐瞒事实等机制。它支持多轮攻击，不能简单称为“静态单轮 jailbreak”。但检查到的运行路径没有 EvoTau 所要求的“经验证接受 Service repair，再持续演化 Customer”的跨代闭环。[user 注入点](https://github.com/IBM/CRAFT/blob/01ab049ef3a27f51205686a1c419ea75bbed0b27/tau_bench/envs/user.py)、[attack 拼装](https://github.com/IBM/CRAFT/blob/01ab049ef3a27f51205686a1c419ea75bbed0b27/tau_bench/envs/attacks.py)、[策略生成](https://github.com/IBM/CRAFT/blob/01ab049ef3a27f51205686a1c419ea75bbed0b27/tau_bench/attacks_cache/scripts_to_get_attacks/strategist.py)
+
+τ-break 还修改了安全评价目标，并为 Retail 加入认证相关政策。这与 EvoTau 的固定原生语义不是同一设置。[CRAFT 项目说明](https://github.com/IBM/CRAFT/blob/01ab049ef3a27f51205686a1c419ea75bbed0b27/README.md)
+
+[设计建议] 定位如下：
+
+| 相关方向 | 已有机制 | EvoTau 应验证的增量 |
+|---|---|---|
+| τ-bench / τ²-bench | 可执行任务、工具、对话与环境验证 | 在同一世界上的双侧策略演化 |
+| Adversarial user simulation / CRAFT | 策略化多轮攻击 | 固定事实下，经修复反馈改变攻击分布 |
+| Prompt optimization | 根据反馈搜索提示 | 双方交互产生内生的优化目标变化 |
+| Reflection / self-improving agents | 从失败反馈改善执行 | 修复必须经 target、历史、clean 与泛化门控 |
+| Experience replay | 重用历史经验 | 将历史 Customer 策略重新实例化为回归测试 |
+| Adversarial training | 用攻击改善防御 | 无需权重更新的业务执行策略级闭环 |
+| Coevolution | 双方相互适应 | 固定工具语义、可审计错误和纵向 cross-play 证据 |
+
+Prompt optimization 和反思本身并不新：[ProTeGi](https://arxiv.org/abs/2305.03495)、[Reflexion](https://arxiv.org/abs/2303.11366)。双侧适应也已有相关工作，包括 [SPAG](https://arxiv.org/abs/2404.10642)、[MAGIC](https://arxiv.org/abs/2602.01539) 和近期 [ACEA](https://arxiv.org/abs/2609.08256)。因此不能使用“首个 LLM 攻防共同进化系统”这样的 claim。
+
+推荐论文方法 claim：
+
+> **EvoTau studies closed-loop adaptation between fact-preserving customer interaction strategies and policy-preserving service execution strategies in fixed executable business environments, using attributable failures, verified repairs, and historical replay to measure longitudinal robustness.**
+
+实验完成前只声称“提出并研究该设置”。只有 cross-play 和对照支持时，才能进一步声称观察到 reciprocal adaptation 或 arms race。
+
+τ²-bench 的 dual-control 主要由 Telecom 展示。Retail MVP 能检验交互策略机制，但不能声称已经验证 environment-coupled user tools 下的共同适应；那应是后续扩展。[τ²-bench 论文](https://arxiv.org/html/2506.07982v1)
+
+---
+
+**33. 最大研究风险**
+
+| 风险 | 检测 | 缓解 | 严重度 |
+|---|---|---|---|
+| Adaptive 不优于 static/random | 同预算 discovery curves | 改善反馈关联；保持强 baseline | 致命 |
+| Fitness 太稀疏 | 每百次 valid episodes 的 verified failures | 先检查行为触发，再扩大预先定义 task pool | 高 |
+| 策略不改变行为 | 有机会时的 adherence、轨迹差异 | 收缩字段、固定模板、拒绝无效 mutation | 致命 |
+| Repair 只是泛泛 prompt 强化 | 规则是否有 trigger、policy_ref、可验证效果 | 最小规则、长度限制、one-shot baseline | 高 |
+| 只修复 exact task | V/H task 与实体隔离评估 | 禁硬编码、分组 split | 致命 |
+| Attribution 不可靠 | 双人盲审、precision、分歧比例 | 只统计窄范围、高置信错误 | 致命 |
+| 评价遗漏合规错误 | reward=1 的独立审查 | 不只审失败轨迹 | 高 |
+| Arms-race 不出现 | cross-play、冻结对照 | 降低 claim，不堆机制解释 | 高 |
+| Prompt 膨胀 | tokens、规则数、clean 成本 | 有界规则与完整 gate 的 consolidation | 中 |
+| Task pool 太小 | 独立业务实体数、CI 宽度 | 后续扩大至 Airline/Telecom | 高 |
+| 模型/seed 不稳定 | 多 seed、第二组模型 | 分层报告，不挑最好 seed | 高 |
+| 工具/任务自身问题 | 原始策略下工具与 gold replay 审计 | 排除并记录，不归因给 Service | 高 |
+
+---
+
+**34. Kill criteria**
+
+[设计建议] 预先规定以下停止或降级条件。阈值用于是否继续投资，不是论文显著性标准。
+
+| 检查点 | 明确条件 | 决策 |
+|---|---|---|
+| Phase 0 | 必须修改 orchestrator、工具语义或 task evaluator 才能接入 | 停止当前接入设计 |
+| Phase 1–pilot | 两次模板修订后，有机会的 episode 中策略遵循率仍 <80% | 停止当前 representation |
+| Attribution calibration | 至少 30 个候选正例的独立审查中，归因 precision <90%，或关键事实争议持续 >10% | 暂停自动演化 |
+| Sparse fitness | 200 个 valid adversarial episodes、至少 10 个 eligible tasks 后，不足 3 个可复现 `(task, signature)` | 停止扩大工程，重评可研究性 |
+| Adaptive advantage | 3 seeds 的预算匹配 pilot 中，adaptive 的发现量持续不高于 static 和 random | 不进入大规模正式实验 |
+| Repair generalization | 5 个 target 成功 repairs 中，没有一个在不同 task 上体现收益且通过 clean gate | 停止通用 repair claim |
+| Safety/utility | 接受收益主要来自拒绝、提前终止或成本明显上升 | 判定机制失败 |
+| Arms race | 每条运行最多 8 generations、3 seeds 后仍无确认的 repair 后反适应 | 停止 arms-race claim |
+| Sample size | 分组隔离后任务不足以支持预定泛化比较 | 缩小论文范围或扩 domain |
+
+“停止 arms-race claim”不等于必须丢弃所有结果。可以保留攻击发现或验证修复方面的结论，但不能把单侧优化重新包装为共同进化。
+
+---
+
+**35. MVP specification**
+
+[设计建议] MVP 指**完整研究机制的最小实现边界**，不等于第一次 smoke 就必须使用完整样本规模。
+
+MVP 最少实现：
+
+```text
+固定 commit 的 τ-bench Retail text runtime
+
+一个四字段 CustomerStrategy
+3 类 mutation
+K = 2
+一个严格、基于 verified attributable failure 的 Customer fitness
+incumbent 参与、ties retain、可选 confirmation
+
+一个结构化、有界的 ServiceStrategy
+一个最小 repair operator
+target + historical + clean/V gate
+
+原生 evaluator/reviewer
+3 类窄范围执行错误归因
+一个轻量 archive
+checkpoint / manifest / request budget
+cross-play analysis support
+```
+
+在 **minimal co-evolution smoke** 中只使用：
+
+```text
+E = 1 task
+V = 1 task
+H = 0
+2 generations
+K = 2
+historical replay <= 1
+```
+
+目的是验证机制，不证明泛化。
+
+在 **pilot** 中再扩展到例如：
+
+```text
+E ≈ 4–6
+V ≈ 2–3
+H ≈ 2–3
+>= 3 evolution seeds
+```
+
+具体规模必须依据前序成本与方差重新冻结。
+
+明确不做：
+
+- 人口式大规模 evolution；
+- crossover；
+- 自由文本 tactic；
+- deception；
+- fresh adversary 在线生成器；
+- vector DB；
+- tool middleware；
+- 自定义 runtime；
+- 自动大型 failure ontology；
+- 模型微调。
+
+---
+
+**36. First co-evolution smoke**
+
+[设计建议] 第一次闭环实验只验证：
+
+```text
+Customer candidate 能执行
+→ failure attribution 能工作
+→ selection 能正确决定 retain/replace
+→ verified failure 若存在，可触发 Service repair
+→ gate 能正确 accept/reject
+→ 下一代能够在新的 incumbent state 上继续
+```
+
+它**不负责证明 arms race、泛化或统计显著性**。
+
+推荐配置：
+
+| 项目 | 值 |
+|---|---|
+| Domain | Retail text / half-duplex |
+| Evolution tasks | **1** 个 ex-ante eligible task |
+| Validation tasks | **1** 个不同业务实体的 eligible task |
+| Heldout | 0；从 pilot 开始封存 H |
+| Customer candidates | 每代 2 个 |
+| Repair candidates | 每代最多 1 个 |
+| Generations | 2 |
+| Evolution seeds | 1 |
+| Selection confirmation | 仅在 discovery 出现严格 challenger 时触发 |
+| Historical replay | 最多 1 个 unit |
+| Models | 执行前验证可用性并冻结；各角色模型/参数写入 manifest |
+| Max steps | 64 |
+| Primary engineering observations | validity、adherence、fitness、retain/replace、repair gate、checkpoint/resume |
+| Primary research observations | verified failure、replacement、accepted repair、下一代 counter-adaptation；均允许 NOT_OBSERVED |
+| Fresh adversary | 不使用 |
+
+### 最大 episode 预算
+
+采用条件执行，不为了凑完整流程强行运行不存在的分支。
+
+每代最坏情况：
+
+| 部分 | Episodes |
+|---|---:|
+| Discovery：incumbent + 2 candidates × 1 E task | 3 |
+| Selection confirmation：incumbent + challenger × 1 E task | 2 |
+| Service gate：incumbent/new Service × target + ≤1 historical + 1 V unit | ≤6 |
+| **每代最坏** | **≤11** |
+
+两代：
+
+```text
+<= 22 evolution/gate episodes
++ Phase 0 的 1 个 integration episode
+= <= 23 real episodes
+```
+
+若没有 strict challenger，则跳过 confirmation。
+若没有 verified Service failure，则跳过 repair/gate。
+若 repair 被静态检查拒绝，则不运行其完整 gate。
+
+因此实际运行通常应显著低于 23 episodes。
+
+### 请求预算
+
+在没有实测前只设保守硬上限：
+
+```text
+<= 1,800 actual provider attempts
+```
+
+Phase 0 后必须用实际单 episode requests/tokens 重估。请求数不是成本替代指标，正式预算以 token 与 provider 价格共同计算。
+
+### Smoke 的正确 verdict
+
+允许例如：
+
+```text
+Engineering: PASS
+Customer evolution: NOT_OBSERVED
+Service repair: NOT_APPLICABLE (no verified failure)
+Counter-adaptation: NOT_OBSERVED
+```
+
+这不是 smoke 失败。真正的 smoke 失败是：证据污染、selector/gate 违反规则、状态不能恢复、固定世界被破坏，或预算/基础设施导致关键机制无法判断。
+
+两代 smoke 完成后，只有机制正确才进入 Pilot；是否值得进入 Pilot，还要结合 discovery yield、strategy adherence 和归因质量判断。
+
+---
+
+**37. Recommended next implementation step**
+
+[设计建议] 下一轮只实施 **Phase 0 — Integration proof**。不要同时实现完整 Evolver。
+
+交付五项：
+
+1. 固定本次检查的 τ-bench commit，并生成 immutable ExperimentManifest。
+2. 实现只覆盖 prompt composition 的两个 adapter：
+   - Customer adapter：原 scenario/guidelines 优先，EvoTau strategy 独立注入；
+   - Service adapter：原 policy/base instructions 优先，结构化 ServiceStrategy 渲染为独立 execution block。
+3. 用原生 mock domain 验证装配、评分、记录、request budget、manifest hash 和无策略时 prompt 等价，全程无网络。
+4. 完成 Retail task eligibility 与最小 E/V smoke manifest，明确 evaluator mode、strategy hash、checkpoint/output 路径。
+5. 在真实实验预算被明确启用后，只运行 **一个**完整 Retail episode，检查事实、工具、原生 reward、reviewer、日志与 provider 计数。
+
+Phase 0 的 Engineering Exit：
+
+```text
+不 fork τ-bench runtime
+不修改工具语义/任务 truth/evaluator 语义
+adapter 能持续注入而不覆盖原始 policy/scenario
+原生 episode 可完整运行和评分
+manifest / provenance / budget 可验证
+```
+
+Phase 0 之后的实现顺序建议：
+
+```text
+窄范围 failure attribution
+→ CustomerStrategy + deterministic mutation
+→ fitness / strict selection
+→ ServiceStrategy + repair gate
+→ archive / replay
+→ 最后才接入 LLM-based Evolver proposal
+```
+
+这样即使 LLM evolver 尚未接入，也可以用手工/确定性 candidate 验证所有核心研究协议。
+
+**核心纪律：先证明 EvoTau 能可靠地区分“合法交互导致的执行错误”和“模拟器/评价造成的假失败”，再让 LLM 自动搜索。**
+
+
+**本地 Phase 0 实施记录（2026-09-28）**
+
+按本计划第 37 节完成了本地 Phase 0 研究层骨架，入口配置为 [configs/mvp.yaml](../configs/mvp.yaml)，不可变 manifest 记录为 [experiments/manifests/evotau-phase0-retail-smoke.json](../experiments/manifests/evotau-phase0-retail-smoke.json)，本地安装和操作说明见 [README.md](../README.md)。本阶段只实施 adapter、策略约束、manifest/provenance、任务资格检查和请求预算边界；没有实现 Evolver，也没有修改 τ-bench 的工具、任务 truth 或评分语义。
+
+- 固定上游版本：sierra-research/tau2-bench commit b7ea9074c1cba482b30687fecdb5c8425fd6f619，package version 1.0.1；manifest 固定关键上游文件的 Git blob SHA-1。
+- 选择 E=73（多商品退货）和 V=93（单商品换货），两者来自官方 train，且顾客/订单实体不同；46、47 保持显式排除，H=0。任务和 split 的上游内容此前已按该 commit 检查，但本机没有 τ-bench checkout，因此尚未用源文件执行本地 blob 校验。
+- 明确 EvaluationType.ALL、max_steps=64、最多 1 个真实 episode、并发 1、provider retries 0、request attempt cap 70。real_provider_enabled=false，角色模型 ID 未设置；因此本轮不会触发真实模型请求。
+- CustomerStrategy 是有界的四字段策略；ServiceStrategy 只能保存引用固定 policy 和失败证据的结构化规则，prompt 只是渲染结果。两个 adapter 在策略为空时保留原 prompt 字节内容。
+- 离线 mock 覆盖了 prompt adapter、τ-bench 原生组件装配调用形态、显式评估类型、simulation 结果返回、原生 full reviewer 调用与审查结果记录、manifest hash/只写一次、E/V 资格规则和包含 reviewer 的统一 provider budget。由于尚未安装 pinned τ-bench，真实上游 API 兼容性、原生评估器和 reviewer 执行以及单 episode provider 计数仍未验证。
+
+本阶段工程状态应理解为“本地离线骨架通过 mock 验证；上游集成待验证”，不构成完整的 Phase 0 Engineering PASS。下一步是取得与 manifest 指纹完全匹配的 pinned τ-bench 源文件并安装该版本，再在保持真实 provider 关闭的条件下完成原生运行时 integration proof。只有用户之后明确启用真实预算并冻结模型 ID，才进入单 episode 运行。
+

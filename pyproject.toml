@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evotau"
+version = "0.1.0"
+description = "Research layer for policy-preserving customer-service co-evolution on tau-bench"
+requires-python = ">=3.12,<3.14"
+dependencies = ["PyYAML>=6.0,<7"]
+
+[project.optional-dependencies]
+tau-bench = [
+  "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+]
+dev = ["pytest>=8.3,<9"]
+
+[project.scripts]
+evotau-phase0 = "evotau.phase0:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
