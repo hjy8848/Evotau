@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play and arms-race response analysis, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, and complete Service repair audit journaling implemented; live Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner and pinned environment/orchestrator construction verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, balanced cross-play, arms-race response and run-level RQ1 analyses, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, and complete Service repair audit journaling implemented; live Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (63 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
+Last verified: 2026-09-29 (68 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1513,5 +1513,12 @@ Phase 0 之后的实现顺序建议：
 - 新增 `analyze_adaptation_response()`，将计划第 17 节的四格 `p(C,S)` 比较编码为报告：旧 Customer/旧 Service、旧 Customer/新 Service、新 Customer/新 Service、新 Customer/旧 Service。它计算 repair reduction、repair 后 Customer failure-rate increase 和差分中的差分交互量。
 - 仅当确认矩阵使用相同冻结 task 与策略、但使用未参与 discovery 的 seed 时才运行判定；无 adherent 分母标为 `inconclusive`。输出保留 discovery/confirmation 矩阵 hash，`observed` 仅表示描述性方向条件在确认面板出现，不表示统计支持；正式 claim 仍需多个独立 evolution runs 的分析。
 - 当前完整验证为 **63 passed**，Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
+
+**Run-level RQ1 comparison analysis**
+
+- 新增 `study_analysis.py`，对 adaptive Customer、预先冻结 static strategy set 和 random mutation 三个条件按独立 evolution seed block 配对。每个 block 必须拥有相同 ordered task panel、逐 episode task/seed 日程与 request-attempt cap；跨 block 要求 evolution seed 唯一，拒绝缺失条件、重复 episode、越界预算和未匹配设计。
+- 在每个独立 run 内汇总 verified unique `(task, signature)` discovery yield、policy-attributable failure rate、adherence 分母、无效/基础设施/不确定 episode 数和 provider attempts；输入记录生成 SHA-256。Bootstrap 只重采样 paired evolution-run blocks，不把对话 episode 当独立样本。至少三个独立 block 才计算 percentile interval；结果明确是描述性分析，不能替代预注册的正式统计方案或 pilot-informed power/sample-size 决定。
+- 该实现提供 RQ1 的分析和数据完整性校验，不含任何伪造的 study-run artifact。目前没有真实三条件、预算匹配、多 seed 数据，因此 adaptive advantage 研究结论仍未获得。
+- 当前完整验证为 **68 passed**（含 pinned runtime integration test）；Ruff、`compileall`、Phase 0/3 preflight 与 `git diff --check` 均通过。
 
 **仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、30 条双人归因校准、扩展任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。
