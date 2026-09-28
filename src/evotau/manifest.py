@@ -15,10 +15,11 @@ TAU_BENCH_REPOSITORY = "sierra-research/tau2-bench"
 TAU_BENCH_COMMIT = "b7ea9074c1cba482b30687fecdb5c8425fd6f619"
 TAU2_PACKAGE_VERSION = "1.0.1"
 ROLE_NAMES = ("agent", "customer", "reviewer", "evaluator")
+MECHANISM_ROLE_NAMES = (*ROLE_NAMES, "evolver")
 MODEL_ARGUMENT_NAMES = frozenset({
     "temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty",
 })
-DEFAULT_ROLE_MODEL_ARGS = {role: {"temperature": 0.0} for role in ROLE_NAMES}
+DEFAULT_ROLE_MODEL_ARGS = {role: {"temperature": 0.0} for role in MECHANISM_ROLE_NAMES}
 MVP_FAILURE_TAXONOMY = (
     ("identity_verification", "retail.policy:identity_verification", "missing_identity_verification"),
     ("pre_write", "retail.policy:explicit_confirmation", "missing_explicit_confirmation"),
@@ -156,15 +157,17 @@ def _relative_path(value: str, field: str) -> str:
 
 def freeze_role_model_args(
     raw: Mapping[str, Any] | None,
+    *,
+    roles: tuple[str, ...] = ROLE_NAMES,
 ) -> tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...]:
     """Validate and freeze the generation arguments applied to each model role."""
 
     if raw is None:
-        raw = DEFAULT_ROLE_MODEL_ARGS
-    if not isinstance(raw, Mapping) or set(raw) != set(ROLE_NAMES):
-        raise ValueError(f"model_args must contain exactly {sorted(ROLE_NAMES)}")
+        raw = {role: DEFAULT_ROLE_MODEL_ARGS[role] for role in roles}
+    if not isinstance(raw, Mapping) or set(raw) != set(roles):
+        raise ValueError(f"model_args must contain exactly {sorted(roles)}")
     frozen = []
-    for role in ROLE_NAMES:
+    for role in roles:
         params = raw[role]
         if not isinstance(params, Mapping) or not params:
             raise ValueError(f"model_args.{role} must be a non-empty mapping")
@@ -192,11 +195,15 @@ def freeze_role_model_args(
     return tuple(frozen)
 
 
-def _freeze_role_models(raw: Mapping[str, Any]) -> tuple[tuple[str, str | None], ...]:
-    if not isinstance(raw, Mapping) or set(raw) != set(ROLE_NAMES):
-        raise ValueError(f"models must contain exactly {sorted(ROLE_NAMES)}")
+def _freeze_role_models(
+    raw: Mapping[str, Any],
+    *,
+    roles: tuple[str, ...] = ROLE_NAMES,
+) -> tuple[tuple[str, str | None], ...]:
+    if not isinstance(raw, Mapping) or set(raw) != set(roles):
+        raise ValueError(f"models must contain exactly {sorted(roles)}")
     frozen = []
-    for role in ROLE_NAMES:
+    for role in roles:
         value = raw[role]
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise ValueError(f"models.{role} must be a non-empty model ID or null")
@@ -214,7 +221,7 @@ def _role_runtime_arguments(
     values: tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...],
 ) -> dict[str, Any]:
     params = _role_model_args_payload(values)
-    return {
+    result = {
         "agent_llm_args": {**params["agent"], "num_retries": 0},
         "customer_llm_args": {**params["customer"], "num_retries": 0},
         "reviewer_llm_args": params["reviewer"],
@@ -223,6 +230,9 @@ def _role_runtime_arguments(
         "cache_enabled": False,
         "review_mode": "full",
     }
+    if "evolver" in params:
+        result["evolver_llm_args"] = params["evolver"]
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,9 +497,11 @@ class MechanismManifest:
         if self.provider_retries != 0 or self.max_concurrency != 1:
             raise ValueError("mechanism smoke requires provider retries=0 and concurrency=1")
         models = dict(self.role_models)
-        if set(models) != set(ROLE_NAMES):
-            raise ValueError(f"role_models must freeze exactly {sorted(ROLE_NAMES)}")
-        freeze_role_model_args(_role_model_args_payload(self.role_model_args))
+        if set(models) != set(MECHANISM_ROLE_NAMES):
+            raise ValueError(f"role_models must freeze exactly {sorted(MECHANISM_ROLE_NAMES)}")
+        freeze_role_model_args(
+            _role_model_args_payload(self.role_model_args), roles=MECHANISM_ROLE_NAMES,
+        )
         if self.real_provider_enabled and any(not models[name] for name in models):
             raise ValueError("live smoke requires frozen model IDs for every role")
         blobs = dict(self.source_blob_sha1)
@@ -534,8 +546,10 @@ class MechanismManifest:
             provider_retries=int(experiment["provider_retries"]),
             max_concurrency=int(experiment["max_concurrency"]),
             real_provider_enabled=bool(experiment["real_provider_enabled"]),
-            role_models=_freeze_role_models(models),
-            role_model_args=freeze_role_model_args(experiment.get("model_args")),
+            role_models=_freeze_role_models(models, roles=MECHANISM_ROLE_NAMES),
+            role_model_args=freeze_role_model_args(
+                experiment.get("model_args"), roles=MECHANISM_ROLE_NAMES,
+            ),
             source_blob_sha1=tuple(sorted((str(path), str(digest).lower())
                                           for path, digest in experiment["source_blob_sha1"].items())),
             output_path=_relative_path(str(experiment["output_path"]), "output_path"),

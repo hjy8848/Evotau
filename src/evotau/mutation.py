@@ -22,6 +22,7 @@ class CustomerCandidate:
     changed_fields: tuple[str, ...]
     expected_behavioral_effect: str
     supporting_failure_ids: tuple[str, ...] = ()
+    proposal_context_sha256: str | None = None
 
     @property
     def strategy_id(self) -> str:

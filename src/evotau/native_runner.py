@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from .budget import BudgetSnapshot, RequestBudget
 from .checkpoint import manifest_fingerprint
+from .customer_evolver import LLMCustomerEvolver, OperatorSelector
 from .manifest import MechanismManifest, sha256_json, write_manifest_once
 from .phase0_run import _load_pinned_tasks, _write_json_once
 from .records import (
@@ -94,11 +95,11 @@ class TauBenchEpisodeRunner:
         if request_budget.snapshot().cap != manifest.request_budget_cap:
             raise ValueError("shared request budget cap must match the frozen mechanism manifest")
         self.models = dict(manifest.role_models)
-        if set(self.models) != {"agent", "customer", "reviewer", "evaluator"} or any(
+        if set(self.models) != {"agent", "customer", "reviewer", "evaluator", "evolver"} or any(
             not self.models[name] for name in self.models
         ):
             raise ValueError(
-                "native Phase 3 runs require frozen agent, customer, reviewer, and evaluator models"
+                "native Phase 3 runs require frozen agent, customer, reviewer, evaluator, and evolver models"
             )
         self.model_args = {role: dict(args) for role, args in manifest.role_model_args}
         experiment = config.get("experiment", {})
@@ -328,6 +329,7 @@ def run_native_phase3(
     data_dir: str | Path,
     phase0_result_path: str | Path,
     audit_provider: AuditProvider,
+    customer_proposal_provider: OperatorSelector | None = None,
     service_transition: Callable[..., Any] | None = None,
     service_proposal_provider: Callable[..., Any] | None = None,
     service_repair_audit_provider: Callable[..., Any] | None = None,
@@ -355,7 +357,14 @@ def run_native_phase3(
     phase0_budget, run_context = _validate_phase0_parent(phase0_result_path, manifest)
     customer, service = _parse_strategies(config["experiment"])
     customer = customer or CustomerStrategy()
-    agent_model = dict(manifest.role_models)["agent"]
+    role_models = dict(manifest.role_models)
+    role_model_args = {role: dict(args) for role, args in manifest.role_model_args}
+    if customer_proposal_provider is None:
+        customer_proposal_provider = LLMCustomerEvolver(
+            model=role_models["evolver"],
+            model_args=role_model_args["evolver"],
+        )
+    agent_model = role_models["agent"]
     from litellm import token_counter
 
     service_token_counter = lambda text: token_counter(model=agent_model, text=text)
@@ -415,6 +424,7 @@ def run_native_phase3(
         customer,
         service,
         service_transition=service_transition,
+        customer_proposal_provider=customer_proposal_provider,
         candidates_per_generation=manifest.customer_candidates,
     )
     final_budget = budget.snapshot()
@@ -474,11 +484,13 @@ def _validate_phase0_parent(
         raise ValueError("Phase 0 and Phase 3 seeds differ")
     if phase0_document.get("source_blob_sha1") != dict(manifest.source_blob_sha1):
         raise ValueError("Phase 0 and Phase 3 pinned source fingerprints differ")
-    if phase0_document.get("role_models") != dict(manifest.role_models):
+    phase3_models = dict(manifest.role_models)
+    phase0_models = {role: model for role, model in phase3_models.items() if role != "evolver"}
+    if phase0_document.get("role_models") != phase0_models:
         raise ValueError("Phase 0 and Phase 3 frozen role models differ")
-    if phase0_document.get("role_model_args") != {
-        role: dict(args) for role, args in manifest.role_model_args
-    }:
+    phase3_model_args = {role: dict(args) for role, args in manifest.role_model_args}
+    phase0_model_args = {role: args for role, args in phase3_model_args.items() if role != "evolver"}
+    if phase0_document.get("role_model_args") != phase0_model_args:
         raise ValueError("Phase 0 and Phase 3 frozen role model arguments differ")
     if result.get("task_id") is None or str(result["task_id"]) != manifest.evolution_task_id:
         raise ValueError("Phase 0 result task ID does not match the Phase 3 evolution task")

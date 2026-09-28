@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .manifest import freeze_role_model_args
+from .manifest import MECHANISM_ROLE_NAMES, freeze_role_model_args
 
 REQUIRED_CONDITIONS = frozenset({
     "adaptive_customer",
@@ -35,7 +35,7 @@ REQUIRED_ABLATIONS = frozenset({
 REQUIRED_PILOT_ARTIFACTS = frozenset({
     "cost_profile", "rq1_report", "rq2_report", "rq3_report",
 })
-REQUIRED_MODEL_ROLES = frozenset({"agent", "customer", "reviewer", "evaluator"})
+REQUIRED_MODEL_ROLES = frozenset(MECHANISM_ROLE_NAMES)
 PRIMARY_CONTRASTS = {
     ("RQ1", "verified_task_signature_yield", "static_customer", "greater"),
     ("RQ1", "verified_task_signature_yield", "random_mutation", "greater"),
@@ -154,7 +154,7 @@ def validate_formal_preregistration(
         if not params:
             raise ValueError(f"sampling_parameters.{role} must not be empty")
     try:
-        freeze_role_model_args(sampling)
+        freeze_role_model_args(sampling, roles=MECHANISM_ROLE_NAMES)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"sampling_parameters are invalid: {exc}") from exc
 

@@ -60,6 +60,7 @@ def configured_runner(tmp_path: Path, monkeypatch, *, audit_provider=None):
         "customer": "mock-customer",
         "reviewer": "mock-reviewer",
         "evaluator": "mock-evaluator",
+        "evolver": "mock-evolver",
     }
     experiment["output_path"] = "runs/native-phase3-test"
     experiment["checkpoint_path"] = "checkpoints/native-phase3-test"
@@ -243,7 +244,8 @@ def test_native_phase3_requires_phase0_artifact_and_binds_its_budget(tmp_path: P
     experiment = config["experiment"]
     experiment["real_provider_enabled"] = True
     experiment["models"] = {
-        role: "fixture-model" for role in ("agent", "customer", "reviewer", "evaluator")
+        role: "fixture-model"
+        for role in ("agent", "customer", "reviewer", "evaluator")
     }
     phase0_manifest = ExperimentManifest.from_mapping(config)
     phase0_dir = tmp_path / "phase0"
@@ -270,7 +272,9 @@ def test_native_phase3_requires_phase0_artifact_and_binds_its_budget(tmp_path: P
     result_path = phase0_dir / "phase0-result.json"
     result_path.write_text(json.dumps(result), encoding="utf-8")
     phase3_config = load_config(ROOT / "configs/phase3-mechanism.yaml")
-    phase3_config["experiment"]["models"] = experiment["models"]
+    phase3_config["experiment"]["models"] = {
+        **experiment["models"], "evolver": "fixture-evolver",
+    }
     phase3_manifest = MechanismManifest.from_mapping(phase3_config)
 
     phase0_budget, context = _validate_phase0_parent(result_path, phase3_manifest)
@@ -310,6 +314,7 @@ def test_native_runner_loads_pinned_e_and_v_tasks_without_provider_calls(
         "customer": "offline-construction-check",
         "reviewer": "offline-construction-check",
         "evaluator": "offline-construction-check",
+        "evolver": "offline-construction-evolver",
     }
     experiment["output_path"] = "runs/native-phase3-integration-test"
     experiment["checkpoint_path"] = "checkpoints/native-phase3-integration-test"
@@ -478,10 +483,13 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
         "customer": "evotau-full-offline-customer",
         "reviewer": "evotau-full-offline-reviewer",
         "evaluator": "evotau-full-offline-evaluator",
+        "evolver": "evotau-full-offline-evolver",
     }
     phase0_config = load_config(ROOT / "configs/mvp.yaml")
     phase0_config["experiment"]["real_provider_enabled"] = True
-    phase0_config["experiment"]["models"] = models
+    phase0_config["experiment"]["models"] = {
+        role: model for role, model in models.items() if role != "evolver"
+    }
     phase0_config["experiment"]["output_path"] = "runs/full-offline-phase0"
     phase0_manifest = ExperimentManifest.from_mapping(phase0_config)
     phase0_task = _load_pinned_task(
@@ -527,6 +535,11 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
                 content = json.dumps({"status": "succeeded", "reasoning": "Offline fixture."})
             else:
                 content = json.dumps({"errors": [], "summary": "Offline fixture review."})
+            message = {"role": "assistant", "content": content}
+        elif model == models["evolver"]:
+            context = json.loads(messages[-1]["content"])
+            count = context["candidate_count"]
+            content = json.dumps({"operators": context["allowed_operators"][:count]})
             message = {"role": "assistant", "content": content}
         else:
             task = phase0_task
@@ -591,6 +604,12 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
     assert phase0_result["status"] == "complete"
     assert len(commits) == 2
     assert all(not item.customer_evolved and not item.service_evolved for item in commits)
+    assert calls.count(models["evolver"]) == 2
+    assert all(
+        proposal["proposal_context_sha256"]
+        for commit in commits
+        for proposal in commit.decision_record["customer"]["proposals"]
+    )
     assert audit_calls
     assert {task_id for _episode_id, task_id, _seed, _panel in audit_calls} == {"73"}
     assert len({episode_id for episode_id, *_rest in audit_calls}) == len(audit_calls)

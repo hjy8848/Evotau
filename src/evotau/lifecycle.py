@@ -21,6 +21,10 @@ from .checkpoint import (
     manifest_fingerprint,
     save_checkpoint,
 )
+from .customer_evolver import (
+    OperatorSelector,
+    propose_customer_candidates_with_selector,
+)
 from .manifest import MechanismManifest, sha256_json
 from .mutation import CustomerCandidate, propose_customer_candidates
 from .records import (
@@ -166,6 +170,7 @@ def run_customer_round(
     confirmation_task_ids: tuple[str, ...] = (),
     confirmation_seeds: tuple[int, ...] = (),
     request_budget: RequestBudget | None = None,
+    proposal_provider: OperatorSelector | None = None,
 ) -> CustomerRound:
     """Evaluate a shared panel, then replay audited signals before scoring failures."""
     if (not task_ids or not seeds or len(set(task_ids)) != len(task_ids)
@@ -188,10 +193,26 @@ def run_customer_round(
         failure_verifier=failure_verifier,
         request_budget=request_budget,
     )
-    candidates = propose_customer_candidates(
-        incumbent, count, seed=proposal_seed, recent_failures=prior_failures,
-        already_seen=already_seen,
-    )
+    if proposal_provider is None:
+        candidates = propose_customer_candidates(
+            incumbent, count, seed=proposal_seed, recent_failures=prior_failures,
+            already_seen=already_seen,
+        )
+    elif request_budget is None:
+        candidates = propose_customer_candidates_with_selector(
+            incumbent, count, generation=generation, seed=proposal_seed,
+            recent_failures=prior_failures, already_seen=tuple(already_seen),
+            evolution_task_ids=task_ids, operator_selector=proposal_provider,
+        )
+    else:
+        from tau2.utils import llm_utils
+
+        with request_budget.instrument_tau_llm_utils(llm_utils):
+            candidates = propose_customer_candidates_with_selector(
+                incumbent, count, generation=generation, seed=proposal_seed,
+                recent_failures=prior_failures, already_seen=tuple(already_seen),
+                evolution_task_ids=task_ids, operator_selector=proposal_provider,
+            )
     evaluations = [evaluate_customer_panel(
         runner, task_ids=task_ids, seeds=seeds, strategy=candidate.strategy, service=service,
         panel_name="discovery", generation=generation, strategy_seen_failures=verification_refs,
@@ -453,6 +474,7 @@ class TwoGenerationSmoke:
             verification_refs: dict[str, str] | None = None,
             failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
             service_transition: ServiceTransition | None = None,
+            customer_proposal_provider: OperatorSelector | None = None,
             candidates_per_generation: int = 2) -> tuple[GenerationCommit, ...]:
         """Execute two Customer-first generations on E with a fresh confirmation seed.
 
@@ -551,6 +573,7 @@ class TwoGenerationSmoke:
                 confirmation_task_ids=(self.task_ids[0],),
                 confirmation_seeds=(self.seed + 10_000 + generation,),
                 request_budget=self.request_budget,
+                proposal_provider=customer_proposal_provider,
             )
             old_customer = customer
             if round_result.selection.evolved:
@@ -723,6 +746,7 @@ def _generation_decision_record(
                     "changed_fields": list(proposal.changed_fields),
                     "expected_behavioral_effect": proposal.expected_behavioral_effect,
                     "supporting_failure_ids": list(proposal.supporting_failure_ids),
+                    "proposal_context_sha256": proposal.proposal_context_sha256,
                 }
                 for proposal in round_result.proposals
             ],
