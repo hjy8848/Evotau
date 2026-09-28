@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
-
 
 MAX_SERVICE_RULES = 6
 MAX_SERVICE_PATCH_TOKENS = 600

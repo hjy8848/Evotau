@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
-from typing import Any, Mapping
-
+import subprocess
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any
 
 TAU_BENCH_REPOSITORY = "sierra-research/tau2-bench"
 TAU_BENCH_COMMIT = "b7ea9074c1cba482b30687fecdb5c8425fd6f619"
@@ -47,6 +48,78 @@ def sha256_json(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
+DEFAULT_CUSTOMER_STRATEGY_HASH = sha256_json({
+    "disclosure": "minimal_on_request", "request_order": "scenario_order",
+    "challenge_style": "none", "challenge_budget": 0,
+})
+DEFAULT_SERVICE_STRATEGY_HASH = sha256_json({"rules": []})
+
+
+@dataclass(frozen=True, slots=True)
+class CodeProvenance:
+    git_commit: str | None
+    working_tree_clean: bool | None
+    source_sha256: str
+
+    def to_dict(self) -> dict[str, str | bool | None]:
+        return {
+            "git_commit": self.git_commit,
+            "working_tree_clean": self.working_tree_clean,
+            "source_sha256": self.source_sha256,
+        }
+
+
+def capture_code_provenance() -> CodeProvenance:
+    """Fingerprint EvoTau sources and, when available, the containing Git state."""
+
+    package_dir = Path(__file__).resolve().parent
+    project_root = package_dir.parents[1]
+    in_project = (project_root / "pyproject.toml").is_file()
+    if in_project:
+        source_paths = sorted(
+            [*package_dir.rglob("*.py"), project_root / "pyproject.toml", *project_root.glob("configs/**/*.yaml")]
+        )
+        relative = lambda path: path.relative_to(project_root).as_posix()
+    else:
+        source_paths = sorted(package_dir.rglob("*.py"))
+        relative = lambda path: f"evotau/{path.relative_to(package_dir).as_posix()}"
+    digest = hashlib.sha256()
+    for path in source_paths:
+        if not path.is_file():
+            continue
+        name = relative(path).encode("utf-8")
+        content = path.read_bytes()
+        digest.update(len(name).to_bytes(8, "big"))
+        digest.update(name)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+
+    commit = None
+    clean = None
+    try:
+        commit_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=project_root,
+            check=False, capture_output=True, text=True, timeout=2,
+        )
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=project_root,
+            check=False, capture_output=True, text=True, timeout=2,
+        )
+        if commit_result.returncode == 0 and status_result.returncode == 0:
+            commit = commit_result.stdout.strip()
+            clean = not status_result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return CodeProvenance(commit, clean, digest.hexdigest())
+
+
+def _validate_code_provenance(git_commit: str | None, source_sha256: str) -> None:
+    if git_commit is not None and not re.fullmatch(r"[0-9a-f]{40}", git_commit):
+        raise ValueError("EvoTau Git commit must be a full lowercase SHA-1")
+    if not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+        raise ValueError("EvoTau source fingerprint must be a SHA-256 hex digest")
+
+
 def git_blob_sha1(data: bytes) -> str:
     """Return Git's SHA-1 for a blob, including its object header."""
 
@@ -78,6 +151,9 @@ class ExperimentManifest:
     upstream_repository: str
     upstream_commit: str
     upstream_package_version: str
+    evotau_git_commit: str | None
+    evotau_working_tree_clean: bool | None
+    evotau_source_sha256: str
     domain: str
     communication_mode: str
     evaluation_type: str
@@ -101,6 +177,7 @@ class ExperimentManifest:
     checkpoint_path: str
 
     def __post_init__(self) -> None:
+        _validate_code_provenance(self.evotau_git_commit, self.evotau_source_sha256)
         if not self.experiment_id.strip():
             raise ValueError("experiment_id must not be empty")
         if self.upstream_repository != TAU_BENCH_REPOSITORY:
@@ -157,19 +234,23 @@ class ExperimentManifest:
         _relative_path(self.checkpoint_path, "checkpoint_path")
 
     @classmethod
-    def from_mapping(cls, raw: Mapping[str, Any]) -> "ExperimentManifest":
+    def from_mapping(cls, raw: Mapping[str, Any]) -> ExperimentManifest:
         experiment = raw["experiment"]
         selection = experiment["task_selection"]
         models = experiment.get("models", {})
         source_blobs = experiment["source_blob_sha1"]
         customer = experiment.get("customer_strategy")
         service = experiment.get("service_strategy")
+        code = capture_code_provenance()
         return cls(
             experiment_id=str(experiment["id"]),
             phase=str(experiment["phase"]),
             upstream_repository=str(experiment["upstream"]["repository"]),
             upstream_commit=str(experiment["upstream"]["commit"]),
             upstream_package_version=str(experiment["upstream"]["package_version"]),
+            evotau_git_commit=code.git_commit,
+            evotau_working_tree_clean=code.working_tree_clean,
+            evotau_source_sha256=code.source_sha256,
             domain=str(experiment["domain"]),
             communication_mode=str(experiment["communication_mode"]),
             evaluation_type=str(experiment["evaluation_type"]),
@@ -215,6 +296,11 @@ class ExperimentManifest:
                 "commit": self.upstream_commit,
                 "package_version": self.upstream_package_version,
             },
+            "evotau": {
+                "git_commit": self.evotau_git_commit,
+                "working_tree_clean": self.evotau_working_tree_clean,
+                "source_sha256": self.evotau_source_sha256,
+            },
             "domain": self.domain,
             "communication_mode": self.communication_mode,
             "evaluation_type": self.evaluation_type,
@@ -233,6 +319,13 @@ class ExperimentManifest:
             "max_concurrency": self.max_concurrency,
             "real_provider_enabled": self.real_provider_enabled,
             "role_models": dict(self.role_models),
+            "runtime_arguments": {
+                "agent_llm_args": {"num_retries": 0},
+                "customer_llm_args": {"num_retries": 0},
+                "provider_default_max_retries": 0,
+                "cache_enabled": False,
+                "review_mode": "full",
+            },
             "source_blob_sha1": dict(self.source_blob_sha1),
             "strategy_sha256": {
                 "customer": self.customer_strategy_sha256,
@@ -254,7 +347,177 @@ class ExperimentManifest:
         return payload
 
 
-def write_manifest_once(path: str | Path, manifest: ExperimentManifest) -> Path:
+@dataclass(frozen=True, slots=True)
+class MechanismManifest:
+    """Frozen protocol for the bounded two-generation Phase 3 smoke."""
+
+    experiment_id: str
+    upstream_repository: str
+    upstream_commit: str
+    upstream_package_version: str
+    evotau_git_commit: str | None
+    evotau_working_tree_clean: bool | None
+    evotau_source_sha256: str
+    evolution_task_id: str
+    validation_task_id: str
+    seed: int
+    max_steps: int
+    max_episodes: int
+    request_budget_cap: int
+    provider_retries: int
+    max_concurrency: int
+    real_provider_enabled: bool
+    role_models: tuple[tuple[str, str | None], ...]
+    source_blob_sha1: tuple[tuple[str, str], ...]
+    output_path: str
+    checkpoint_path: str
+    customer_candidates: int = 2
+    generations: int = 2
+    domain: str = "retail"
+    communication_mode: str = "half_duplex_text"
+    evaluation_type: str = "all"
+    split_name: str = "train"
+    excluded_task_ids: tuple[str, ...] = ()
+    customer_strategy_sha256: str = DEFAULT_CUSTOMER_STRATEGY_HASH
+    service_strategy_sha256: str = DEFAULT_SERVICE_STRATEGY_HASH
+
+    def __post_init__(self) -> None:
+        _validate_code_provenance(self.evotau_git_commit, self.evotau_source_sha256)
+        if not self.experiment_id.strip():
+            raise ValueError("experiment_id must not be empty")
+        if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
+            TAU_BENCH_REPOSITORY, TAU_BENCH_COMMIT, TAU2_PACKAGE_VERSION
+        ):
+            raise ValueError("mechanism smoke must use the audited tau-bench pin")
+        if self.domain != "retail" or self.communication_mode != "half_duplex_text" or self.evaluation_type != "all":
+            raise ValueError("mechanism smoke is fixed to Retail half-duplex text with evaluation_type=all")
+        if self.split_name != "train":
+            raise ValueError("E and V tasks must come from the official train split")
+        if not self.evolution_task_id or not self.validation_task_id or self.evolution_task_id == self.validation_task_id:
+            raise ValueError("E and V task IDs must be distinct and non-empty")
+        if {self.evolution_task_id, self.validation_task_id} & set(self.excluded_task_ids):
+            raise ValueError("excluded tasks cannot be selected for E or V")
+        if self.seed < 0 or self.max_steps != 64:
+            raise ValueError("mechanism smoke requires a non-negative seed and max_steps=64")
+        if self.customer_candidates != 2 or self.generations != 2:
+            raise ValueError("minimal mechanism smoke freezes K=2 and exactly two generations")
+        if not 1 <= self.max_episodes <= 23:
+            raise ValueError("Phase 3 permits at most 23 episodes including Phase 0 integration")
+        if not 1 <= self.request_budget_cap <= 1800:
+            raise ValueError("Phase 3 provider-attempt cap must be in the range 1..1800")
+        if self.provider_retries != 0 or self.max_concurrency != 1:
+            raise ValueError("mechanism smoke requires provider retries=0 and concurrency=1")
+        models = dict(self.role_models)
+        if set(models) != {"agent", "customer", "reviewer"}:
+            raise ValueError("role_models must freeze agent, customer, and reviewer roles")
+        if self.real_provider_enabled and any(not models[name] for name in models):
+            raise ValueError("live smoke requires frozen model IDs for every role")
+        blobs = dict(self.source_blob_sha1)
+        missing = REQUIRED_SOURCE_PATHS - set(blobs)
+        if missing:
+            raise ValueError(f"missing upstream source fingerprints: {sorted(missing)}")
+        invalid = [path for path, digest in blobs.items() if not re.fullmatch(r"[0-9a-f]{40}", digest)]
+        if invalid:
+            raise ValueError(f"invalid Git blob SHA-1 values for: {sorted(invalid)}")
+        for name, digest in (("customer", self.customer_strategy_sha256), ("service", self.service_strategy_sha256)):
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise ValueError(f"{name} strategy hash must be a SHA-256 hex digest")
+        _relative_path(self.output_path, "output_path")
+        _relative_path(self.checkpoint_path, "checkpoint_path")
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any]) -> MechanismManifest:
+        experiment = raw["experiment"]
+        selection = experiment["task_selection"]
+        models = experiment.get("models", {})
+        upstream = experiment["upstream"]
+        if experiment.get("phase") != "3-two-generation-smoke":
+            raise ValueError("MechanismManifest requires phase='3-two-generation-smoke'")
+        if len(selection.get("evolution", ())) != 1 or len(selection.get("validation", ())) != 1:
+            raise ValueError("mechanism smoke requires exactly one E task and one V task")
+        if selection.get("heldout", ()):
+            raise ValueError("Phase 3 smoke keeps H=0; heldout tasks remain sealed")
+        code = capture_code_provenance()
+        return cls(
+            experiment_id=str(experiment["id"]),
+            upstream_repository=str(upstream["repository"]),
+            upstream_commit=str(upstream["commit"]),
+            upstream_package_version=str(upstream["package_version"]),
+            evotau_git_commit=code.git_commit,
+            evotau_working_tree_clean=code.working_tree_clean,
+            evotau_source_sha256=code.source_sha256,
+            evolution_task_id=str(selection["evolution"][0]),
+            validation_task_id=str(selection["validation"][0]),
+            seed=int(experiment["seed"]), max_steps=int(experiment["max_steps"]),
+            max_episodes=int(experiment["max_episodes"]),
+            request_budget_cap=int(experiment["request_budget_cap"]),
+            provider_retries=int(experiment["provider_retries"]),
+            max_concurrency=int(experiment["max_concurrency"]),
+            real_provider_enabled=bool(experiment["real_provider_enabled"]),
+            role_models=tuple((name, None if models.get(name) is None else str(models[name]))
+                              for name in ("agent", "customer", "reviewer")),
+            source_blob_sha1=tuple(sorted((str(path), str(digest).lower())
+                                          for path, digest in experiment["source_blob_sha1"].items())),
+            output_path=_relative_path(str(experiment["output_path"]), "output_path"),
+            checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
+            customer_candidates=int(experiment.get("customer_candidates", 2)),
+            generations=int(experiment.get("generations", 2)),
+            domain=str(experiment["domain"]),
+            communication_mode=str(experiment["communication_mode"]),
+            evaluation_type=str(experiment["evaluation_type"]),
+            split_name=str(selection["source_split"]),
+            excluded_task_ids=tuple(str(task_id) for task_id in selection.get("excluded", ())),
+            customer_strategy_sha256=sha256_json(
+                {"disclosure": "minimal_on_request", "request_order": "scenario_order",
+                 "challenge_style": "none", "challenge_budget": 0}
+                if experiment.get("customer_strategy") is None else experiment["customer_strategy"]
+            ),
+            service_strategy_sha256=sha256_json(
+                {"rules": []} if experiment.get("service_strategy") is None else experiment["service_strategy"]
+            ),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "experiment_id": self.experiment_id,
+            "phase": "3-two-generation-smoke",
+            "upstream": {"repository": self.upstream_repository, "commit": self.upstream_commit,
+                         "package_version": self.upstream_package_version},
+            "evotau": {"git_commit": self.evotau_git_commit,
+                       "working_tree_clean": self.evotau_working_tree_clean,
+                       "source_sha256": self.evotau_source_sha256},
+            "domain": self.domain, "communication_mode": self.communication_mode,
+            "evaluation_type": self.evaluation_type, "split_name": self.split_name,
+            "evolution_task_id": self.evolution_task_id, "validation_task_id": self.validation_task_id,
+            "excluded_task_ids": list(self.excluded_task_ids),
+            "seed": self.seed, "max_steps": self.max_steps, "max_episodes": self.max_episodes,
+            "request_budget_cap": self.request_budget_cap, "provider_retries": self.provider_retries,
+            "max_concurrency": self.max_concurrency, "customer_candidates": self.customer_candidates,
+            "generations": self.generations, "real_provider_enabled": self.real_provider_enabled,
+            "role_models": dict(self.role_models), "source_blob_sha1": dict(self.source_blob_sha1),
+            "runtime_arguments": {
+                "agent_llm_args": {"num_retries": 0},
+                "customer_llm_args": {"num_retries": 0},
+                "provider_default_max_retries": 0,
+                "cache_enabled": False,
+                "review_mode": "full",
+            },
+            "strategy_sha256": {"customer": self.customer_strategy_sha256,
+                                "service": self.service_strategy_sha256},
+            "output_path": self.output_path, "checkpoint_path": self.checkpoint_path,
+        }
+
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self.to_payload())
+
+    def to_document(self) -> dict[str, Any]:
+        payload = self.to_payload()
+        payload["manifest_sha256"] = self.sha256
+        return payload
+
+
+def write_manifest_once(path: str | Path, manifest: ExperimentManifest | MechanismManifest) -> Path:
     """Write an immutable JSON manifest; never replace an existing artifact."""
 
     target = Path(path)

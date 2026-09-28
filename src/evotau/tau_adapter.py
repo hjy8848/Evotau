@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, distribution
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from .budget import RequestBudget
@@ -117,7 +118,15 @@ def build_phase0_orchestrator(
         llm=agent_model,
         llm_args={"num_retries": 0},
     )
-    user_tools = environment.get_user_tools(include=task.user_tools) or None
+    # Match tau-bench's own build_user behavior: some domains (including the
+    # pinned Retail environment) do not expose user tools, and the upstream
+    # builder treats that as an empty tool set for the simulator.
+    try:
+        user_tools = environment.get_user_tools(include=task.user_tools) or None
+    except ValueError:
+        if getattr(environment, "user_tools", None) is not None:
+            raise
+        user_tools = None
     customer = customer_type(
         tools=user_tools,
         instructions=str(task.user_scenario),
@@ -144,18 +153,23 @@ def run_with_budget(
     budget: RequestBudget,
     *,
     reviewer_model: str,
+    on_simulation: Callable[[Any], None] | None = None,
 ) -> Any:
     """Run, score, and review natively under one provider-request budget."""
 
     verify_tau2_installation()
+    from tau2.data_model.simulation import UserInfo
     from tau2.evaluator.evaluator import EvaluationType
     from tau2.evaluator.reviewer import ReviewMode, review_simulation
     from tau2.runner.simulation import run_simulation
-    from tau2.data_model.simulation import UserInfo
     from tau2.utils import llm_utils
 
+    if getattr(llm_utils, "LLM_CACHE_ENABLED", False):
+        raise RuntimeError("Phase 0 requires τ-bench/LiteLLM response caching to be disabled")
     with budget.instrument_tau_llm_utils(llm_utils):
         result = run_simulation(orchestrator, evaluation_type=EvaluationType.ALL)
+        if on_simulation is not None:
+            on_simulation(result)
         user = orchestrator.user
         review, auth_classification = review_simulation(
             simulation=result,
@@ -183,6 +197,9 @@ def run_phase0_episode(
     customer_strategy: CustomerStrategy | None = None,
     service_strategy: ServiceStrategy | None = None,
     service_token_counter: Callable[[str], int] | None = None,
+    request_budget: RequestBudget | None = None,
+    on_orchestrator: Callable[[Any], None] | None = None,
+    on_simulation: Callable[[Any], None] | None = None,
 ) -> tuple[Any, RequestBudget]:
     """Run the sole live Phase 0 episode only when its budget was explicitly enabled."""
 
@@ -191,6 +208,24 @@ def run_phase0_episode(
             "real provider use is disabled in the Phase 0 manifest; "
             "freeze the role models and explicitly enable the real request budget first"
         )
+    budget = request_budget or RequestBudget(manifest.request_budget_cap)
+    snapshot = budget.snapshot()
+    if snapshot.cap != manifest.request_budget_cap:
+        raise ValueError("request budget cap must match the frozen Phase 0 manifest")
+    if any(
+        (
+            snapshot.attempts,
+            snapshot.successes,
+            snapshot.failures,
+            snapshot.denied,
+            snapshot.prompt_tokens,
+            snapshot.completion_tokens,
+            snapshot.usage_responses,
+            snapshot.usage_unavailable,
+            snapshot.cache_hits,
+        )
+    ):
+        raise ValueError("Phase 0 must start with an unused request budget")
     models = dict(manifest.role_models)
     orchestrator = build_phase0_orchestrator(
         task=task,
@@ -202,10 +237,12 @@ def run_phase0_episode(
         service_strategy=service_strategy,
         service_token_counter=service_token_counter,
     )
-    budget = RequestBudget(manifest.request_budget_cap)
+    if on_orchestrator is not None:
+        on_orchestrator(orchestrator)
     result = run_with_budget(
         orchestrator,
         budget,
         reviewer_model=models["reviewer"],
+        on_simulation=on_simulation,
     )
     return result, budget

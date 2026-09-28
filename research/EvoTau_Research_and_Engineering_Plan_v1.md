@@ -1,6 +1,6 @@
-Status: Phase 0 implemented; upstream runtime integration and live episode pending
+Status: Phase 0 guarded native runner implemented; environment/orchestrator construction and prompt injection verified; Phase 1–3 mechanism implementation complete; full native episode pending
 Owner: hjy8848
-Last verified: 2026-09-28 (Phase 0 implementation and offline mocks checked; selected upstream task/split blobs were inspected at the pinned commit, but local hash validation and live runtime execution remain pending)
+Last verified: 2026-09-29 (32 tests pass with the pinned-runtime integration check enabled; all 19 manifest source blobs match the pinned τ-bench commit; native runtime construction and prompt injection pass without provider calls; live `run_simulation` has not been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1424,3 +1424,28 @@ Phase 0 之后的实现顺序建议：
 
 本阶段工程状态应理解为“本地离线骨架通过 mock 验证；上游集成待验证”，不构成完整的 Phase 0 Engineering PASS。下一步是取得与 manifest 指纹完全匹配的 pinned τ-bench 源文件并安装该版本，再在保持真实 provider 关闭的条件下完成原生运行时 integration proof。只有用户之后明确启用真实预算并冻结模型 ID，才进入单 episode 运行。
 
+**Phase 1–3 机制实现记录（2026-09-29）**
+
+按用户后续要求，完成了 Phase 1–3 的 provider-agnostic 协议层，不改变本节记载的 Phase 0 上游集成状态，也没有启动真实实验。
+
+- `records.py`、`attribution.py`：Episode/Failure/Candidate records；只有完整 episode、Customer validity/adherence、policy-linked evidence 和独立审查引用齐全时，失败才进入 fitness。
+- `mutation.py`、`selection.py`、`lifecycle.py`：四字段 Customer 的三种确定性单轴 mutation、固定 E panel 同配对比较、严格 discovery 改进与 V confirmation、Customer-first 两代控制器；平分或未确认均保留 incumbent。
+- `service_evolution.py`：针对 verified failure 的结构化最小 repair；独立 policy audit、permission delta 禁止、原有 rule replacement、600-token/6-rule 限额，以及两个 target trial、最多一个 historical replay、clean 和 validation 的 paired gate。repair 只通过返回的 `GateReport` 接受。
+- `archive.py`、`checkpoint.py`：SQLite verified-failure 与 Customer/Service 策略快照档案（按稳定 ID 幂等写入、按 signature 提供代表项）、manifest SHA 绑定、原子 checkpoint 与代际恢复。
+- `manifest.py`、`configs/phase3-mechanism.yaml`、`mechanism_preflight.py`：冻结 E=73、V=93、H=0、K=2、两代、最多 23 episodes、最多 1,800 provider attempts、上游 commit/blob fingerprints、strategy hashes，默认 provider 关闭。
+- 离线机制与 Phase 0 mock 合计 **28 项测试通过**；Phase 3 fixtures 覆盖 no-change 两代、受审归因、archive 幂等、service accept/reject、manifest drift、episode 级中断恢复和累计 budget 恢复。
+
+该交付表示 Phase 1–3 的机制软件可由注入式 `EpisodeRunner` 验证，不代表完成了真实 10–25 episode smoke。写下此记录时，pinned runtime 安装和本地 source blob 校验仍待处理；后续进展见下方更新。真实 provider 仍明确关闭。Pilot 与 Formal 按计划保留为后续研究阶段，不属于本轮实现完成条件。
+
+最初在临时 Python 3.12 环境安装 pinned τ-bench optional dependency 时，shell 没有继承 macOS 本地代理设置，GitHub clone 因无法连接 `github.com:443` 退出。用户指出本机已有代理后，检查到系统代理并仅为下载命令配置临时代理，随后成功安装并校验固定版本；代理地址和凭据没有写入仓库。
+
+**Pinned τ-bench runtime integration update（2026-09-29）**
+
+- 临时环境安装成功：`tau2==1.0.1`，PEP 610 安装元数据中的 Git commit 为 `b7ea9074c1cba482b30687fecdb5c8425fd6f619`。精简 checkout 与安装源码共核对 manifest 中 **19 个 source blob，全部匹配**。
+- ExperimentManifest 现绑定 EvoTau Git HEAD、worktree clean 状态和 `src/evotau`/配置源码快照 SHA-256；这样本地未提交实现也有可核对身份。运行结果另外写入本次实际渲染出的 agent/Customer prompt SHA-256。
+- 使用真实 train task 73 调用 pinned `build_environment("retail")` 并构造原生 `Orchestrator`。Retail 没有 user-tools toolkit；上游 `build_user` 对不可用 user tools 会回退到 `None`。EvoTau adapter 已按此行为处理预期的 `ValueError`，但其他 user-tools 配置错误会继续抛出。
+- 构造过程中没有 provider 请求。对真实 `LLMAgent` 与 `UserSimulator` 实例检查了最终 system prompt：原生 policy/guidelines 保持完整前缀，EvoTau 的结构化 Service/customer block 仅附加在末尾。该检查已加入可选集成测试；设置 `EVOTAU_TAU2_DATA_DIR` 后运行 `pytest -k pinned_tau_runtime` 可重现。
+- 新增 `evotau-phase0-run` / `python -m evotau.phase0_run` 显式运行入口：发送请求前校验 provider opt-in、三个模型 ID、所有 19 个 source fingerprints、E/V 资格和输出路径；共享预算覆盖 simulation、原生 evaluation 和 reviewer，且要求 response cache 关闭。完整 native `SimulationRun` 在 reviewer 前先落盘，完成时再保存 review、completion/cache 计数和 provider 报告的 prompt/completion tokens；中断时保留已完成的 simulation 和预算快照，异常原文不会写入结果。
+- Phase 0、Phase 3 eligibility preflight 均以本地固定 task/split 文件通过；E=73、V=93 的实体仍不同。总计 32 项测试、Ruff、`compileall` 和 `git diff --check` 通过。
+
+**当前边界**：这完成了 Phase 0 的可运行入口与 pinned API 构造验证，不等于完成 Phase 0 Engineering Exit。计划中的完整 native `run_simulation` episode、native scoring/reviewer 的真实轨迹与实际 provider-attempt 计数尚未验证；checked-in manifest 仍设置 `real_provider_enabled=false` 且没有模型 ID，因此本轮没有启动真实 episode。Phase 1–3 机制代码已经由注入式离线 runner 测试；10–25 episode 的研究 smoke、Pilot 和 Formal 也仍未启动。

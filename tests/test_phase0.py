@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import os
 import sys
+from importlib.metadata import PackageNotFoundError, distribution
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -10,6 +12,12 @@ import pytest
 from evotau.budget import ProviderBudgetExceeded, RequestBudget
 from evotau.eligibility import TaskEligibilityError, validate_smoke_selection
 from evotau.manifest import ExperimentManifest, git_blob_sha1, write_manifest_once
+from evotau.phase0_run import (
+    Phase0ExecutionError,
+    _load_pinned_task,
+    execute_phase0,
+    run_from_config,
+)
 from evotau.prompts import append_strategy_block
 from evotau.strategies import (
     CustomerStrategy,
@@ -19,11 +27,11 @@ from evotau.strategies import (
     render_service_strategy,
 )
 from evotau.tau_adapter import (
+    build_phase0_orchestrator,
     customer_user_class,
     run_phase0_episode,
     service_agent_class,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -251,7 +259,24 @@ def test_request_budget_blocks_before_dispatch_and_counts_failures() -> None:
     assert budget.snapshot().successes == 1
     assert budget.snapshot().failures == 1
     assert budget.snapshot().denied == 1
+    assert budget.snapshot().usage_unavailable == 2
     assert budget.snapshot().remaining == 0
+
+
+def test_request_budget_records_reported_tokens_and_cache_hits() -> None:
+    usage = {
+        "usage": {"prompt_tokens": 13, "completion_tokens": 4},
+        "_hidden_params": {"cache_hit": True},
+    }
+    module = SimpleNamespace(completion=lambda **_kwargs: usage, DEFAULT_MAX_RETRIES=0)
+    budget = RequestBudget(cap=1)
+    with budget.instrument_tau_llm_utils(module):
+        module.completion(model="model-a")
+    snapshot = budget.snapshot()
+    assert snapshot.prompt_tokens == 13
+    assert snapshot.completion_tokens == 4
+    assert snapshot.usage_responses == 1
+    assert snapshot.cache_hits == 1
 
 
 def test_live_episode_is_blocked_when_manifest_has_provider_disabled() -> None:
@@ -259,6 +284,115 @@ def test_live_episode_is_blocked_when_manifest_has_provider_disabled() -> None:
     manifest = ExperimentManifest.from_mapping(config)
     with pytest.raises(RuntimeError, match="real provider use is disabled"):
         run_phase0_episode(manifest=manifest, task=SimpleNamespace(user_scenario="scenario"))
+
+
+def test_phase0_cli_requires_explicit_provider_enable_before_runtime_loading() -> None:
+    with pytest.raises(RuntimeError, match="real provider use is disabled"):
+        run_from_config(ROOT / "configs/mvp.yaml")
+
+
+def test_phase0_run_record_is_immutable_and_contains_budget_and_native_result(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = __import__("yaml").safe_load((ROOT / "configs/mvp.yaml").read_text(encoding="utf-8"))
+    experiment = config["experiment"]
+    experiment["real_provider_enabled"] = True
+    experiment["models"] = {
+        "agent": "mock-agent",
+        "customer": "mock-customer",
+        "reviewer": "mock-reviewer",
+    }
+    experiment["output_path"] = "runs/phase0-record-test"
+    manifest = ExperimentManifest.from_mapping(config)
+    monkeypatch.chdir(tmp_path)
+
+    class FakeSimulation:
+        id = "simulation-73"
+        task_id = "73"
+
+        def model_dump(self, *, mode):
+            assert mode == "json"
+            return {
+                "id": self.id,
+                "task_id": self.task_id,
+                "termination_reason": "agent_stop",
+                "reward_info": {"reward": 1.0},
+            }
+
+    def runner(**kwargs):
+        budget = kwargs["request_budget"]
+        kwargs["on_orchestrator"](
+            SimpleNamespace(
+                agent=SimpleNamespace(system_prompt="native agent prompt"),
+                user=SimpleNamespace(system_prompt="native customer prompt"),
+            )
+        )
+        provider = SimpleNamespace(completion=lambda **_kwargs: "mock", DEFAULT_MAX_RETRIES=0)
+        with budget.instrument_tau_llm_utils(provider):
+            provider.completion(model="mock-agent")
+        return FakeSimulation(), budget
+
+    result = execute_phase0(
+        manifest=manifest,
+        config=config,
+        task=SimpleNamespace(id="73"),
+        episode_runner=runner,
+    )
+    result_path = Path(experiment["output_path"]) / "phase0-result.json"
+    saved = json.loads(result_path.read_text(encoding="utf-8"))
+    assert saved == result
+    assert result["native_reward"] == 1.0
+    assert set(result["rendered_prompt_sha256"]) == {"agent", "customer"}
+    assert result["provider_budget"]["attempts"] == 1
+    assert result["provider_budget"]["usage_unavailable"] == 1
+    assert (Path(experiment["output_path"]) / "manifest.json").exists()
+    assert json.loads(
+        (Path(experiment["output_path"]) / "native-simulation.json").read_text(encoding="utf-8")
+    )["task_id"] == "73"
+    with pytest.raises(FileExistsError, match="output already exists"):
+        execute_phase0(
+            manifest=manifest,
+            config=config,
+            task=SimpleNamespace(id="73"),
+            episode_runner=runner,
+        )
+
+    experiment["output_path"] = "runs/phase0-failure-record-test"
+    failed_manifest = ExperimentManifest.from_mapping(config)
+
+    def failing_runner(**kwargs):
+        budget = kwargs["request_budget"]
+        kwargs["on_orchestrator"](
+            SimpleNamespace(
+                agent=SimpleNamespace(system_prompt="native agent prompt"),
+                user=SimpleNamespace(system_prompt="native customer prompt"),
+            )
+        )
+        kwargs["on_simulation"](FakeSimulation())
+
+        def provider_error(**_kwargs):
+            raise RuntimeError("credential=must-not-be-recorded")
+
+        provider = SimpleNamespace(completion=provider_error, DEFAULT_MAX_RETRIES=0)
+        with budget.instrument_tau_llm_utils(provider):
+            provider.completion(model="mock-agent")
+
+    with pytest.raises(Phase0ExecutionError, match="RuntimeError"):
+        execute_phase0(
+            manifest=failed_manifest,
+            config=config,
+            task=SimpleNamespace(id="73"),
+            episode_runner=failing_runner,
+        )
+    failed_path = Path(experiment["output_path"]) / "phase0-result.json"
+    failure_record = json.loads(failed_path.read_text(encoding="utf-8"))
+    assert failure_record["status"] == "incomplete"
+    assert failure_record["failure_type"] == "RuntimeError"
+    assert failure_record["native_simulation_saved"]
+    assert set(failure_record["rendered_prompt_sha256"]) == {"agent", "customer"}
+    assert failure_record["provider_budget"]["failures"] == 1
+    assert "must-not-be-recorded" not in failed_path.read_text(encoding="utf-8")
+    assert (failed_path.parent / "native-simulation.json").exists()
 
 
 def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypatch) -> None:
@@ -272,6 +406,8 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
     manifest = ExperimentManifest.from_mapping(config)
 
     class FakeEnvironment:
+        user_tools = None
+
         def get_tools(self):
             return ["retail-tools"]
 
@@ -279,7 +415,7 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
             return "fixed retail policy"
 
         def get_user_tools(self, include=None):
-            return ["user-tools"]
+            raise ValueError("User tools not available")
 
     class FakeAgent:
         def __init__(self, **kwargs):
@@ -393,6 +529,7 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
     assert orchestrator.kwargs["user"].system_prompt == "native user guidelines and scenario"
     assert orchestrator.kwargs["agent"].kwargs["llm_args"] == {"num_retries": 0}
     assert orchestrator.kwargs["user"].kwargs["llm_args"] == {"num_retries": 0}
+    assert orchestrator.kwargs["user"].kwargs["tools"] is None
     assert result.reward == 1.0
     assert result.task_id == "73"
     assert result.recorded_trajectory == ("user", "assistant", "tool")
@@ -407,3 +544,62 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
     assert budget.snapshot().attempts == 3
     assert budget.snapshot().successes == 3
     assert llm_utils.DEFAULT_MAX_RETRIES == 5
+
+
+def test_pinned_tau_runtime_builds_adapters_without_provider_calls(monkeypatch) -> None:
+    try:
+        distribution("tau2")
+    except PackageNotFoundError:
+        pytest.skip("install the tau-bench optional extra to run this integration check")
+    data_dir = os.environ.get("EVOTAU_TAU2_DATA_DIR")
+    if not data_dir:
+        pytest.skip("set EVOTAU_TAU2_DATA_DIR to the pinned tau-bench data directory")
+
+    monkeypatch.setenv("TAU2_DATA_DIR", data_dir)
+    from tau2.utils import llm_utils
+
+    def forbidden_provider_call(*args, **kwargs):
+        raise AssertionError("runtime construction attempted a provider request")
+
+    monkeypatch.setattr(llm_utils, "completion", forbidden_provider_call)
+    config = __import__("yaml").safe_load((ROOT / "configs/mvp.yaml").read_text(encoding="utf-8"))
+    manifest = ExperimentManifest.from_mapping(config)
+    task = _load_pinned_task(
+        manifest,
+        data_dir=data_dir,
+        task_selection=config["experiment"]["task_selection"],
+    )
+    customer_strategy = CustomerStrategy(challenge_style="ask_reason", challenge_budget=1)
+    service_strategy = ServiceStrategy(
+        (
+            ServiceRule(
+                rule_id="evidence-check",
+                policy_ref="retail-policy#return-eligibility",
+                trigger="before a return",
+                required_execution="check order and item eligibility",
+                evidence_refs=("fixture:independent-audit",),
+            ),
+        )
+    )
+    orchestrator = build_phase0_orchestrator(
+        task=task,
+        agent_model="offline-inspection-only",
+        customer_model="offline-inspection-only",
+        seed=42,
+        customer_strategy=customer_strategy,
+        service_strategy=service_strategy,
+        service_token_counter=lambda text: len(text.split()),
+    )
+
+    agent = orchestrator.agent
+    user = orchestrator.user
+    native_agent_prompt = type(agent).__mro__[1].system_prompt.fget(agent)
+    native_user_prompt = type(user).__mro__[1].system_prompt.fget(user)
+    service_block = render_service_strategy(
+        service_strategy, token_counter=lambda text: len(text.split())
+    )
+    assert task.id == "73"
+    assert agent.system_prompt == append_strategy_block(native_agent_prompt, service_block)
+    assert user.system_prompt == append_strategy_block(
+        native_user_prompt, render_customer_strategy(customer_strategy)
+    )

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -18,7 +18,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:
         value = yaml.safe_load(handle)
     if not isinstance(value, dict):
-        raise ValueError("configuration root must be a mapping")
+        raise TypeError("configuration root must be a mapping")
     return value
 
 

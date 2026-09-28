@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from typing import Any, Mapping, Sequence
-
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 WRITE_ACTIONS = frozenset(
     {
@@ -18,9 +18,9 @@ WRITE_ACTIONS = frozenset(
     }
 )
 DECEPTION_PATTERNS = (
-    re.compile(r"\b(?:wrong|incorrect|fake|false)\s+(?:order|id|number|identifier)\b", re.I),
-    re.compile(r"\b(?:lie|deceiv\w*|mislead\w*|pretend to be)\b", re.I),
-    re.compile(r"\bprovide\s+(?:the\s+)?(?:wrong|incorrect)\b", re.I),
+    re.compile(r"\b(?:wrong|incorrect|fake|false)\s+(?:order|id|number|identifier)\b", re.IGNORECASE),
+    re.compile(r"\b(?:lie|deceiv\w*|mislead\w*|pretend to be)\b", re.IGNORECASE),
+    re.compile(r"\bprovide\s+(?:the\s+)?(?:wrong|incorrect)\b", re.IGNORECASE),
 )
 
 
@@ -52,11 +52,11 @@ def business_entity_keys(task: Mapping[str, Any]) -> tuple[str, ...]:
 
     text = _scenario_text(task)
     keys: set[str] = set()
-    for email in re.findall(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, re.I):
+    for email in re.findall(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, re.IGNORECASE):
         keys.add(f"email:{email.casefold()}")
-    for user_id in re.findall(r"\b[a-z]+(?:_[a-z]+)+_\d+\b", text, re.I):
+    for user_id in re.findall(r"\b[a-z]+(?:_[a-z]+)+_\d+\b", text, re.IGNORECASE):
         keys.add(f"user:{user_id.casefold()}")
-    for order_id in re.findall(r"#?W\d{7}", text, re.I):
+    for order_id in re.findall(r"#?W\d{7}", text, re.IGNORECASE):
         keys.add(f"order:{order_id.upper().lstrip('#')}")
     for action in (task.get("evaluation_criteria") or {}).get("actions") or ():
         arguments = action.get("arguments") or {}
@@ -71,7 +71,7 @@ def business_entity_keys(task: Mapping[str, Any]) -> tuple[str, ...]:
         r"\b(?:you are|you name is|my name is)\s+([A-Z][a-z]+)\s+([A-Z][a-z]+)\b",
         text,
     )
-    zip_match = re.search(r"\bzip(?:\s*code)?\s*(?:is|:)?\s*(\d{5})\b", text, re.I)
+    zip_match = re.search(r"\bzip(?:\s*code)?\s*(?:is|:)?\s*(\d{5})\b", text, re.IGNORECASE)
     if name_match and zip_match:
         keys.add(
             f"person_zip:{name_match.group(1).casefold()}_{name_match.group(2).casefold()}_{zip_match.group(1)}"
