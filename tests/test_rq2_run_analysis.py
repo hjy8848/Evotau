@@ -118,8 +118,8 @@ def gate(failure: FailureRecord, candidate: ServiceStrategy, *, accepted: bool) 
     )
 
 
-def service_run(run_number: int) -> ServiceRobustnessRun:
-    run_name = f"run-{run_number}"
+def service_run(run_number: int, *, condition: str = "adaptive_coevolution") -> ServiceRobustnessRun:
+    run_name = f"{condition}-run-{run_number}"
     evolution_seed = run_number * 10
     seeds = (evolution_seed, evolution_seed + 1)
     attack = CustomerStrategy(challenge_style="ask_reason", challenge_budget=1)
@@ -175,7 +175,7 @@ def service_run(run_number: int) -> ServiceRobustnessRun:
             repaired_signature_keys=repaired_keys,
         )
         panels.append(panel)
-    return ServiceRobustnessRun(run_name, evolution_seed, tuple(panels))
+    return ServiceRobustnessRun(run_name, evolution_seed, tuple(panels), condition)
 
 
 def test_rq2_bootstraps_only_independent_runs_and_checks_evh_budgets_and_panels():
@@ -197,9 +197,14 @@ def test_rq2_bootstraps_only_independent_runs_and_checks_evh_budgets_and_panels(
         bootstrap_replicates=500,
     )
 
-    assert report.status == "descriptive"
+    assert report.status == "incomplete_conditions"
+    assert "one_shot_repair runs are missing" in report.reasons[0]
     assert report.request_budget_cap == 100
-    assert report.actual_provider_attempts == (("run-1", 91), ("run-2", 92), ("run-3", 93))
+    assert report.actual_provider_attempts == (
+        ("adaptive_coevolution-run-1", 91),
+        ("adaptive_coevolution-run-2", 92),
+        ("adaptive_coevolution-run-3", 93),
+    )
     assert len({item[2] for item in report.run_ids_and_input_sha256}) == 3
     metrics = {item.metric: item for item in report.metrics}
     assert metrics["target_failure_rate_reduction"].mean == 1.0
@@ -224,7 +229,7 @@ def test_rq2_rejects_unmatched_h_partition_duplicate_seeds_and_budget_caps():
             validation_task_ids=("V-clean", "V-adversarial"),
             heldout_task_ids=("H-other",),
         )
-    with pytest.raises(ValueError, match="distinct seeds"):
+    with pytest.raises(ValueError, match="within a condition.*distinct evolution seeds"):
         analyze_rq2_service_robustness(
             (runs[0], replace(runs[1], evolution_seed=runs[0].evolution_seed), runs[2]),
             evolution_task_ids=("E-target", "E-history"),
@@ -266,17 +271,84 @@ def test_rq2_reports_missing_denominators_without_silently_dropping_a_run():
         heldout_task_ids=("H-final",),
     )
     estimate = next(item for item in report.metrics if item.metric == "repair_acceptance_rate")
-    assert report.status == "incomplete_denominators"
+    assert report.status == "incomplete_conditions"
     assert estimate.status == "incomplete_denominator"
     assert estimate.complete_run_values == 2
     assert estimate.mean is None
-    assert estimate.observations[1] == ("run-2", None)
+    assert estimate.observations[1] == ("adaptive_coevolution-run-2", None)
+
+
+def test_rq2_pairs_adaptive_and_one_shot_conditions_by_seed_and_hashes_both_sources():
+    adaptive_runs = tuple(service_run(index) for index in (1, 2, 3))
+    one_shot_runs = []
+    for index in (1, 2, 3):
+        run = service_run(index, condition="one_shot_repair")
+        panels = tuple(
+            replace(panel, target_failure_rate_reduction=0.5)
+            if panel.panel_scope == "target" else panel
+            for panel in run.panels
+        )
+        one_shot_runs.append(replace(run, panels=panels))
+
+    report = analyze_rq2_service_robustness(
+        (*adaptive_runs, *one_shot_runs),
+        evolution_task_ids=("E-target", "E-history"),
+        validation_task_ids=("V-clean", "V-adversarial"),
+        heldout_task_ids=("H-final",),
+        bootstrap_seed=21,
+        bootstrap_replicates=500,
+    )
+
+    contrast = next(
+        item for item in report.condition_contrasts
+        if item.endpoint == "target_failure_rate_reduction"
+    )
+    assert report.status == "descriptive"
+    assert contrast.baseline_condition == "one_shot_repair"
+    assert contrast.status == "descriptive"
+    assert contrast.mean_paired_difference == pytest.approx(0.5)
+    assert len(contrast.observations) == 3
+    assert contrast.observations[0].adaptive_run_id == "adaptive_coevolution-run-1"
+    assert contrast.observations[0].one_shot_run_id == "one_shot_repair-run-1"
+
+
+def test_rq2_one_shot_condition_requires_complete_seed_pairs_and_matching_panel_schedules():
+    adaptive = tuple(service_run(index) for index in (1, 2, 3))
+    one_shot = [service_run(index, condition="one_shot_repair") for index in (1, 2, 3)]
+    with pytest.raises(ValueError, match="same evolution-seed blocks"):
+        analyze_rq2_service_robustness(
+            (*adaptive, *one_shot[:2]),
+            evolution_task_ids=("E-target", "E-history"),
+            validation_task_ids=("V-clean", "V-adversarial"),
+            heldout_task_ids=("H-final",),
+        )
+
+    target_panel_index = next(
+        index for index, panel in enumerate(one_shot[0].panels)
+        if panel.panel_scope == "target"
+    )
+    changed_panels = list(one_shot[0].panels)
+    changed_panels[target_panel_index] = replace(
+        changed_panels[target_panel_index], seeds=(9, 10),
+    )
+    one_shot[0] = replace(one_shot[0], panels=tuple(changed_panels))
+    with pytest.raises(ValueError, match="same target task/seed schedule"):
+        analyze_rq2_service_robustness(
+            (*adaptive, *one_shot),
+            evolution_task_ids=("E-target", "E-history"),
+            validation_task_ids=("V-clean", "V-adversarial"),
+            heldout_task_ids=("H-final",),
+        )
 
 
 def test_rq2_strict_json_roundtrip_and_cli_emit_formal_ready_report(tmp_path):
-    runs = tuple(service_run(index) for index in (1, 2, 3))
+    adaptive_runs = tuple(service_run(index) for index in (1, 2, 3))
+    one_shot_runs = tuple(
+        service_run(index, condition="one_shot_repair") for index in (1, 2, 3)
+    )
+    runs = (*adaptive_runs, *one_shot_runs)
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "evolution_task_ids": ["E-target", "E-history"],
         "validation_task_ids": ["V-clean", "V-adversarial"],
         "heldout_task_ids": ["H-final"],
@@ -302,6 +374,7 @@ def test_rq2_strict_json_roundtrip_and_cli_emit_formal_ready_report(tmp_path):
     assert report["input_sha256"] == hashlib.sha256(raw).hexdigest()
     assert report["analysis"]["status"] == "descriptive"
     assert len(report["analysis"]["run_ids_and_input_sha256"]) == 3
+    assert len(report["analysis"]["condition_contrasts"]) == 4
     assert set(report) == {"input_sha256", "analysis"}
     with pytest.raises(SystemExit) as error:
         analyze_rq2_main(args)
@@ -313,7 +386,7 @@ def test_rq2_json_loader_rejects_tampered_shape_and_noncanonical_panel_data():
     report = run["panels"][0]
     report.pop("interpretation")
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "evolution_task_ids": ["E-target", "E-history"],
         "validation_task_ids": ["V-clean", "V-adversarial"],
         "heldout_task_ids": ["H-final"],

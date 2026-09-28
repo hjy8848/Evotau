@@ -121,7 +121,11 @@ def analyze_formal_reports(
             ]
             margin = None
         elif rq == "RQ2":
-            differences = [(seed, rq2[endpoint][seed]) for seed in registered_seeds]
+            rq2_endpoint = (
+                f"{endpoint}_adaptive_minus_one_shot"
+                if contrast == "one_shot_repair" else endpoint
+            )
+            differences = [(seed, rq2[rq2_endpoint][seed]) for seed in registered_seeds]
             margin = float(plan["noninferiority_margins"].get(endpoint)) if hypothesis["alternative"] == "non_inferior" else None
         else:
             adaptive = rq3["adaptive_coevolution"]
@@ -300,6 +304,58 @@ def _require_complete_rq2(
     if set(attempts) != set(run_seed):
         raise ValueError("RQ2 provider-attempt rows do not cover every run")
 
+    condition_rows = analysis.get("condition_run_ids_and_input_sha256")
+    if not isinstance(condition_rows, list):
+        raise TypeError("RQ2 condition run provenance must be a JSON array")
+    condition_runs: dict[str, tuple[int, str, str]] = {}
+    condition_seed_sets: dict[str, set[int]] = {
+        "adaptive_coevolution": set(), "one_shot_repair": set(),
+    }
+    for item in condition_rows:
+        if not isinstance(item, list) or len(item) != 4:
+            raise ValueError("RQ2 condition provenance row must contain ID, seed, condition, and hash")
+        run_id, seed, condition, digest = item
+        if (not isinstance(run_id, str) or not run_id or type(seed) is not int
+                or seed < 0 or condition not in condition_seed_sets):
+            raise ValueError("RQ2 condition provenance has an invalid run identity")
+        _sha_value(digest, "RQ2 condition run input_sha256")
+        if run_id in condition_runs or seed in condition_seed_sets[condition]:
+            raise ValueError("RQ2 repeats a condition run ID or seed")
+        condition_runs[run_id] = (seed, condition, digest)
+        condition_seed_sets[condition].add(seed)
+    if any(seeds != expected_seeds for seeds in condition_seed_sets.values()):
+        raise ValueError("RQ2 condition runs must cover every preregistered seed block")
+    adaptive_provenance = {
+        run_id: (seed, digest)
+        for run_id, (seed, condition, digest) in condition_runs.items()
+        if condition == "adaptive_coevolution"
+    }
+    if adaptive_provenance != {
+        run_id: (seed, next(item[2] for item in run_rows if item[0] == run_id))
+        for run_id, seed in run_seed.items()
+    }:
+        raise ValueError("RQ2 adaptive run provenance differs from its condition provenance")
+
+    condition_attempt_rows = analysis.get("condition_actual_provider_attempts")
+    if not isinstance(condition_attempt_rows, list):
+        raise TypeError("RQ2 condition provider-attempt rows must be a JSON array")
+    condition_attempts = {}
+    for item in condition_attempt_rows:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError("RQ2 condition provider-attempt row must contain run ID and count")
+        run_id, count = item
+        if (run_id not in condition_runs or type(count) is not int
+                or not 0 <= count <= cap or run_id in condition_attempts):
+            raise ValueError("RQ2 condition provider attempts are outside the frozen design")
+        condition_attempts[run_id] = count
+    if set(condition_attempts) != set(condition_runs):
+        raise ValueError("RQ2 condition provider attempts do not cover every run")
+    if {
+        run_id: count for run_id, count in condition_attempts.items()
+        if condition_runs[run_id][1] == "adaptive_coevolution"
+    } != attempts:
+        raise ValueError("RQ2 adaptive provider attempts differ from condition run provenance")
+
     metrics = analysis.get("metrics")
     if not isinstance(metrics, list):
         raise TypeError("RQ2 metrics must be a JSON array")
@@ -336,6 +392,64 @@ def _require_complete_rq2(
     }
     if not expected_metrics <= set(result):
         raise ValueError("RQ2 report is missing one or more preregistered primary endpoints")
+    condition_contrasts = analysis.get("condition_contrasts")
+    if not isinstance(condition_contrasts, list):
+        raise TypeError("RQ2 condition contrasts must be a JSON array")
+    seen_contrasts: set[tuple[str, str]] = set()
+    required_control = ("target_failure_rate_reduction", "one_shot_repair")
+    for row in condition_contrasts:
+        if not isinstance(row, Mapping):
+            raise TypeError("RQ2 condition contrast must be a JSON object")
+        endpoint = row.get("endpoint")
+        baseline_condition = row.get("baseline_condition")
+        key = (endpoint, baseline_condition)
+        if (not isinstance(endpoint, str) or baseline_condition != "one_shot_repair"
+                or key in seen_contrasts):
+            raise ValueError("RQ2 condition contrast has an invalid or duplicate endpoint")
+        seen_contrasts.add(key)
+        if row.get("status") != "descriptive":
+            raise ValueError("RQ2 adaptive-versus-one-shot contrast is incomplete for Formal inference")
+        if (row.get("independent_seed_blocks") != len(expected_seeds)
+                or row.get("complete_seed_blocks") != len(expected_seeds)):
+            raise ValueError("RQ2 condition contrast does not cover every preregistered seed")
+        observations = row.get("observations")
+        if not isinstance(observations, list):
+            raise TypeError("RQ2 condition contrast observations must be an array")
+        values: dict[int, float] = {}
+        for observation in observations:
+            required_fields = {
+                "evolution_seed", "adaptive_run_id", "adaptive_input_sha256",
+                "one_shot_run_id", "one_shot_input_sha256", "adaptive_value",
+                "one_shot_value", "paired_difference",
+            }
+            if not isinstance(observation, Mapping) or set(observation) != required_fields:
+                raise ValueError("RQ2 condition observation has missing or unknown fields")
+            seed = observation["evolution_seed"]
+            if type(seed) is not int or seed not in expected_seeds or seed in values:
+                raise ValueError("RQ2 condition observation has a duplicate or unexpected seed")
+            adaptive = condition_runs.get(observation["adaptive_run_id"])
+            one_shot = condition_runs.get(observation["one_shot_run_id"])
+            if adaptive is None or one_shot is None or (
+                adaptive[0], adaptive[1], adaptive[2]
+            ) != (
+                seed, "adaptive_coevolution", observation["adaptive_input_sha256"],
+            ) or (
+                one_shot[0], one_shot[1], one_shot[2]
+            ) != (
+                seed, "one_shot_repair", observation["one_shot_input_sha256"],
+            ):
+                raise ValueError("RQ2 condition observation source runs do not match its seed and hashes")
+            adaptive_value = _finite_number(observation["adaptive_value"], "RQ2 adaptive condition value")
+            one_shot_value = _finite_number(observation["one_shot_value"], "RQ2 one-shot condition value")
+            difference = _finite_number(observation["paired_difference"], "RQ2 paired condition difference")
+            if not math.isclose(difference, adaptive_value - one_shot_value, rel_tol=1e-12, abs_tol=1e-12):
+                raise ValueError("RQ2 paired condition difference does not match its source values")
+            values[seed] = difference
+        if set(values) != expected_seeds:
+            raise ValueError("RQ2 condition contrast has incomplete seed-block observations")
+        result[f"{endpoint}_adaptive_minus_one_shot"] = values
+    if required_control not in seen_contrasts:
+        raise ValueError("RQ2 report is missing the preregistered one-shot repair contrast")
     return result
 
 

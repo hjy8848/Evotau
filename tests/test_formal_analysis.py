@@ -43,7 +43,17 @@ def report_bundle(plan):
         "random_runs": rq1_runs["random_mutation"],
     }
 
-    rq2_run_ids = [f"rq2-{seed}" for seed in seeds]
+    rq2_run_ids = [f"rq2-adaptive-{seed}" for seed in seeds]
+    one_shot_run_ids = [f"rq2-one-shot-{seed}" for seed in seeds]
+    condition_run_ids = [
+        [run_id, seed, condition, sha(f"rq2-{condition}-{seed}")]
+        for seed, adaptive_id, one_shot_id in zip(
+            seeds, rq2_run_ids, one_shot_run_ids, strict=True,
+        )
+        for run_id, condition in (
+            (adaptive_id, "adaptive_coevolution"), (one_shot_id, "one_shot_repair"),
+        )
+    ]
     rq2 = {
         "status": "descriptive",
         "evolution_task_ids": plan["task_panels"]["E"],
@@ -51,14 +61,23 @@ def report_bundle(plan):
         "heldout_task_ids": plan["task_panels"]["H"],
         "request_budget_cap": cap,
         "run_ids_and_input_sha256": [
-            [run_id, seed, sha(f"rq2-{seed}")]
+            [run_id, seed, sha(f"rq2-adaptive_coevolution-{seed}")]
             for run_id, seed in zip(rq2_run_ids, seeds, strict=True)
         ],
         "actual_provider_attempts": [
             [run_id, cap - index]
             for index, run_id in enumerate(rq2_run_ids)
         ],
+        "condition_run_ids_and_input_sha256": condition_run_ids,
+        "condition_actual_provider_attempts": [
+            [run_id, cap - index]
+            for index, (_seed, adaptive_id, one_shot_id) in enumerate(
+                zip(seeds, rq2_run_ids, one_shot_run_ids, strict=True)
+            )
+            for run_id in (adaptive_id, one_shot_id)
+        ],
         "metrics": [],
+        "condition_contrasts": [],
     }
     endpoint_values = {
         "target_failure_rate_reduction": [0.2 + index * 0.01 for index in range(len(seeds))],
@@ -78,6 +97,31 @@ def report_bundle(plan):
         }
         for name, values in endpoint_values.items()
     ]
+    rq2["condition_contrasts"] = [{
+        "endpoint": "target_failure_rate_reduction",
+        "baseline_condition": "one_shot_repair",
+        "status": "descriptive",
+        "independent_seed_blocks": len(seeds),
+        "complete_seed_blocks": len(seeds),
+        "observations": [
+            {
+                "evolution_seed": seed,
+                "adaptive_run_id": adaptive_id,
+                "adaptive_input_sha256": sha(f"rq2-adaptive_coevolution-{seed}"),
+                "one_shot_run_id": one_shot_id,
+                "one_shot_input_sha256": sha(f"rq2-one_shot_repair-{seed}"),
+                "adaptive_value": 0.2 + index * 0.01,
+                "one_shot_value": 0.1,
+                "paired_difference": 0.1 + index * 0.01,
+            }
+            for index, (seed, adaptive_id, one_shot_id) in enumerate(
+                zip(seeds, rq2_run_ids, one_shot_run_ids, strict=True)
+            )
+        ],
+        "mean_paired_difference": 0.125,
+        "bootstrap_95_percentile_interval": [0.09, 0.13],
+        "bootstrap_replicates": 10000,
+    }]
 
     rq3_runs = []
     for seed in seeds:
@@ -123,7 +167,9 @@ def test_formal_inference_pairs_seed_blocks_and_adjusts_registered_family():
     report = analyze(plan, report_bundle(plan))
     assert report.status == "formal_inference_computed"
     assert report.multiple_comparison_method == "holm"
-    assert len(report.tests) == 7
+    assert len(report.tests) == 8
+    one_shot_test = next(item for item in report.tests if item.contrast == "one_shot_repair")
+    assert one_shot_test.mean_paired_difference == pytest.approx(0.125)
     assert all(item.independent_seed_blocks == 6 for item in report.tests)
     assert all(item.reject_at_familywise_alpha for item in report.tests)
     assert report.tests[0].mean_paired_difference == 6.0
@@ -188,6 +234,21 @@ def test_formal_inference_rejects_incomplete_seed_blocks_and_hashes():
             rq2_report=reports["rq2"], rq2_report_sha256=sha("rq2-report"),
             rq3_report=reports["rq3"], rq3_report_sha256=sha("rq3-report"),
         )
+
+
+def test_formal_inference_rejects_tampered_one_shot_pair_provenance_and_difference():
+    plan = formal_plan()
+    reports = report_bundle(plan)
+    observation = reports["rq2"]["analysis"]["condition_contrasts"][0]["observations"][0]
+    observation["one_shot_input_sha256"] = sha("unrelated-one-shot-run")
+    with pytest.raises(ValueError, match="source runs do not match"):
+        analyze(plan, reports)
+
+    reports = report_bundle(plan)
+    observation = reports["rq2"]["analysis"]["condition_contrasts"][0]["observations"][0]
+    observation["paired_difference"] = 99.0
+    with pytest.raises(ValueError, match="does not match its source values"):
+        analyze(plan, reports)
 
 
 def _write_reference(root, reference, content):

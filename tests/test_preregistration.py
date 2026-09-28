@@ -17,6 +17,7 @@ def formal_plan():
         ("RQ1", "verified_task_signature_yield", "static_customer", "greater"),
         ("RQ1", "verified_task_signature_yield", "random_mutation", "greater"),
         ("RQ2", "target_failure_rate_reduction", "incumbent_service", "greater"),
+        ("RQ2", "target_failure_rate_reduction", "one_shot_repair", "greater"),
         ("RQ2", "clean_success_rate_change", "incumbent_service", "non_inferior"),
         ("RQ2", "heldout_success_rate_change", "incumbent_service", "non_inferior"),
         ("RQ3", "sustained_two_chain_response", "frozen_service", "greater"),
@@ -193,7 +194,7 @@ def test_formal_preregistration_requires_pilot_backed_complete_research_design()
     )
     assert summary.status == "structurally_valid_registry_reference_unverified"
     assert summary.independent_seed_blocks == 6
-    assert summary.primary_hypotheses == 7
+    assert summary.primary_hypotheses == 8
     assert dict(summary.task_counts) == {"E": 2, "H": 1, "V": 1}
 
 

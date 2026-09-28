@@ -40,6 +40,7 @@ PRIMARY_CONTRASTS = {
     ("RQ1", "verified_task_signature_yield", "static_customer", "greater"),
     ("RQ1", "verified_task_signature_yield", "random_mutation", "greater"),
     ("RQ2", "target_failure_rate_reduction", "incumbent_service", "greater"),
+    ("RQ2", "target_failure_rate_reduction", "one_shot_repair", "greater"),
     ("RQ2", "clean_success_rate_change", "incumbent_service", "non_inferior"),
     ("RQ2", "heldout_success_rate_change", "incumbent_service", "non_inferior"),
     ("RQ3", "sustained_two_chain_response", "frozen_service", "greater"),

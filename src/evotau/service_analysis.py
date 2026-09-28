@@ -8,7 +8,7 @@ import json
 import math
 import random
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from statistics import mean
@@ -20,6 +20,13 @@ from .records import FailureRecord, customer_strategy_id
 from .service_evolution import GateReport
 
 SERVICE_PANEL_SCOPES = frozenset({"target", "historical", "clean", "validation", "heldout"})
+SERVICE_STUDY_CONDITIONS = frozenset({"adaptive_coevolution", "one_shot_repair"})
+RQ2_CONTROL_ENDPOINTS = {
+    "target_failure_rate_reduction": ("target", "target_failure_rate_reduction"),
+    "clean_success_rate_change": ("clean", "clean_success_rate_change"),
+    "heldout_success_rate_change": ("heldout", "task_success_rate_change"),
+    "heldout_policy_violation_rate_change": ("heldout", "policy_violation_rate_change"),
+}
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -501,17 +508,20 @@ def _signature_episode_count(cell: CrossPlayCell, signature_keys: set[str]) -> i
 
 @dataclass(frozen=True, slots=True)
 class ServiceRobustnessRun:
-    """The five paired Service panels for one independent evolution run."""
+    """The five paired Service panels for one condition and evolution seed."""
 
     run_id: str
     evolution_seed: int
     panels: tuple[ServiceRepairAnalysis, ...]
+    condition: str = "adaptive_coevolution"
 
     def __post_init__(self) -> None:
         if not isinstance(self.run_id, str) or not self.run_id.strip():
             raise ValueError("RQ2 run_id must be a non-empty string")
         if type(self.evolution_seed) is not int or self.evolution_seed < 0:
             raise ValueError("RQ2 evolution seed must be a non-negative integer")
+        if self.condition not in SERVICE_STUDY_CONDITIONS:
+            raise ValueError("RQ2 run condition must be adaptive_coevolution or one_shot_repair")
         if any(not isinstance(panel, ServiceRepairAnalysis) for panel in self.panels):
             raise TypeError("RQ2 run panels must be ServiceRepairAnalysis records")
         scopes = [panel.panel_scope for panel in self.panels]
@@ -541,11 +551,14 @@ class ServiceRobustnessRun:
             "run_id": self.run_id,
             "evolution_seed": self.evolution_seed,
             "panels": [panel.to_dict() for panel in self.panels],
+            "condition": self.condition,
         }
 
     @classmethod
     def from_dict(cls, value: Any) -> ServiceRobustnessRun:
-        if not isinstance(value, dict) or set(value) != {"run_id", "evolution_seed", "panels"}:
+        if not isinstance(value, dict) or set(value) != {
+            "run_id", "evolution_seed", "panels", "condition",
+        }:
             raise ValueError("RQ2 run has missing or unknown fields")
         if not isinstance(value["panels"], list):
             raise TypeError("RQ2 run panels must be a JSON array")
@@ -553,6 +566,7 @@ class ServiceRobustnessRun:
             run_id=value["run_id"],
             evolution_seed=value["evolution_seed"],
             panels=tuple(ServiceRepairAnalysis.from_dict(item) for item in value["panels"]),
+            condition=value["condition"],
         )
 
     @property
@@ -560,8 +574,48 @@ class ServiceRobustnessRun:
         return sha256_json({
             "run_id": self.run_id,
             "evolution_seed": self.evolution_seed,
+            "condition": self.condition,
             "panels": [panel.to_dict() for panel in sorted(self.panels, key=lambda item: item.panel_scope)],
         })
+
+
+@dataclass(frozen=True, slots=True)
+class RQ2ConditionObservation:
+    evolution_seed: int
+    adaptive_run_id: str
+    adaptive_input_sha256: str
+    one_shot_run_id: str
+    one_shot_input_sha256: str
+    adaptive_value: float | None
+    one_shot_value: float | None
+    paired_difference: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class RQ2ConditionContrast:
+    endpoint: str
+    baseline_condition: str
+    status: str
+    independent_seed_blocks: int
+    complete_seed_blocks: int
+    observations: tuple[RQ2ConditionObservation, ...]
+    mean_paired_difference: float | None
+    bootstrap_95_percentile_interval: tuple[float, float] | None
+    bootstrap_replicates: int
+
+    def __post_init__(self) -> None:
+        if self.endpoint not in RQ2_CONTROL_ENDPOINTS:
+            raise ValueError("RQ2 condition contrast has an unsupported endpoint")
+        if self.baseline_condition != "one_shot_repair":
+            raise ValueError("RQ2 control contrast must compare with one_shot_repair")
+        if self.status not in {"descriptive", "incomplete_denominator", "insufficient_independent_runs"}:
+            raise ValueError("RQ2 control contrast has an unsupported status")
+        if self.independent_seed_blocks != len(self.observations):
+            raise ValueError("RQ2 condition contrast seed denominator does not match observations")
+        if self.complete_seed_blocks != sum(
+            item.paired_difference is not None for item in self.observations
+        ):
+            raise ValueError("RQ2 condition contrast complete denominator does not match observations")
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,7 +644,10 @@ class RQ2RobustnessReport:
     bootstrap_seed: int
     run_ids_and_input_sha256: tuple[tuple[str, int, str], ...]
     actual_provider_attempts: tuple[tuple[str, int], ...]
+    condition_run_ids_and_input_sha256: tuple[tuple[str, int, str, str], ...]
+    condition_actual_provider_attempts: tuple[tuple[str, int], ...]
     metrics: tuple[RQ2MetricEstimate, ...]
+    condition_contrasts: tuple[RQ2ConditionContrast, ...]
     reasons: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -634,14 +691,17 @@ def analyze_rq2_service_robustness(
         raise ValueError("RQ2 analysis requires independent evolution runs")
 
     run_ids: set[str] = set()
-    evolution_seeds: set[int] = set()
+    by_condition: dict[str, dict[int, ServiceRobustnessRun]] = {
+        condition: {} for condition in SERVICE_STUDY_CONDITIONS
+    }
     for run in runs:
         if run.run_id in run_ids:
             raise ValueError("RQ2 run IDs must be unique")
-        if run.evolution_seed in evolution_seeds:
-            raise ValueError("RQ2 independent evolution runs must use distinct seeds")
         run_ids.add(run.run_id)
-        evolution_seeds.add(run.evolution_seed)
+        condition_runs = by_condition[run.condition]
+        if run.evolution_seed in condition_runs:
+            raise ValueError("RQ2 runs within a condition must use distinct evolution seeds")
+        condition_runs[run.evolution_seed] = run
         panels = run.panels_by_scope
         if not set(panels["target"].task_ids) <= set(e_tasks):
             raise ValueError("RQ2 target panel tasks must belong to the frozen E partition")
@@ -654,15 +714,29 @@ def analyze_rq2_service_robustness(
         if panels["heldout"].task_ids != h_tasks:
             raise ValueError("RQ2 heldout panel must equal the sealed ordered H partition")
 
-    reference = runs[0].panels_by_scope
+    adaptive_runs = by_condition["adaptive_coevolution"]
+    if not adaptive_runs:
+        raise ValueError("RQ2 requires adaptive_coevolution runs")
+    one_shot_runs = by_condition["one_shot_repair"]
+    if one_shot_runs and set(one_shot_runs) != set(adaptive_runs):
+        raise ValueError("RQ2 one-shot and adaptive conditions must use the same evolution-seed blocks")
+
+    reference = adaptive_runs[min(adaptive_runs)].panels_by_scope
     request_budget_cap = reference["target"].request_budget_cap
-    for run in runs[1:]:
+    for run in runs:
         panels = run.panels_by_scope
         for scope in SERVICE_PANEL_SCOPES:
             if panels[scope].task_ids != reference[scope].task_ids:
                 raise ValueError(f"RQ2 {scope} task panel must be identical across independent runs")
+        if run.condition == "one_shot_repair":
+            adaptive = adaptive_runs[run.evolution_seed].panels_by_scope
+            for scope in SERVICE_PANEL_SCOPES:
+                if panels[scope].seeds != adaptive[scope].seeds:
+                    raise ValueError(
+                        f"RQ2 paired conditions must use the same {scope} task/seed schedule"
+                    )
         if panels["target"].request_budget_cap != request_budget_cap:
-            raise ValueError("RQ2 independent runs must share one request-attempt budget cap")
+            raise ValueError("RQ2 conditions and independent runs must share one request-attempt budget cap")
 
     specs = (
         ("target_failure_rate_reduction", "target", "target_failure_rate_reduction", "higher"),
@@ -687,7 +761,7 @@ def analyze_rq2_service_robustness(
             scope=scope,
             attribute=attribute,
             direction=direction,
-            runs=runs,
+            runs=tuple(adaptive_runs[seed] for seed in sorted(adaptive_runs)),
             minimum_runs=minimum_independent_runs,
             bootstrap_replicates=bootstrap_replicates,
             rng=rng,
@@ -695,14 +769,28 @@ def analyze_rq2_service_robustness(
         for name, scope, attribute, direction in specs
     )
     reasons: list[str] = []
-    if len(runs) < minimum_independent_runs:
+    if len(adaptive_runs) < minimum_independent_runs:
         reasons.append(
-            f"only {len(runs)} independent evolution runs; {minimum_independent_runs} required for pilot-level comparison"
+            f"only {len(adaptive_runs)} adaptive evolution runs; {minimum_independent_runs} required for pilot-level comparison"
         )
+    if not one_shot_runs:
+        reasons.append("one_shot_repair runs are missing; adaptive-versus-baseline comparisons are unavailable")
     if any(metric.status == "incomplete_denominator" for metric in estimates):
         reasons.append("one or more panel metrics lack a valid denominator in at least one independent run")
+    condition_contrasts = _rq2_condition_contrasts(
+        adaptive_runs=adaptive_runs,
+        one_shot_runs=one_shot_runs,
+        minimum_runs=minimum_independent_runs,
+        bootstrap_replicates=bootstrap_replicates,
+        rng=random.Random(bootstrap_seed + 1),
+    )
+    if any(item.status == "incomplete_denominator" for item in condition_contrasts):
+        reasons.append("one or more adaptive-versus-one-shot comparisons lack a complete paired denominator")
+    if any(item.status == "insufficient_independent_runs" for item in condition_contrasts):
+        reasons.append("one-shot comparison has too few independent seed blocks")
     status = (
-        "insufficient_independent_runs" if len(runs) < minimum_independent_runs
+        "insufficient_independent_runs" if len(adaptive_runs) < minimum_independent_runs
+        else "incomplete_conditions" if not one_shot_runs
         else "incomplete_denominators" if reasons
         else "descriptive"
     )
@@ -715,14 +803,91 @@ def analyze_rq2_service_robustness(
         minimum_independent_runs=minimum_independent_runs,
         bootstrap_seed=bootstrap_seed,
         run_ids_and_input_sha256=tuple(
-            (run.run_id, run.evolution_seed, run.input_sha256) for run in runs
+            (run.run_id, run.evolution_seed, run.input_sha256)
+            for run in (adaptive_runs[seed] for seed in sorted(adaptive_runs))
         ),
         actual_provider_attempts=tuple(
-            (run.run_id, run.panels_by_scope["target"].provider_attempts) for run in runs
+            (run.run_id, run.panels_by_scope["target"].provider_attempts)
+            for run in (adaptive_runs[seed] for seed in sorted(adaptive_runs))
+        ),
+        condition_run_ids_and_input_sha256=tuple(
+            (run.run_id, run.evolution_seed, run.condition, run.input_sha256)
+            for run in sorted(runs, key=lambda item: (item.condition, item.evolution_seed))
+        ),
+        condition_actual_provider_attempts=tuple(
+            (run.run_id, run.panels_by_scope["target"].provider_attempts)
+            for run in sorted(runs, key=lambda item: (item.condition, item.evolution_seed))
         ),
         metrics=estimates,
+        condition_contrasts=condition_contrasts,
         reasons=tuple(reasons),
     )
+
+
+def _rq2_condition_contrasts(
+    *,
+    adaptive_runs: Mapping[int, ServiceRobustnessRun],
+    one_shot_runs: Mapping[int, ServiceRobustnessRun],
+    minimum_runs: int,
+    bootstrap_replicates: int,
+    rng: random.Random,
+) -> tuple[RQ2ConditionContrast, ...]:
+    if not one_shot_runs:
+        return ()
+    contrasts = []
+    for endpoint, (scope, attribute) in RQ2_CONTROL_ENDPOINTS.items():
+        observations = []
+        differences: list[float] = []
+        for seed in sorted(adaptive_runs):
+            adaptive = adaptive_runs[seed]
+            one_shot = one_shot_runs[seed]
+            adaptive_value = getattr(adaptive.panels_by_scope[scope], attribute)
+            one_shot_value = getattr(one_shot.panels_by_scope[scope], attribute)
+            difference = (
+                adaptive_value - one_shot_value
+                if adaptive_value is not None and one_shot_value is not None else None
+            )
+            if difference is not None:
+                differences.append(difference)
+            observations.append(RQ2ConditionObservation(
+                evolution_seed=seed,
+                adaptive_run_id=adaptive.run_id,
+                adaptive_input_sha256=adaptive.input_sha256,
+                one_shot_run_id=one_shot.run_id,
+                one_shot_input_sha256=one_shot.input_sha256,
+                adaptive_value=adaptive_value,
+                one_shot_value=one_shot_value,
+                paired_difference=difference,
+            ))
+        if len(observations) < minimum_runs:
+            status = "insufficient_independent_runs"
+        elif len(differences) != len(observations):
+            status = "incomplete_denominator"
+        else:
+            status = "descriptive"
+        interval = None
+        average = None
+        used_replicates = 0
+        if status == "descriptive":
+            average = mean(differences)
+            bootstrap = [
+                mean(rng.choice(differences) for _ in differences)
+                for _ in range(bootstrap_replicates)
+            ]
+            interval = (_percentile(bootstrap, 0.025), _percentile(bootstrap, 0.975))
+            used_replicates = bootstrap_replicates
+        contrasts.append(RQ2ConditionContrast(
+            endpoint=endpoint,
+            baseline_condition="one_shot_repair",
+            status=status,
+            independent_seed_blocks=len(observations),
+            complete_seed_blocks=len(differences),
+            observations=tuple(observations),
+            mean_paired_difference=average,
+            bootstrap_95_percentile_interval=interval,
+            bootstrap_replicates=used_replicates,
+        ))
+    return tuple(contrasts)
 
 
 def _estimate_rq2_metric(
@@ -811,7 +976,7 @@ def load_rq2_document(
     }
     if not isinstance(value, dict) or set(value) != required:
         raise ValueError("RQ2 input has missing or unknown top-level fields")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
         raise ValueError("unsupported RQ2 input schema_version")
     task_panels = []
     for name in ("evolution_task_ids", "validation_task_ids", "heldout_task_ids"):
@@ -829,9 +994,9 @@ def load_rq2_document(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Analyze RQ2 Service robustness across independent evolution runs."
+        description="Analyze paired adaptive and one-shot Service robustness runs."
     )
-    parser.add_argument("--input", required=True, type=Path, help="version 1 RQ2 run-level JSON")
+    parser.add_argument("--input", required=True, type=Path, help="version 2 RQ2 condition/run-level JSON")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--bootstrap-seed", type=int, default=0)
     parser.add_argument("--bootstrap-replicates", type=int, default=10_000)
