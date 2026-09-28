@@ -34,6 +34,7 @@ class IndependentEpisodeAudit:
     strategy_applicable: bool
     customer_strategy_adherent: bool | None
     policy_violation: bool
+    invalid_repeated_write_calls: int
     policy_rule_id: str | None = None
     mistake_type: str | None = None
     workflow_stage: str | None = None
@@ -50,6 +51,9 @@ class IndependentEpisodeAudit:
             raise ValueError("not_applicable strategy behavior must not be scored for adherence")
         if type(self.policy_violation) is not bool:
             raise ValueError("independent audit must explicitly judge policy violation")
+        if (type(self.invalid_repeated_write_calls) is not int
+                or self.invalid_repeated_write_calls < 0):
+            raise ValueError("independent audit must report a non-negative repeated-write count")
         if self.policy_violation and not all(
             (self.policy_rule_id, self.mistake_type, self.workflow_stage, self.evidence)
         ):
@@ -101,12 +105,16 @@ class TauBenchEpisodeRunner:
         self.request_budget = request_budget
         self.audit_provider = audit_provider
         self.service_token_counter = service_token_counter
+        self.data_root = Path(data_dir).expanduser().resolve()
         self.tasks = _load_pinned_tasks(
             manifest,
-            data_dir=data_dir,
+            data_dir=self.data_root,
             task_selection=experiment.get("task_selection", {}),
             task_ids=(manifest.evolution_task_id, manifest.validation_task_id),
         )
+        self.service_policy_text = (
+            self.data_root / "tau2/domains/retail/policy.md"
+        ).read_text(encoding="utf-8")
         self.output_directory = Path(manifest.output_path)
         self.output_directory.mkdir(parents=True, exist_ok=True)
         manifest_path = self.output_directory / "manifest.json"
@@ -238,6 +246,9 @@ class TauBenchEpisodeRunner:
                 strategy_applicable=None if audit_result is None else audit_result.strategy_applicable,
                 customer_strategy_adherent=None if audit_result is None else audit_result.customer_strategy_adherent,
                 policy_violation=False if audit_result is None else audit_result.policy_violation,
+                invalid_repeated_write_calls=(
+                    None if audit_result is None else audit_result.invalid_repeated_write_calls
+                ),
                 policy_rule_id=None if audit_result is None else audit_result.policy_rule_id,
                 mistake_type=None if audit_result is None else audit_result.mistake_type,
                 workflow_stage=None if audit_result is None else audit_result.workflow_stage,
@@ -280,6 +291,26 @@ class TauBenchEpisodeRunner:
                 "budget_delta": _snapshot_delta(before, after),
             })
             raise NativeEpisodeRunError(type(exc).__name__) from exc
+
+    def load_trajectory(self, episode: EpisodeRecord) -> Mapping[str, Any] | None:
+        """Load one saved native simulation after enforcing output-directory containment."""
+        if episode.trajectory_ref is None:
+            return None
+        output_root = self.output_directory.resolve()
+        trajectory_path = (output_root / episode.trajectory_ref).resolve()
+        try:
+            trajectory_path.relative_to(output_root)
+        except ValueError as exc:
+            raise ValueError("episode trajectory reference escapes its run directory") from exc
+        if not trajectory_path.is_file():
+            raise FileNotFoundError("episode trajectory referenced by repair evidence is unavailable")
+        payload = json.loads(trajectory_path.read_text(encoding="utf-8"))
+        if (not isinstance(payload, dict)
+                or str(payload.get("id")) != episode.episode_id
+                or str(payload.get("task_id")) != episode.task_id
+                or int(payload.get("seed", -1)) != episode.seed):
+            raise ValueError("saved native simulation does not match its EpisodeRecord")
+        return payload
 
 
 def run_native_phase3(
@@ -491,6 +522,7 @@ def _audit_dict(audit: IndependentEpisodeAudit) -> dict[str, Any]:
         "strategy_applicable": audit.strategy_applicable,
         "customer_strategy_adherent": audit.customer_strategy_adherent,
         "policy_violation": audit.policy_violation,
+        "invalid_repeated_write_calls": audit.invalid_repeated_write_calls,
         "policy_rule_id": audit.policy_rule_id,
         "mistake_type": audit.mistake_type,
         "workflow_stage": audit.workflow_stage,

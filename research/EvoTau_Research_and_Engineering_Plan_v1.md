@@ -1,6 +1,6 @@
-Status: Phase 0 guarded native runner, pinned environment/orchestrator construction, and stubbed native end-to-end episode/evaluation/reviewer verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, concrete budget-gated ServiceTransition, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, complete Service repair audit journaling, and initial-S0 clean-success gate implemented; provider-backed Phase 0/3 episodes and Pilot/Formal research not run
+Status: Phase 0 guarded native runner, pinned environment/orchestrator construction, and stubbed native end-to-end episode/evaluation/reviewer verified; Phase 1–3 offline mechanism layer, native Phase 3 adapter, concrete budget-gated ServiceTransition, repeated-write audit gate, balanced cross-play, RQ1 run-level and RQ2 run-level/panel-level analyses, arms-race response, exact-policy failure taxonomy, attribution-calibration CLI, multi-task E/V/H leakage validator, complete Service repair audit journaling, and initial-S0 clean-success gate implemented; provider-backed Phase 0/3 episodes and Pilot/Formal research not run
 Owner: hjy8848
-Last verified: 2026-09-29 (80 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; pinned native `run_simulation`/evaluator/full-reviewer path passes with offline completions; S₀ clean-success gate retains its source episode references; no provider episode has been run)
+Last verified: 2026-09-29 (81 tests pass with pinned runtime integration enabled; all 19 manifest source blobs match the pinned τ-bench commit; Ruff, compileall, both eligibility preflights, and diff checks pass; pinned native `run_simulation`/evaluator/full-reviewer path passes with offline completions; S₀ clean-success gate retains its source episode references; no provider episode has been run)
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1558,3 +1558,10 @@ Phase 0 之后的实现顺序建议：
 - `run_native_phase3()` 可直接接受 proposal/audit provider 并组装内置 transition，也继续支持调用者传入完整自定义 transition。当前测试覆盖完整接受、episode/request preflight、缺历史证据、静态拒绝和 gate 中途预算耗尽；未调用真实 provider。
 - RQ2 panel analysis 单独报告 `inconclusive_repairs`，只要 gate 存在未完成项就将 acceptance rate 标为缺失，避免把预算中断误计成拒绝或完整分母。
 - 当前完整验证为 **80 passed**（含 pinned-runtime 集成），Ruff、`compileall`、Phase 0/3 preflight 与 diff 检查通过。真实 provider Phase 0/3 和 Pilot/Formal 仍未运行。
+
+**Repeated-write evidence and repair-input completeness update（2026-09-29）**
+
+- 按第 15 节把“不得出现新的无效重复写调用”落实为独立 `invalid_repeated_write_calls` 审计计数。Native EpisodeAudit 必须显式提供非负计数；无审计的 episode 保留 `None`。Service gate 对所有 paired panels 拒绝缺失计数或候选计数增加，并要求 clean S₀ anchor 也有该审计项。
+- Cross-play cell/report 保留 repeated-write 总数与审计覆盖率；RQ2 只在 incumbent/candidate 都完整审计时比较 repeated-write rate，缺少覆盖时保留 `None`，不把未检查当作零次违规。
+- proposal 与 independent audit 现在共享显式 `ServiceRepairInput`：包括 target FailureRecord、对应 EpisodeRecord 和 native trajectory、经 τ-bench pinned-source 校验的 Retail policy 文本、当前 Service、同 signature 的历史 failures、攻击 Customer 和 incumbent-passing replay。Native runner 只允许在其 run directory 内解析 trajectory 引用，并校验读取的 ID/task/seed 与 EpisodeRecord 一致。
+- 新增具体 ServiceTransition 经两代 controller 接受修复并幂等标记 replay coverage 的离线端到端测试；native adapter 测试覆盖政策文本与受限轨迹解析。当前全量验证为 **81 passed**（含 pinned-runtime 集成），Ruff、`compileall`、Phase 0/3 pinned-data preflight 与 `git diff --check` 均通过。真实 provider Phase 0/3 和 Pilot/Formal 仍未运行。

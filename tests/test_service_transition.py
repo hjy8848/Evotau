@@ -7,6 +7,7 @@ from evotau.archive import FailureArchive
 from evotau.budget import ProviderBudgetExceeded, RequestBudget
 from evotau.lifecycle import (
     ServiceTransitionEpisodeRunner,
+    TwoGenerationSmoke,
     _append_prepared_archive,
     _prepared_archive_payload,
 )
@@ -46,6 +47,7 @@ def _episode(
         strategy_applicable=not native,
         customer_strategy_adherent=None if native else True,
         policy_violation=violation,
+        invalid_repeated_write_calls=0,
         policy_rule_id="retail.policy:explicit_confirmation" if violation else None,
         mistake_type="missing_explicit_confirmation" if violation else None,
         workflow_stage="pre_write" if violation else None,
@@ -85,11 +87,15 @@ def _fixture(*, remaining_episodes: int = 10, audit_approved: bool = True):
 
     episode_runner = ServiceTransitionEpisodeRunner(
         runner, remaining_episodes, {customer_id: customer}, (source, historical),
+        service_policy_text="Fixed retail policy: obtain explicit confirmation before writing.",
     )
     proposals = []
 
-    def proposal_provider(generation, target, current_service):
-        proposals.append((generation, target.failure_id, current_service))
+    def proposal_provider(repair_input):
+        target = repair_input.target_failure
+        proposals.append((repair_input.generation, target.failure_id, repair_input.current_service))
+        assert repair_input.target_episode == source
+        assert repair_input.fixed_policy_text.startswith("Fixed retail policy")
         rule = ServiceRule(
             "confirmation-guard", target.policy_ref,
             "before a database write",
@@ -101,7 +107,8 @@ def _fixture(*, remaining_episodes: int = 10, audit_approved: bool = True):
             "On the same eligible write request, the agent confirms all details before writing.",
         )
 
-    def audit_provider(generation, proposal, target, current_service):
+    def audit_provider(proposal, repair_input):
+        target = repair_input.target_failure
         return RepairAudit(
             audit_approved,
             "human:repair-audit",
@@ -126,6 +133,10 @@ def test_gated_transition_executes_complete_paired_gate_and_accepts_only_candida
     assert candidate == report.candidate_strategy
     assert report.target_failure_id == failure.failure_id
     assert report.initial_s0_episode_refs == (("clean-1", "service-g0-clean-incumbent"),)
+    assert len(report.unit_episode_refs) == 5
+    assert report.unit_episode_refs[0] == (
+        "target-1", "service-g0-target-1-incumbent", "service-g0-target-1-candidate",
+    )
     assert len(calls) == 10
     assert len(proposals) == 1 and proposals[0][1] == failure.failure_id
     assert note.startswith("accepted:")
@@ -205,6 +216,9 @@ def test_request_budget_exhaustion_during_gate_records_inconclusive_report():
     assert result == incumbent and report is not None
     assert report.inconclusive and not report.accepted
     assert len(report.unit_results) == 1
+    assert report.partial_episode_refs == ((
+        "target-2:incumbent", "service-g0-target-2-incumbent",
+    ),)
     assert "inconclusive" in note
 
 
@@ -245,4 +259,90 @@ def test_provider_cost_preflight_stops_before_dispatch_and_journals_target_repla
     )
     _append_prepared_archive(archive, payload)
     _append_prepared_archive(archive, payload)
+    assert archive.active_replay_coverage()["coverage_rate"] == 1.0
+
+
+def test_concrete_transition_completes_through_controller_and_archives_replay(tmp_path):
+    customer = CustomerStrategy()
+    service = ServiceStrategy()
+    archive = FailureArchive(tmp_path / "controller-archive.sqlite")
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        native = customer is None
+        discovery_target = (
+            panel_name == "discovery"
+            and customer_strategy_id(customer) == customer_strategy_id(CustomerStrategy())
+            and not service.rules
+        )
+        gate_target = "target-" in panel_name and not service.rules
+        violation = discovery_target or gate_target
+        return EpisodeRecord(
+            episode_id=f"{panel_name}:{task_id}:{seed}:{customer_strategy_id(customer)}",
+            task_id=task_id,
+            seed=seed,
+            customer_strategy_id=customer_strategy_id(customer),
+            service_strategy_id=service_strategy_id(service),
+            status=EpisodeStatus.COMPLETE,
+            task_success=not violation,
+            customer_valid=True,
+            strategy_applicable=not native,
+            customer_strategy_adherent=None if native else True,
+            policy_violation=violation,
+            invalid_repeated_write_calls=0,
+            policy_rule_id="retail.policy:explicit_confirmation" if violation else None,
+            mistake_type="missing_explicit_confirmation" if violation else None,
+            workflow_stage="pre_write" if violation else None,
+            evidence=(EvidenceRef(2, "tool", "write preceded confirmation"),) if violation else (),
+            tool_calls=4,
+        )
+
+    def proposal_provider(repair_input):
+        failure = repair_input.target_failure
+        return RepairProposal(
+            failure.failure_id,
+            ServiceRule(
+                "controller-confirmation",
+                failure.policy_ref,
+                "before a write",
+                "confirm the full write details before calling the tool",
+                failure.evidence_refs,
+            ),
+            "The write occurs only after the customer confirms its complete scope.",
+        )
+
+    def audit_provider(_proposal, repair_input):
+        failure = repair_input.target_failure
+        return RepairAudit(
+            True,
+            "human:controller-policy-review",
+            frozenset({failure.policy_ref}),
+            rationale="This rule enforces the fixed confirmation policy without expanding permission.",
+        )
+
+    transition = GatedServiceTransition(
+        "E", "V", 12, service, proposal_provider, audit_provider,
+        token_counter=lambda text: len(text.split()),
+    )
+    controller = TwoGenerationSmoke(
+        manifest={"max_episodes": 23},
+        checkpoint_path=str(tmp_path / "controller-checkpoint.json"),
+        runner=runner,
+        task_ids=("E", "V"),
+        seed=12,
+        failure_archive=archive,
+    )
+    commits = controller.run(
+        customer,
+        service,
+        failure_verifier=lambda _episode: "human:service-failure-review",
+        service_transition=transition,
+    )
+
+    assert len(commits) == 2
+    first = commits[0].decision_record
+    assert commits[0].service_evolved
+    assert first is not None
+    assert first["service"]["gate"]["accepted"] is True
+    assert len(first["service"]["gate"]["unit_episode_refs"]) == 5
+    assert first["active_replay_coverage"]["coverage_rate"] == 1.0
     assert archive.active_replay_coverage()["coverage_rate"] == 1.0

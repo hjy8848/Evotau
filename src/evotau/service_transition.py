@@ -7,8 +7,9 @@ repair-gate evaluation, and fail-closed handling of exhausted budgets.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from .budget import ProviderBudgetExceeded, RequestBudget
 from .lifecycle import ServiceTransitionEpisodeRunner
@@ -23,8 +24,24 @@ from .service_evolution import (
 )
 from .strategies import CustomerStrategy, ServiceStrategy
 
-ProposalProvider = Callable[[int, FailureRecord, ServiceStrategy], RepairProposal]
-RepairAuditProvider = Callable[[int, RepairProposal, FailureRecord, ServiceStrategy], RepairAudit]
+
+@dataclass(frozen=True, slots=True)
+class ServiceRepairInput:
+    """Evolution-only material exposed to proposal and independent audit providers."""
+
+    generation: int
+    target_failure: FailureRecord
+    target_episode: EpisodeRecord
+    target_trajectory: Mapping[str, Any] | None
+    target_customer_strategy: CustomerStrategy
+    fixed_policy_text: str | None
+    current_service: ServiceStrategy
+    prior_same_signature_failures: tuple[FailureRecord, ...]
+    incumbent_passing_history: EpisodeRecord
+
+
+ProposalProvider = Callable[[ServiceRepairInput], RepairProposal]
+RepairAuditProvider = Callable[[RepairProposal, ServiceRepairInput], RepairAudit]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,15 +86,40 @@ class GatedServiceTransition:
     ) -> tuple[ServiceStrategy, GateReport | None, str]:
         if generation not in (0, 1):
             raise ValueError("Phase 3 Service transition supports generations 0 and 1")
-        target, target_customer = self._select_target(failures, episode_runner, incumbent)
-        if target is None or target_customer is None:
-            return incumbent, None, "inconclusive: no E-task verified failure has a resolvable Customer snapshot"
+        target, target_customer, target_episode = self._select_target(failures, episode_runner)
+        if target is None or target_customer is None or target_episode is None:
+            return incumbent, None, "inconclusive: no E-task verified failure has resolvable strategy and trajectory evidence"
         historical = self._select_historical(episode_runner, incumbent)
         if historical is None:
             return incumbent, None, "inconclusive: no valid incumbent-passing E-task replay is available"
         history_customer = episode_runner.resolve_customer_strategy(historical.customer_strategy_id)
         if history_customer is None:
             return incumbent, None, "inconclusive: historical replay Customer snapshot is unavailable"
+        try:
+            target_trajectory = episode_runner.load_trajectory(target_episode)
+        except (OSError, ValueError):
+            return incumbent, None, "inconclusive: verified target trajectory could not be recovered"
+        if target_episode.trajectory_ref is not None and target_trajectory is None:
+            return incumbent, None, "inconclusive: verified target trajectory loader is unavailable"
+
+        repair_input = ServiceRepairInput(
+            generation=generation,
+            target_failure=target,
+            target_episode=target_episode,
+            target_trajectory=target_trajectory,
+            target_customer_strategy=target_customer,
+            fixed_policy_text=episode_runner.service_policy_text,
+            current_service=incumbent,
+            prior_same_signature_failures=tuple(sorted(
+                (
+                    item for item in failures
+                    if item.failure_id != target.failure_id
+                    and item.signature.key == target.signature.key
+                ),
+                key=lambda item: (item.generation, item.failure_id),
+            )),
+            incumbent_passing_history=historical,
+        )
 
         s0_id = service_strategy_id(self.initial_service)
         requires_separate_s0_anchor = service_strategy_id(incumbent) != s0_id
@@ -97,10 +139,10 @@ class GatedServiceTransition:
                 )
 
         try:
-            proposal = self.proposal_provider(generation, target, incumbent)
+            proposal = self.proposal_provider(repair_input)
             if not isinstance(proposal, RepairProposal):
                 raise TypeError("proposal_provider must return RepairProposal")
-            audit = self.audit_provider(generation, proposal, target, incumbent)
+            audit = self.audit_provider(proposal, repair_input)
             if not isinstance(audit, RepairAudit):
                 raise TypeError("audit_provider must return RepairAudit")
         except Exception as exc:
@@ -143,6 +185,7 @@ class GatedServiceTransition:
                 )
 
         units: list[GateUnit] = []
+        partial_episode_refs: list[tuple[str, str]] = []
         stopped_for_budget: Exception | None = None
         base_seed = self.seed + 20_000 + generation * 16
 
@@ -155,10 +198,14 @@ class GatedServiceTransition:
                 task_id=task_id, seed=seed, customer=fixed_customer,
                 service=incumbent, panel_name=f"service-g{generation}-{panel_name}-incumbent",
             )
-            new = episode_runner(
-                task_id=task_id, seed=seed, customer=fixed_customer,
-                service=candidate, panel_name=f"service-g{generation}-{panel_name}-candidate",
-            )
+            try:
+                new = episode_runner(
+                    task_id=task_id, seed=seed, customer=fixed_customer,
+                    service=candidate, panel_name=f"service-g{generation}-{panel_name}-candidate",
+                )
+            except Exception:
+                partial_episode_refs.append((f"{key}:incumbent", old.episode_id))
+                raise
             return GateUnit(key, panel, old, new, target_failure_id=target_failure_id)
 
         for index, trial_seed in enumerate((base_seed, base_seed + 1), start=1):
@@ -184,15 +231,26 @@ class GatedServiceTransition:
                     task_id=self.evolution_task_id, seed=base_seed + 3, customer=None,
                     service=incumbent, panel_name=f"service-g{generation}-clean-incumbent",
                 )
-                clean_new = episode_runner(
-                    task_id=self.evolution_task_id, seed=base_seed + 3, customer=None,
-                    service=candidate, panel_name=f"service-g{generation}-clean-candidate",
-                )
-                if requires_separate_s0_anchor:
-                    initial_s0 = episode_runner(
+                try:
+                    clean_new = episode_runner(
                         task_id=self.evolution_task_id, seed=base_seed + 3, customer=None,
-                        service=self.initial_service, panel_name=f"service-g{generation}-clean-initial-s0",
+                        service=candidate, panel_name=f"service-g{generation}-clean-candidate",
                     )
+                except Exception:
+                    partial_episode_refs.append(("clean-1:incumbent", clean_old.episode_id))
+                    raise
+                if requires_separate_s0_anchor:
+                    try:
+                        initial_s0 = episode_runner(
+                            task_id=self.evolution_task_id, seed=base_seed + 3, customer=None,
+                            service=self.initial_service, panel_name=f"service-g{generation}-clean-initial-s0",
+                        )
+                    except Exception:
+                        partial_episode_refs.extend((
+                            ("clean-1:incumbent", clean_old.episode_id),
+                            ("clean-1:candidate", clean_new.episode_id),
+                        ))
+                        raise
                 else:
                     initial_s0 = clean_old
                 units.append(GateUnit(
@@ -212,6 +270,7 @@ class GatedServiceTransition:
             incumbent, candidate, tuple(units), target_failure=target,
             proposal=proposal, audit=audit, initial_service_strategy_id=s0_id,
             token_counter=self.token_counter, inconclusive=stopped_for_budget is not None,
+            partial_episode_refs=tuple(partial_episode_refs),
         )
         if report.accepted:
             return candidate, report, "accepted: complete target/history/clean/validation gate passed"
@@ -226,8 +285,7 @@ class GatedServiceTransition:
         self,
         failures: tuple[FailureRecord, ...],
         runner: ServiceTransitionEpisodeRunner,
-        incumbent: ServiceStrategy,
-    ) -> tuple[FailureRecord | None, CustomerStrategy | None]:
+    ) -> tuple[FailureRecord | None, CustomerStrategy | None, EpisodeRecord | None]:
         severity_rank = {"critical": 0, "high": 1, "material": 2, "low": 3}
         eligible = sorted(
             (item for item in failures if item.task_id == self.evolution_task_id),
@@ -240,15 +298,21 @@ class GatedServiceTransition:
             if strategy is None:
                 continue
             source = runner.find_failure_episode(failure)
-            if source is not None and (
+            if source is None:
+                continue
+            if (
                 source.task_id != failure.task_id
                 or source.customer_strategy_id != failure.customer_strategy_id
                 or source.service_strategy_id != failure.service_strategy_id
                 or not source.has_attributable_failure_candidate
+                or source.policy_rule_id != failure.signature.policy_rule_id
+                or source.mistake_type != failure.signature.mistake_type
+                or source.workflow_stage != failure.signature.workflow_stage
+                or source.evidence != failure.evidence
             ):
                 continue
-            return failure, strategy
-        return None, None
+            return failure, strategy, source
+        return None, None, None
 
     def _select_historical(
         self,

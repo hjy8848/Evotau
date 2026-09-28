@@ -45,6 +45,9 @@ class CrossPlayCell:
     verified_signature_keys: tuple[str, ...] = ()
     recurrent_signature_keys: tuple[str, ...] = ()
     verified_signature_episode_counts: tuple[tuple[str, int], ...] = ()
+    repeated_write_audited_episodes: int = 0
+    invalid_repeated_write_calls: int = 0
+    repeated_write_audit_coverage: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +238,12 @@ def build_crossplay_matrix(
             }))
             policy_violations = sum(item.policy_violation for item in valid)
             successful_episodes = sum(item.task_success is True for item in valid)
+            repeated_write_audited = tuple(
+                item for item in valid if item.invalid_repeated_write_calls is not None
+            )
+            repeated_write_count = sum(
+                item.invalid_repeated_write_calls or 0 for item in repeated_write_audited
+            )
             cells.append(CrossPlayCell(
                 customer_strategy_id=customer_id,
                 service_strategy_id=service_id,
@@ -264,6 +273,11 @@ def build_crossplay_matrix(
                 verified_signature_keys=verified_signature_keys,
                 recurrent_signature_keys=recurrent_signature_keys,
                 verified_signature_episode_counts=tuple(sorted(signature_episode_counts.items())),
+                repeated_write_audited_episodes=len(repeated_write_audited),
+                invalid_repeated_write_calls=repeated_write_count,
+                repeated_write_audit_coverage=(
+                    len(repeated_write_audited) / len(valid) if valid else None
+                ),
             ))
     return CrossPlayMatrix(
         customer_ids, service_ids, tasks, seed_values, tuple(cells), repaired_keys,
@@ -277,6 +291,7 @@ def _validate_cell(cell: CrossPlayCell) -> None:
         "strategy_not_applicable_episodes", "successful_episodes", "verified_failure_episodes",
         "unique_task_signature_failures", "unique_signatures", "policy_violation_episodes",
         "recurrent_verified_failure_episodes",
+        "repeated_write_audited_episodes", "invalid_repeated_write_calls",
     )
     if any(type(getattr(cell, field)) is not int or getattr(cell, field) < 0 for field in count_fields):
         raise ValueError("cross-play cell counts must be non-negative integers")
@@ -286,6 +301,7 @@ def _validate_cell(cell: CrossPlayCell) -> None:
             or cell.strategy_adherent_episodes + cell.strategy_not_applicable_episodes > cell.valid_episodes
             or cell.successful_episodes > cell.valid_episodes
             or cell.policy_violation_episodes > cell.valid_episodes
+            or cell.repeated_write_audited_episodes > cell.valid_episodes
             or cell.verified_failure_episodes > cell.strategy_adherent_episodes
             or cell.recurrent_verified_failure_episodes > cell.verified_failure_episodes
             or cell.unique_task_signature_failures > cell.verified_failure_episodes):
@@ -301,6 +317,9 @@ def _validate_cell(cell: CrossPlayCell) -> None:
     _require_rate(cell.recurrent_verified_failure_rate,
                   cell.recurrent_verified_failure_episodes,
                   cell.strategy_adherent_episodes, "historical recurrence")
+    _require_rate(cell.repeated_write_audit_coverage,
+                  cell.repeated_write_audited_episodes,
+                  cell.valid_episodes, "repeated-write audit coverage")
 
 
 def _require_rate(rate: float | None, numerator: int, denominator: int, label: str) -> None:

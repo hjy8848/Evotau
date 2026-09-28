@@ -33,6 +33,7 @@ def make_episode(*, episode_id: str, task: str, seed: int, customer: CustomerStr
         strategy_applicable=customer is not None,
         customer_strategy_adherent=True if customer is not None else None,
         policy_violation=failure,
+        invalid_repeated_write_calls=0,
         policy_rule_id=policy if failure else None,
         mistake_type="missing_explicit_confirmation" if failure else None,
         workflow_stage="pre_write" if failure else None,
@@ -149,10 +150,35 @@ def test_rq2_reports_exact_target_effect_gate_acceptance_and_clean_preservation(
     assert report.attributable_failure_rate_change == -1.0
     assert report.task_success_rate_change == 0.5
     assert report.policy_violation_rate_change == -0.5
+    assert report.invalid_repeated_write_call_rate_change == 0.0
+    assert report.incumbent_repeated_write_audit_coverage == 1.0
+    assert report.candidate_repeated_write_audit_coverage == 1.0
     assert report.clean_success_rate_change == 0.0
     assert report.clean_policy_violation_rate_change == 0.0
     assert len(report.gate_report_sha256) == 2
     assert report.to_dict()["panel_scope"] == "target"
+
+    attack_id = customer_strategy_id(attack)
+    partial_incumbent = replace(
+        old_matrix,
+        cells=tuple(
+            replace(cell, repeated_write_audited_episodes=1,
+                    repeated_write_audit_coverage=0.5)
+            if cell.customer_strategy_id == attack_id else cell
+            for cell in old_matrix.cells
+        ),
+    )
+    partial_audit_report = analyze_service_repair_crossplay(
+        partial_incumbent,
+        new_matrix,
+        panel_scope="target",
+        gate_reports=(gate_for(target_failures[0], candidate_service, accepted=True),),
+        target_failures=target_failures,
+        request_budget_cap=100,
+        provider_attempts=90,
+    )
+    assert partial_audit_report.incumbent_repeated_write_audit_coverage < 1.0
+    assert partial_audit_report.invalid_repeated_write_call_rate_change is None
 
     partial_gate = replace(
         gate_for(target_failures[1], candidate_service, accepted=False),

@@ -109,6 +109,8 @@ class GateReport:
     initial_service_strategy_id: str | None = None
     initial_s0_episode_refs: tuple[tuple[str, str], ...] = ()
     inconclusive: bool = False
+    unit_episode_refs: tuple[tuple[str, str, str], ...] = ()
+    partial_episode_refs: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.accepted) is not bool:
@@ -136,6 +138,15 @@ class GateReport:
             raise ValueError("initial S0 anchor references must identify gate units and episodes")
         if len({key for key, _ in self.initial_s0_episode_refs}) != len(self.initial_s0_episode_refs):
             raise ValueError("each clean gate unit must have exactly one initial S0 anchor reference")
+        if (len({key for key, _incumbent, _candidate in self.unit_episode_refs})
+                != len(self.unit_episode_refs)
+                or any(not key or not incumbent or not candidate
+                       for key, incumbent, candidate in self.unit_episode_refs)):
+            raise ValueError("gate episode references must identify each paired unit exactly once")
+        if (len({key for key, _episode in self.partial_episode_refs})
+                != len(self.partial_episode_refs)
+                or any(not key or not episode for key, episode in self.partial_episode_refs)):
+            raise ValueError("partial gate episode references must be unique and non-empty")
         if not self.accepted and self.candidate_strategy is not None:
             raise ValueError("rejected gate report cannot expose an accepted candidate strategy")
 
@@ -143,6 +154,8 @@ class GateReport:
         return {
             "accepted": self.accepted,
             "inconclusive": self.inconclusive,
+            "unit_episode_refs": [list(item) for item in self.unit_episode_refs],
+            "partial_episode_refs": [list(item) for item in self.partial_episode_refs],
             "reasons": list(self.reasons),
             "target_failure_id": self.target_failure_id,
             "proposal": self.proposal.to_dict(),
@@ -206,6 +219,7 @@ def evaluate_repair_gate(
     initial_service_strategy_id: str,
     token_counter: Callable[[str], int],
     inconclusive: bool = False,
+    partial_episode_refs: tuple[tuple[str, str], ...] = (),
 ) -> GateReport:
     """Apply target/replay/clean/validation checks, retaining the initial clean anchor."""
     reasons: list[str] = []
@@ -285,6 +299,11 @@ def evaluate_repair_gate(
             if unit.panel == "clean" and unit.initial_s0 is not None
         ),
         inconclusive=inconclusive,
+        unit_episode_refs=tuple(
+            (unit.key, unit.incumbent.episode_id, unit.candidate.episode_id)
+            for unit in units
+        ),
+        partial_episode_refs=partial_episode_refs,
     )
 
 
@@ -306,6 +325,11 @@ def _check_unit(
         return False, "incomplete or invalid episode evidence"
     if old.customer_valid is not True or new.customer_valid is not True:
         return False, "invalid Customer behavior cannot be used as gate evidence"
+    if (old.invalid_repeated_write_calls is None
+            or new.invalid_repeated_write_calls is None):
+        return False, "independent audit is missing invalid repeated-write counts"
+    if new.invalid_repeated_write_calls > old.invalid_repeated_write_calls:
+        return False, "candidate introduces invalid repeated write calls"
     if unit.panel == "clean":
         if old.strategy_applicable is not False or new.strategy_applicable is not False:
             return False, "clean gate must use the native Customer without an EvoTau strategy overlay"
@@ -313,7 +337,8 @@ def _check_unit(
         if initial is None:
             return False, "clean gate unit is missing its initial S0 success anchor"
         if (initial.status != EpisodeStatus.COMPLETE or initial.customer_valid is not True
-                or initial.strategy_applicable is not False or initial.customer_strategy_adherent is not None):
+                or initial.strategy_applicable is not False or initial.customer_strategy_adherent is not None
+                or initial.invalid_repeated_write_calls is None):
             return False, "initial S0 anchor must be a complete, valid native-Customer episode"
         if (initial.task_id, initial.seed) != (old.task_id, old.seed):
             return False, "initial S0 anchor must match the clean task and seed"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from types import SimpleNamespace
@@ -93,6 +94,9 @@ def configured_runner(tmp_path: Path, monkeypatch, *, audit_provider=None):
     )
     monkeypatch.setattr("evotau.native_runner.build_phase0_orchestrator", fake_builder)
     monkeypatch.setattr("evotau.native_runner.run_with_budget", fake_run_with_budget)
+    policy_path = tmp_path / "unused-pinned-data/tau2/domains/retail/policy.md"
+    policy_path.parent.mkdir(parents=True)
+    policy_path.write_text("fixture Retail policy", encoding="utf-8")
     runner = TauBenchEpisodeRunner(
         manifest=manifest,
         config=config,
@@ -120,6 +124,7 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
             strategy_applicable=True,
             customer_strategy_adherent=True,
             policy_violation=True,
+            invalid_repeated_write_calls=0,
             policy_rule_id="retail.policy:explicit_confirmation",
             mistake_type="missing_explicit_confirmation",
             workflow_stage="pre_write",
@@ -136,6 +141,7 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
     assert record.has_attributable_failure_candidate
     assert record.audit_ref == "human-audit:review-17"
     assert record.tool_calls == 3
+    assert record.invalid_repeated_write_calls == 0
     assert record.raw_review["native_review"] == {"agent_errors": []}
     assert audit_attempts == [True]
     assert budget.snapshot().attempts == 2
@@ -150,7 +156,14 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
     assert trajectory["id"] == record.episode_id
     assert telemetry["budget_delta"]["attempts"] == 2
     assert telemetry["independent_audit"]["verifier_ref"] == record.audit_ref
+    assert telemetry["independent_audit"]["invalid_repeated_write_calls"] == 0
     assert stored_record["trajectory_ref"] == record.trajectory_ref
+    loaded = runner.load_trajectory(record)
+    assert loaded["id"] == record.episode_id
+    assert loaded["task_id"] == record.task_id and loaded["seed"] == record.seed
+    escaped = replace(record, trajectory_ref="../../outside/native-simulation.json")
+    with pytest.raises(ValueError, match="escapes its run directory"):
+        runner.load_trajectory(escaped)
 
 
 def test_native_runner_without_independent_audit_is_uncertain_and_not_fit_eligible(
@@ -177,6 +190,7 @@ def test_native_runner_can_execute_clean_user_without_strategy_overlay(tmp_path:
             strategy_applicable=False,
             customer_strategy_adherent=None,
             policy_violation=False,
+            invalid_repeated_write_calls=0,
         )
 
     runner, _budget, _provider = configured_runner(tmp_path, monkeypatch, audit_provider=audit)
@@ -187,6 +201,7 @@ def test_native_runner_can_execute_clean_user_without_strategy_overlay(tmp_path:
     assert record.customer_strategy_id == customer_strategy_id(None)
     assert record.strategy_applicable is False
     assert record.customer_strategy_adherent is None
+    assert record.invalid_repeated_write_calls == 0
     assert not record.has_attributable_failure_candidate
 
 
@@ -290,6 +305,8 @@ def test_native_runner_loads_pinned_e_and_v_tasks_without_provider_calls(
     )
     assert set(runner.tasks) == {"73", "93"}
     assert {str(task.id) for task in runner.tasks.values()} == {"73", "93"}
+    policy_path = Path(data_dir) / "tau2/domains/retail/policy.md"
+    assert runner.service_policy_text == policy_path.read_text(encoding="utf-8")
     assert budget.snapshot().attempts == 0
 
 

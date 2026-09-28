@@ -46,7 +46,8 @@ def episode(*, name="e1", task="task-1", seed=1, customer="c", service="s",
         episode_id=name, task_id=task, seed=seed, customer_strategy_id=customer,
         service_strategy_id=service, status=status, task_success=success,
         customer_valid=True, strategy_applicable=True, customer_strategy_adherent=True,
-        policy_violation=violation, policy_rule_id="retail.policy:explicit_confirmation",
+        policy_violation=violation, invalid_repeated_write_calls=0,
+        policy_rule_id="retail.policy:explicit_confirmation",
         mistake_type="missing_explicit_confirmation", workflow_stage="pre_write",
         evidence=(EvidenceRef(2, "tool", "write occurred before explicit confirmation"),), tool_calls=calls,
     )
@@ -267,6 +268,7 @@ def test_crossplay_separates_native_clean_customer_from_not_applicable_attack():
         name="attack", customer=customer_strategy_id(adversary),
         service=service_strategy_id(service), violation=False,
     )
+    attack = replace(attack, invalid_repeated_write_calls=None)
     matrix = build_crossplay_matrix(
         (clean, attack), (), customer_strategies=(None, adversary), service_strategies=(service,),
         task_ids=(clean.task_id,), seeds=(clean.seed,),
@@ -276,6 +278,10 @@ def test_crossplay_separates_native_clean_customer_from_not_applicable_attack():
     assert clean_cell.strategy_opportunities == 0
     assert clean_cell.strategy_not_applicable_episodes == 1
     assert clean_cell.strategy_adherence_rate is None
+    assert clean_cell.repeated_write_audit_coverage == 1.0
+    attack_cell = next(item for item in matrix.cells if item.customer_strategy_id == customer_strategy_id(adversary))
+    assert attack_cell.repeated_write_audited_episodes == 0
+    assert attack_cell.repeated_write_audit_coverage == 0.0
 
 
 def test_archive_is_append_only_idempotent_and_deduplicates_representatives(tmp_path):
@@ -462,6 +468,34 @@ def test_service_repair_audit_and_paired_gate():
     assert not rejected_not_applicable.accepted
     assert any("applicable and adherent" in reason for reason in rejected_not_applicable.reasons)
 
+    repeated_write_regression = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        (replace(units[0], candidate=replace(new_target, invalid_repeated_write_calls=1)),
+         *units[1:]),
+        target_failure=failure,
+        proposal=proposal,
+        audit=audit,
+        initial_service_strategy_id=old_service_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert not repeated_write_regression.accepted
+    assert any("invalid repeated write calls" in reason for reason in repeated_write_regression.reasons)
+
+    missing_repeat_audit = evaluate_repair_gate(
+        incumbent,
+        candidate,
+        (replace(units[0], candidate=replace(new_target, invalid_repeated_write_calls=None)),
+         *units[1:]),
+        target_failure=failure,
+        proposal=proposal,
+        audit=audit,
+        initial_service_strategy_id=old_service_id,
+        token_counter=lambda text: len(text.split()),
+    )
+    assert not missing_repeat_audit.accepted
+    assert any("missing invalid repeated-write counts" in reason for reason in missing_repeat_audit.reasons)
+
     incumbent_regressed_clean = replace(old_clean, episode_id="old-clean-regressed", task_success=False)
     candidate_still_regressed_clean = replace(
         new_clean, episode_id="new-clean-regressed", task_success=False,
@@ -609,6 +643,7 @@ def test_manifest_bound_controller_uses_a_fresh_e_seed_for_confirmation(tmp_path
             customer_valid=True,
             customer_strategy_adherent=True,
             policy_violation=is_winner,
+            invalid_repeated_write_calls=0,
             policy_rule_id="retail.policy:explicit_confirmation",
             mistake_type="missing_explicit_confirmation",
             workflow_stage="pre_write",
@@ -691,6 +726,7 @@ def test_two_generation_controller_runs_customer_first_and_commits_no_change(tmp
             task_id=task_id, seed=seed, customer_strategy_id=customer_strategy_id(customer),
             service_strategy_id=service_strategy_id(service), status=EpisodeStatus.COMPLETE,
             task_success=True, customer_valid=True, customer_strategy_adherent=True,
+            invalid_repeated_write_calls=0,
         )
 
     controller = TwoGenerationSmoke(manifest={"fixture": True}, checkpoint_path=str(tmp_path / "run.json"),
@@ -729,6 +765,7 @@ def test_mid_generation_resume_reuses_completed_episode_records(tmp_path):
             task_id=task_id, seed=seed, customer_strategy_id=customer_strategy_id(customer),
             service_strategy_id=service_strategy_id(service), status=EpisodeStatus.COMPLETE,
             task_success=True, customer_valid=True, customer_strategy_adherent=True,
+            invalid_repeated_write_calls=0,
         )
 
     path = str(tmp_path / "resume.json")

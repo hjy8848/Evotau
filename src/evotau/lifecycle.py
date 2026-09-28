@@ -48,6 +48,8 @@ class ServiceTransitionEpisodeRunner:
     remaining_episodes: int
     customer_strategies: Mapping[str, CustomerStrategy]
     episode_history: tuple[EpisodeRecord, ...]
+    service_policy_text: str | None = None
+    trajectory_loader: Callable[[EpisodeRecord], Mapping[str, Any] | None] | None = None
 
     def __post_init__(self) -> None:
         if self.remaining_episodes < 0:
@@ -68,6 +70,11 @@ class ServiceTransitionEpisodeRunner:
 
     def find_failure_episode(self, failure: FailureRecord) -> EpisodeRecord | None:
         return next((item for item in self.episode_history if item.episode_id == failure.episode_id), None)
+
+    def load_trajectory(self, episode: EpisodeRecord) -> Mapping[str, Any] | None:
+        if self.trajectory_loader is None:
+            return None
+        return self.trajectory_loader(episode)
 
     def passing_history(self, *, task_id: str, service_id: str) -> tuple[EpisodeRecord, ...]:
         return tuple(sorted(
@@ -518,6 +525,8 @@ class TwoGenerationSmoke:
                     max(0, self.max_episodes - self.episode_attempts),
                     strategy_snapshots,
                     observed_episodes,
+                    service_policy_text=getattr(self.runner, "service_policy_text", None),
+                    trajectory_loader=getattr(self.runner, "load_trajectory", None),
                 )
                 if self.request_budget is None:
                     proposed, gate, service_note = service_transition(

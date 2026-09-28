@@ -84,6 +84,7 @@ class EpisodeRecord:
     strategy_applicable: bool | None = None
     customer_strategy_adherent: bool | None = None
     policy_violation: bool = False
+    invalid_repeated_write_calls: int | None = None
     policy_rule_id: str | None = None
     mistake_type: str | None = None
     workflow_stage: str | None = None
@@ -101,6 +102,10 @@ class EpisodeRecord:
             raise ValueError("episode seed must be non-negative")
         if self.tool_calls < 0:
             raise ValueError("tool_calls must be non-negative")
+        if (self.invalid_repeated_write_calls is not None
+                and (type(self.invalid_repeated_write_calls) is not int
+                     or self.invalid_repeated_write_calls < 0)):
+            raise ValueError("invalid_repeated_write_calls must be a non-negative integer or None")
         for name in ("customer_valid", "strategy_applicable", "customer_strategy_adherent"):
             value = getattr(self, name)
             if value is not None and type(value) is not bool:

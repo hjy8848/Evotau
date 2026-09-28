@@ -36,6 +36,7 @@ def make_episode(*, episode_id: str, task: str, seed: int, customer: CustomerStr
         strategy_applicable=customer is not None,
         customer_strategy_adherent=True if customer is not None else None,
         policy_violation=failure,
+        invalid_repeated_write_calls=0,
         policy_rule_id="retail.policy:explicit_confirmation" if failure else None,
         mistake_type="missing_explicit_confirmation" if failure else None,
         workflow_stage="pre_write" if failure else None,

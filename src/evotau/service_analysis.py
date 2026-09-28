@@ -30,6 +30,9 @@ class CustomerRepairEffect:
     incumbent_policy_violation_rate: float | None
     candidate_policy_violation_rate: float | None
     policy_violation_rate_change: float | None
+    invalid_repeated_write_call_rate_change: float | None
+    incumbent_repeated_write_audit_coverage: float | None
+    candidate_repeated_write_audit_coverage: float | None
     incumbent_attributable_failure_rate: float | None
     candidate_attributable_failure_rate: float | None
     attributable_failure_rate_change: float | None
@@ -58,6 +61,9 @@ class ServiceRepairAnalysis:
     repair_acceptance_rate: float | None
     task_success_rate_change: float | None
     policy_violation_rate_change: float | None
+    invalid_repeated_write_call_rate_change: float | None
+    incumbent_repeated_write_audit_coverage: float | None
+    candidate_repeated_write_audit_coverage: float | None
     attributable_failure_rate_change: float | None
     target_failure_rate_reduction: float | None
     accepted_target_signature_keys: tuple[str, ...]
@@ -237,6 +243,20 @@ def analyze_service_repair_crossplay(
     new_policy_rate = _weighted_rate(
         sum(cell.policy_violation_episodes for cell in all_new), total_new_valid,
     )
+    old_repeat_audited = sum(cell.repeated_write_audited_episodes for cell in all_old)
+    new_repeat_audited = sum(cell.repeated_write_audited_episodes for cell in all_new)
+    old_repeat_coverage = _rate(old_repeat_audited, total_old_valid)
+    new_repeat_coverage = _rate(new_repeat_audited, total_new_valid)
+    old_repeat_rate = _rate(
+        sum(cell.invalid_repeated_write_calls for cell in all_old), old_repeat_audited,
+    )
+    new_repeat_rate = _rate(
+        sum(cell.invalid_repeated_write_calls for cell in all_new), new_repeat_audited,
+    )
+    repeat_rate_change = (
+        _difference(old_repeat_rate, new_repeat_rate)
+        if old_repeat_coverage == 1.0 and new_repeat_coverage == 1.0 else None
+    )
     old_success_rate = _weighted_rate(sum(cell.successful_episodes for cell in all_old), total_old_valid)
     new_success_rate = _weighted_rate(sum(cell.successful_episodes for cell in all_new), total_new_valid)
     old_clean_success = _rate(clean_old.successful_episodes, clean_old.valid_episodes)
@@ -270,6 +290,9 @@ def analyze_service_repair_crossplay(
         ),
         task_success_rate_change=_difference(old_success_rate, new_success_rate),
         policy_violation_rate_change=_difference(old_policy_rate, new_policy_rate),
+        invalid_repeated_write_call_rate_change=repeat_rate_change,
+        incumbent_repeated_write_audit_coverage=old_repeat_coverage,
+        candidate_repeated_write_audit_coverage=new_repeat_coverage,
         attributable_failure_rate_change=_difference(old_failure_rate, new_failure_rate),
         target_failure_rate_reduction=target_reduction,
         accepted_target_signature_keys=tuple(sorted(accepted_target_keys)),
@@ -323,6 +346,14 @@ def _customer_effect(
     signature_coverage = None
     if panel_scope == "historical" and repaired_keys:
         signature_coverage = len(set(candidate.recurrent_signature_keys)) / len(repaired_keys)
+    old_repeat_rate = (
+        _rate(incumbent.invalid_repeated_write_calls, incumbent.repeated_write_audited_episodes)
+        if incumbent.repeated_write_audit_coverage == 1.0 else None
+    )
+    new_repeat_rate = (
+        _rate(candidate.invalid_repeated_write_calls, candidate.repeated_write_audited_episodes)
+        if candidate.repeated_write_audit_coverage == 1.0 else None
+    )
     return CustomerRepairEffect(
         customer_strategy_id=incumbent.customer_strategy_id,
         incumbent_valid_episodes=incumbent.valid_episodes,
@@ -337,6 +368,9 @@ def _customer_effect(
         policy_violation_rate_change=_difference(
             incumbent.policy_violation_rate, candidate.policy_violation_rate,
         ),
+        invalid_repeated_write_call_rate_change=_difference(old_repeat_rate, new_repeat_rate),
+        incumbent_repeated_write_audit_coverage=incumbent.repeated_write_audit_coverage,
+        candidate_repeated_write_audit_coverage=candidate.repeated_write_audit_coverage,
         incumbent_attributable_failure_rate=old_failure_rate,
         candidate_attributable_failure_rate=new_failure_rate,
         attributable_failure_rate_change=_difference(old_failure_rate, new_failure_rate),
@@ -517,6 +551,8 @@ def analyze_rq2_service_robustness(
         ("clean_policy_violation_rate_change", "clean", "clean_policy_violation_rate_change", "lower"),
         ("validation_success_rate_change", "validation", "task_success_rate_change", "higher"),
         ("validation_policy_violation_rate_change", "validation", "policy_violation_rate_change", "lower"),
+        ("clean_invalid_repeated_write_call_rate_change", "clean",
+         "invalid_repeated_write_call_rate_change", "lower"),
         ("validation_attributable_failure_rate_change", "validation", "attributable_failure_rate_change", "lower"),
         ("heldout_success_rate_change", "heldout", "task_success_rate_change", "higher"),
         ("heldout_policy_violation_rate_change", "heldout", "policy_violation_rate_change", "lower"),
