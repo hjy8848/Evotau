@@ -1027,6 +1027,48 @@ def test_mid_generation_resume_reuses_completed_episode_records(tmp_path):
     assert final.state["episode_attempts"] == 7
 
 
+def test_pilot_controller_runs_three_generations_over_frozen_evolution_panel(tmp_path):
+    customer, service = CustomerStrategy(), ServiceStrategy()
+    calls = []
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        calls.append((task_id, seed, panel_name))
+        return EpisodeRecord(
+            episode_id=f"{panel_name}:{task_id}:{seed}:{customer_strategy_id(customer)}",
+            task_id=task_id, seed=seed, customer_strategy_id=customer_strategy_id(customer),
+            service_strategy_id=service_strategy_id(service), status=EpisodeStatus.COMPLETE,
+            task_success=True, customer_valid=True, customer_strategy_adherent=True,
+            invalid_repeated_write_calls=0,
+        )
+
+    manifest = {"fixture": True, "generations": 3, "max_episodes": 30}
+    controller = TwoGenerationSmoke(
+        manifest=manifest, checkpoint_path=str(tmp_path / "pilot-run.json"),
+        runner=runner, task_ids=("E1", "V1"), evolution_task_ids=("E1", "E2", "E3"),
+        seed=19,
+    )
+    commits = controller.run(customer, service)
+
+    assert [item.generation for item in commits] == [0, 1, 2]
+    assert len(calls) == 27
+    assert {item[0] for item in calls} == {"E1", "E2", "E3"}
+    assert {item[1] for item in calls} == {19, 20, 21}
+    assert all(item[0] != "V1" for item in calls)
+    resumed = TwoGenerationSmoke(
+        manifest=manifest, checkpoint_path=str(tmp_path / "pilot-run.json"),
+        runner=runner, task_ids=("E1", "V1"), evolution_task_ids=("E1", "E2", "E3"),
+        seed=19,
+    )
+    assert resumed.run(customer, service) == commits
+    assert len(calls) == 27
+    final = load_checkpoint(
+        tmp_path / "pilot-run.json",
+        expected_manifest_hash=manifest_fingerprint(manifest),
+    )
+    assert final.state["episode_attempts"] == 27
+    assert len(final.state["commits"]) == 3
+
+
 def test_prepared_generation_resume_reuses_persisted_selection_and_service_decision(tmp_path):
     customer, service = CustomerStrategy(), ServiceStrategy()
     dispatches = 0

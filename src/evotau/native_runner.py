@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .budget import BudgetSnapshot, RequestBudget
-from .checkpoint import manifest_fingerprint
+from .budget import BudgetSnapshot, ModelUsageSnapshot, RequestBudget
+from .checkpoint import load_checkpoint, manifest_fingerprint
 from .customer_evolver import LLMCustomerEvolver, OperatorSelector
-from .manifest import MechanismManifest, sha256_json, write_manifest_once
+from .manifest import MechanismManifest, PilotManifest, sha256_json, write_manifest_once
 from .phase0_run import _load_pinned_tasks, _write_json_once
 from .records import (
     EpisodeRecord,
@@ -84,12 +84,13 @@ class TauBenchEpisodeRunner:
     def __init__(
         self,
         *,
-        manifest: MechanismManifest,
+        manifest: MechanismManifest | PilotManifest,
         config: Mapping[str, Any],
         data_dir: str | Path,
         request_budget: RequestBudget,
         audit_provider: AuditProvider | None = None,
         service_token_counter: Callable[[str], int] | None = None,
+        output_directory: str | Path | None = None,
     ) -> None:
         if not manifest.real_provider_enabled:
             raise RuntimeError("native Phase 3 runs require explicit real_provider_enabled opt-in")
@@ -104,8 +105,12 @@ class TauBenchEpisodeRunner:
             )
         self.model_args = {role: dict(args) for role, args in manifest.role_model_args}
         experiment = config.get("experiment", {})
-        if (experiment.get("id") != manifest.experiment_id
-                or MechanismManifest.from_mapping(config).sha256 != manifest.sha256):
+        config_manifest = (
+            PilotManifest.from_mapping(config)
+            if isinstance(manifest, PilotManifest)
+            else MechanismManifest.from_mapping(config)
+        )
+        if experiment.get("id") != manifest.experiment_id or config_manifest.sha256 != manifest.sha256:
             raise ValueError("run configuration does not match the frozen mechanism manifest")
         self.manifest = manifest
         self.request_budget = request_budget
@@ -116,13 +121,20 @@ class TauBenchEpisodeRunner:
             manifest,
             data_dir=self.data_root,
             task_selection=experiment.get("task_selection", {}),
-            task_ids=(manifest.evolution_task_id, manifest.validation_task_id),
+            task_ids=(
+                manifest.evolution_task_ids + manifest.validation_task_ids + manifest.heldout_task_ids
+                if isinstance(manifest, PilotManifest)
+                else (manifest.evolution_task_id, manifest.validation_task_id)
+            ),
         )
         self.service_policy_text = (
             self.data_root / "tau2/domains/retail/policy.md"
         ).read_text(encoding="utf-8")
-        self.output_directory = Path(manifest.output_path)
+        self.output_directory = Path(output_directory or manifest.output_path)
         self.output_directory.mkdir(parents=True, exist_ok=True)
+        self._completed_episode_cache: dict[
+            str, tuple[EpisodeRecord, BudgetSnapshot, bool]
+        ] = {}
         manifest_path = self.output_directory / "manifest.json"
         if manifest_path.exists():
             saved = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -133,6 +145,7 @@ class TauBenchEpisodeRunner:
             if other_files:
                 raise FileExistsError("refusing to use a non-empty run directory without its manifest")
             write_manifest_once(manifest_path, manifest)
+        self._load_completed_episode_cache()
 
     def __call__(
         self,
@@ -146,11 +159,26 @@ class TauBenchEpisodeRunner:
         try:
             task = self.tasks[str(task_id)]
         except KeyError as exc:
-            raise ValueError(f"task {task_id!r} is outside the frozen E/V task set") from exc
+            raise ValueError(f"task {task_id!r} is outside the frozen task panels") from exc
         if seed < 0 or not panel_name.strip():
             raise ValueError("native episode seed and panel name must be valid")
         if service.rules and self.service_token_counter is None:
             raise ValueError("non-empty ServiceStrategy requires a model-matched token counter")
+        episode_key = {
+            "task_id": str(task_id),
+            "seed": seed,
+            "customer_strategy_id": customer_strategy_id(customer),
+            "service_strategy_id": service_strategy_id(service),
+            "panel_name": panel_name,
+        }
+        episode_key_sha256 = sha256_json(episode_key)
+        cached = self._completed_episode_cache.get(episode_key_sha256)
+        if cached is not None:
+            record, usage, recovered = cached
+            if recovered:
+                self.request_budget.absorb_usage(usage)
+                self._completed_episode_cache[episode_key_sha256] = (record, usage, False)
+            return record
         if self.request_budget.snapshot().remaining <= 0:
             raise RuntimeError("native episode refused before dispatch: request budget is exhausted")
 
@@ -273,9 +301,12 @@ class TauBenchEpisodeRunner:
                 },
             )
             after = self.request_budget.snapshot()
+            usage_delta = _budget_snapshot_difference(after, before)
             _write_json_once(telemetry_path, {
                 "attempt_id": attempt_id,
                 "simulation_id": episode_id,
+                "episode_key": episode_key,
+                "episode_key_sha256": episode_key_sha256,
                 "panel_name": panel_name,
                 "customer_strategy_id": record.customer_strategy_id,
                 "service_strategy_id": record.service_strategy_id,
@@ -286,6 +317,7 @@ class TauBenchEpisodeRunner:
                 "independent_audit": None if audit_result is None else _audit_dict(audit_result),
             })
             _write_json_once(record_path, record.to_dict())
+            self._completed_episode_cache[episode_key_sha256] = (record, usage_delta, False)
             return record
         except Exception as exc:
             after = self.request_budget.snapshot()
@@ -293,6 +325,8 @@ class TauBenchEpisodeRunner:
                 "attempt_id": attempt_id,
                 "task_id": str(task_id),
                 "seed": seed,
+                "episode_key": episode_key,
+                "episode_key_sha256": episode_key_sha256,
                 "panel_name": panel_name,
                 "failure_type": type(exc).__name__,
                 "native_simulation_saved": simulation_path.exists(),
@@ -302,6 +336,54 @@ class TauBenchEpisodeRunner:
                 "budget_delta": _snapshot_delta(before, after),
             })
             raise NativeEpisodeRunError(type(exc).__name__) from exc
+
+    def _load_completed_episode_cache(self) -> None:
+        episode_root = self.output_directory / "episodes"
+        if not episode_root.exists():
+            return
+        if episode_root.is_symlink() or not episode_root.is_dir():
+            raise ValueError("native episode cache root must be a regular directory")
+        for directory in sorted(episode_root.iterdir(), key=lambda item: item.name):
+            if directory.is_symlink() or not directory.is_dir():
+                raise ValueError("native episode cache contains a non-directory entry")
+            incomplete_path = directory / "incomplete-run.json"
+            telemetry_path = directory / "run-telemetry.json"
+            record_path = directory / "episode-record.json"
+            if incomplete_path.exists():
+                if not incomplete_path.is_file():
+                    raise ValueError("native incomplete-run artifact is not a regular file")
+                incomplete = json.loads(incomplete_path.read_text(encoding="utf-8"))
+                key = incomplete.get("episode_key")
+                key_sha = incomplete.get("episode_key_sha256")
+                if isinstance(key, dict) and key_sha == sha256_json(key):
+                    raise ValueError(
+                        "an interrupted native episode has the same frozen task/seed/strategy/panel key; "
+                        "refusing an unregistered duplicate provider run"
+                    )
+                continue
+            if not telemetry_path.exists() and not record_path.exists():
+                continue
+            if (not telemetry_path.is_file() or not record_path.is_file()
+                    or (directory / "native-simulation.json").is_symlink()):
+                raise ValueError("native episode cache has incomplete telemetry or record artifacts")
+            telemetry = json.loads(telemetry_path.read_text(encoding="utf-8"))
+            key = telemetry.get("episode_key")
+            key_sha = telemetry.get("episode_key_sha256")
+            if not isinstance(key, dict) or key_sha != sha256_json(key):
+                continue
+            record = EpisodeRecord.from_dict(json.loads(record_path.read_text(encoding="utf-8")))
+            self.load_trajectory(record)
+            if key_sha in self._completed_episode_cache:
+                raise ValueError("native episode cache contains duplicate frozen episode keys")
+            if (key.get("task_id") != record.task_id or key.get("seed") != record.seed
+                    or key.get("customer_strategy_id") != record.customer_strategy_id
+                    or key.get("service_strategy_id") != record.service_strategy_id):
+                raise ValueError("native episode cache key differs from its saved EpisodeRecord")
+            before = BudgetSnapshot(**telemetry["budget_before"])
+            after = BudgetSnapshot(**telemetry["budget_after"])
+            self._completed_episode_cache[key_sha] = (
+                record, _budget_snapshot_difference(after, before), True,
+            )
 
     def load_trajectory(self, episode: EpisodeRecord) -> Mapping[str, Any] | None:
         """Load one saved native simulation after enforcing output-directory containment."""
@@ -450,6 +532,307 @@ def run_native_phase3(
     )
     _write_or_verify_immutable_json(output_directory / "phase3-result.json", result)
     return commits, final_budget
+
+
+def run_native_pilot(
+    *,
+    config_path: str | Path,
+    data_dir: str | Path,
+    callback_factory: Callable[[Mapping[str, Any], PilotManifest, int], Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Execute one frozen Pilot condition over its independent seed blocks.
+
+    The callback factory constructs per-seed providers without making requests.
+    Each seed gets an isolated checkpoint, archive, trajectory store, and shared
+    request budget. Validation and sealed-H episodes run only after the final
+    generation commits.
+    """
+
+    from .archive import FailureArchive
+    from .customer_evolver import LLMCustomerEvolver
+    from .lifecycle import TwoGenerationSmoke
+    from .manifest import PilotManifest, write_manifest_once
+    from .phase0_run import _parse_strategies, load_config
+
+    config = load_config(config_path)
+    manifest = PilotManifest.from_mapping(config)
+    if not manifest.real_provider_enabled:
+        raise RuntimeError("native Pilot execution is disabled in the frozen manifest")
+    if manifest.condition not in {"adaptive_coevolution", "one_shot_repair"}:
+        raise ValueError(
+            "native multi-generation Pilot supports adaptive_coevolution and one_shot_repair; "
+            "RQ1 static/random conditions use their separately frozen baseline schedules"
+        )
+    final_episode_count = len(manifest.validation_task_ids) + len(manifest.heldout_task_ids)
+    if final_episode_count >= manifest.max_episodes:
+        raise ValueError("Pilot episode cap must leave evolution slots before final V/H")
+    data_root = Path(data_dir).expanduser().resolve()
+    task_selection = config["experiment"]["task_selection"]
+    all_task_ids = (
+        manifest.evolution_task_ids + manifest.validation_task_ids + manifest.heldout_task_ids
+    )
+    _load_pinned_tasks(
+        manifest, data_dir=data_root, task_selection=task_selection, task_ids=all_task_ids,
+    )
+    customer, service = _parse_strategies(config["experiment"])
+    customer = customer or CustomerStrategy()
+    role_models = dict(manifest.role_models)
+    role_model_args = {role: dict(args) for role, args in manifest.role_model_args}
+    from litellm import token_counter
+
+    service_token_counter = lambda text: token_counter(model=role_models["agent"], text=text)
+    output_root = Path(manifest.output_path)
+    output_root.mkdir(parents=True, exist_ok=True)
+    root_manifest_path = output_root / "pilot-manifest.json"
+    if root_manifest_path.exists():
+        if json.loads(root_manifest_path.read_text(encoding="utf-8")) != manifest.to_document():
+            raise ValueError("existing Pilot output belongs to a different frozen manifest")
+    else:
+        write_manifest_once(root_manifest_path, manifest)
+
+    seed_results = []
+    for seed_index, seed in enumerate(manifest.evolution_seeds):
+        # Reserve a disjoint 100k range for every independent seed block. The
+        # current schedule uses relative offsets below 51k for final H.
+        episode_seed_base = (seed_index + 1) * 100_000
+        returned = callback_factory(config, manifest, episode_seed_base)
+        if not isinstance(returned, Mapping):
+            raise TypeError("Pilot callback factory must return a mapping")
+        callbacks = {
+            key: value for key, value in returned.items()
+            if key != "provider_provenance" and value is not None
+        }
+        provider_provenance = returned.get("provider_provenance")
+        allowed = {
+            "audit_provider", "customer_proposal_provider", "service_transition",
+            "service_proposal_provider", "service_repair_audit_provider",
+        }
+        if set(callbacks) - allowed or "audit_provider" not in callbacks:
+            raise ValueError("Pilot callbacks must include audit_provider and use supported roles")
+        if any(not callable(value) for value in callbacks.values()):
+            raise TypeError("every Pilot provider callback must be callable")
+        has_transition = "service_transition" in callbacks
+        repair_keys = {"service_proposal_provider", "service_repair_audit_provider"}
+        has_repair_callbacks = repair_keys <= set(callbacks)
+        if bool(set(callbacks) & repair_keys) != has_repair_callbacks:
+            raise ValueError("Pilot repair proposal and audit callbacks must be supplied together")
+        if has_transition == has_repair_callbacks:
+            raise ValueError("Pilot callbacks require a ServiceTransition or both repair callbacks")
+        if "customer_proposal_provider" not in callbacks:
+            callbacks["customer_proposal_provider"] = LLMCustomerEvolver(
+                model=role_models["evolver"], model_args=role_model_args["evolver"],
+            )
+        if not has_transition:
+            from .service_transition import GatedServiceTransition
+
+            callbacks["service_transition"] = GatedServiceTransition(
+                evolution_task_id=manifest.evolution_task_ids[0],
+                validation_task_id=manifest.validation_task_ids[0],
+                evolution_task_ids=manifest.evolution_task_ids,
+                validation_task_ids=manifest.validation_task_ids,
+                seed=episode_seed_base,
+                initial_service=service,
+                proposal_provider=callbacks.pop("service_proposal_provider"),
+                audit_provider=callbacks.pop("service_repair_audit_provider"),
+                token_counter=service_token_counter,
+            )
+        from .service_baselines import OneShotServiceTransition
+
+        if (manifest.condition == "one_shot_repair"
+                and not isinstance(callbacks["service_transition"], OneShotServiceTransition)):
+            raise ValueError("one_shot_repair Pilot requires the frozen OneShotServiceTransition wrapper")
+        if (manifest.condition == "adaptive_coevolution"
+                and isinstance(callbacks["service_transition"], OneShotServiceTransition)):
+            raise ValueError("adaptive_coevolution Pilot cannot use the one-shot baseline wrapper")
+        run_context = {
+            "schema_version": 1,
+            "pilot_manifest_sha256": manifest.sha256,
+            "condition": manifest.condition,
+            "evolution_seed": seed,
+            "episode_seed_base": episode_seed_base,
+            "task_panels": {
+                "E": list(manifest.evolution_task_ids),
+                "V": list(manifest.validation_task_ids),
+                "H": list(manifest.heldout_task_ids),
+            },
+            "provider_provenance": _provider_provenance_document(
+                provider_provenance,
+                {
+                    "audit_provider": callbacks["audit_provider"],
+                    "customer_proposal_provider": callbacks["customer_proposal_provider"],
+                    "service_transition": callbacks["service_transition"],
+                },
+            ),
+        }
+        seed_dir = output_root / "seed-blocks" / f"seed-{seed}"
+        checkpoint_path = Path(manifest.checkpoint_path) / f"seed-{seed}.json"
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        seed_dir.mkdir(parents=True, exist_ok=True)
+        seed_manifest_path = seed_dir / "manifest.json"
+        if seed_manifest_path.exists():
+            if json.loads(seed_manifest_path.read_text(encoding="utf-8")) != manifest.to_document():
+                raise ValueError("Pilot seed directory belongs to a different frozen manifest")
+        else:
+            write_manifest_once(seed_manifest_path, manifest)
+        context_path = seed_dir / "run-context.json"
+        if context_path.exists():
+            if json.loads(context_path.read_text(encoding="utf-8")) != run_context:
+                raise ValueError("existing Pilot run context differs from frozen providers or design")
+        elif checkpoint_path.exists():
+            raise FileNotFoundError("Pilot seed checkpoint exists without its immutable run context")
+        else:
+            _write_json_once(context_path, run_context)
+        result_path = seed_dir / "pilot-seed-result.json"
+        if result_path.exists():
+            prior = json.loads(result_path.read_text(encoding="utf-8"))
+            _verify_pilot_seed_result(
+                prior, result_path=result_path,
+                expected_manifest_sha256=manifest.sha256,
+                expected_context_sha256=hashlib.sha256(context_path.read_bytes()).hexdigest(),
+                expected_evolution_seed=seed,
+                expected_episode_seed_base=episode_seed_base,
+            )
+            seed_results.append(prior)
+            continue
+
+        budget = RequestBudget(manifest.request_budget_cap)
+        runner = TauBenchEpisodeRunner(
+            manifest=manifest, config=config, data_dir=data_root,
+            request_budget=budget, audit_provider=callbacks["audit_provider"],
+            service_token_counter=service_token_counter, output_directory=seed_dir,
+        )
+        controller = TwoGenerationSmoke(
+            manifest=manifest, checkpoint_path=str(checkpoint_path), runner=runner,
+            task_ids=(manifest.evolution_task_ids[0], manifest.validation_task_ids[0]),
+            evolution_task_ids=manifest.evolution_task_ids, seed=seed,
+            episode_seed_base=episode_seed_base,
+            request_budget=budget, failure_archive=FailureArchive(seed_dir / "archive.sqlite"),
+            manifest_context=run_context,
+            max_episodes=manifest.max_episodes - final_episode_count,
+        )
+        # Pilot has no upstream Phase 0 integration episode. The controller's
+        # manifest_context default reserves one slot for Phase 3's Phase 0
+        # parent, so start Pilot's per-seed episode accounting at zero.
+        controller.episode_attempts = 0
+        commits = controller.run(
+            customer, service,
+            service_transition=callbacks["service_transition"],
+            customer_proposal_provider=callbacks["customer_proposal_provider"],
+            candidates_per_generation=manifest.customer_candidates,
+        )
+        checkpoint_hash = manifest_fingerprint({
+            "manifest": manifest.to_payload(), "run_context": run_context,
+        })
+        checkpoint = load_checkpoint(checkpoint_path, expected_manifest_hash=checkpoint_hash)
+        final_customer = CustomerStrategy(**checkpoint.state["customer"])
+        from .lifecycle import _service_from_dict
+
+        final_service = _service_from_dict(checkpoint.state["service"])
+        final_panels_path = seed_dir / "pilot-final-panels.json"
+        if final_panels_path.exists():
+            final_panels = json.loads(final_panels_path.read_text(encoding="utf-8"))
+            if (final_panels.get("evolution_seed") != seed
+                    or final_panels.get("customer_strategy_id") != customer_strategy_id(final_customer)
+                    or final_panels.get("service_strategy_id") != service_strategy_id(final_service)):
+                raise ValueError("saved Pilot final panels differ from committed generation state")
+            budget.absorb_usage(BudgetSnapshot(**final_panels["provider_budget_delta"]))
+        else:
+            before_final = budget.snapshot()
+            validation_records = []
+            heldout_records = []
+            for index, task_id in enumerate(manifest.validation_task_ids):
+                validation_records.append(runner(
+                    task_id=task_id, seed=episode_seed_base + 40_000 + index,
+                    customer=final_customer, service=final_service,
+                    panel_name=f"pilot-final-validation-{index + 1}",
+                ).to_dict())
+            # Heldout tasks stay sealed until all generations and validation measurements finish.
+            for index, task_id in enumerate(manifest.heldout_task_ids):
+                heldout_records.append(runner(
+                    task_id=task_id, seed=episode_seed_base + 50_000 + index,
+                    customer=final_customer, service=final_service,
+                    panel_name=f"pilot-final-heldout-{index + 1}",
+                ).to_dict())
+            delta = _budget_snapshot_difference(budget.snapshot(), before_final)
+            final_panels = {
+                "schema_version": 1,
+                "evolution_seed": seed,
+                "customer_strategy_id": customer_strategy_id(final_customer),
+                "service_strategy_id": service_strategy_id(final_service),
+                "validation_records": validation_records,
+                "heldout_records": heldout_records,
+                "provider_budget_delta": delta.to_dict(),
+            }
+            _write_json_once(final_panels_path, final_panels)
+
+        episode_records = [
+            EpisodeRecord.from_dict(json.loads(path.read_text(encoding="utf-8"))).to_dict()
+            for path in sorted((seed_dir / "episodes").glob("*/episode-record.json"))
+        ]
+        expected_episode_count = (
+            controller.episode_attempts + len(manifest.validation_task_ids)
+            + len(manifest.heldout_task_ids)
+        )
+        if len(episode_records) != expected_episode_count:
+            raise ValueError("Pilot episode artifacts do not reconcile with run and final-panel counts")
+        seed_result = {
+            "schema_version": 1,
+            "status": "complete",
+            "experiment_id": manifest.experiment_id,
+            "condition": manifest.condition,
+            "manifest_sha256": manifest.sha256,
+            "run_context_sha256": hashlib.sha256(context_path.read_bytes()).hexdigest(),
+            "evolution_seed": seed,
+            "episode_seed_base": episode_seed_base,
+            "generation_commits": [
+                {
+                    "generation": item.generation, "customer_id": item.customer_id,
+                    "service_id": item.service_id, "customer_evolved": item.customer_evolved,
+                    "service_evolved": item.service_evolved, "completed": item.completed,
+                    "note": item.note, "decision_record": item.decision_record,
+                }
+                for item in commits
+            ],
+            "provider_budget": budget.snapshot().to_dict(),
+            "episode_count": len(episode_records),
+            "episodes": episode_records,
+            "final_panels": {
+                "validation": final_panels["validation_records"],
+                "heldout": final_panels["heldout_records"],
+            },
+            "artifacts": _pilot_artifact_rows(seed_dir, checkpoint_path, result_path),
+        }
+        _write_or_verify_immutable_json(result_path, seed_result)
+        seed_results.append(seed_result)
+
+    result_document = {
+        "schema_version": 1,
+        "status": "complete",
+        "experiment_id": manifest.experiment_id,
+        "condition": manifest.condition,
+        "manifest_sha256": manifest.sha256,
+        "evolution_seeds": list(manifest.evolution_seeds),
+        "generation_count": manifest.generations,
+        "seed_blocks": [
+            {
+                "evolution_seed": item["evolution_seed"],
+                "episode_seed_base": item["episode_seed_base"],
+                "result_path": str(
+                    output_root / "seed-blocks" / f"seed-{item['evolution_seed']}"
+                    / "pilot-seed-result.json"
+                ),
+                "result_sha256": hashlib.sha256((
+                    output_root / "seed-blocks" / f"seed-{item['evolution_seed']}"
+                    / "pilot-seed-result.json"
+                ).read_bytes()).hexdigest(),
+                "episode_count": item["episode_count"],
+                "provider_budget": item["provider_budget"],
+            }
+            for item in seed_results
+        ],
+    }
+    _write_or_verify_immutable_json(output_root / "pilot-result.json", result_document)
+    return result_document
 
 
 def _validate_phase0_parent(
@@ -662,6 +1045,32 @@ def _snapshot_delta(before: BudgetSnapshot, after: BudgetSnapshot) -> dict[str, 
     }
 
 
+def _budget_snapshot_difference(after: BudgetSnapshot, before: BudgetSnapshot) -> BudgetSnapshot:
+    """Return a valid additive usage snapshot for a completed native episode."""
+
+    names = (
+        "attempts", "successes", "failures", "denied", "prompt_tokens",
+        "completion_tokens", "usage_responses", "usage_unavailable", "cache_hits",
+    )
+    differences = {name: getattr(after, name) - getattr(before, name) for name in names}
+    if any(value < 0 for value in differences.values()):
+        raise ValueError("native episode budget counters moved backwards")
+    before_models = {row.model_id: row for row in before.model_usage}
+    after_models = {row.model_id: row for row in after.model_usage}
+    model_rows = []
+    for model_id in sorted(set(before_models) | set(after_models)):
+        old = before_models.get(model_id, ModelUsageSnapshot(model_id))
+        new = after_models.get(model_id, ModelUsageSnapshot(model_id))
+        values = {name: getattr(new, name) - getattr(old, name) for name in names}
+        if any(value < 0 for value in values.values()):
+            raise ValueError("native episode model counters moved backwards")
+        if any(values.values()):
+            model_rows.append(ModelUsageSnapshot(model_id=model_id, **values))
+    if not model_rows and any(differences.values()):
+        model_rows.append(ModelUsageSnapshot(model_id="__unattributed__", **differences))
+    return BudgetSnapshot(cap=after.cap, model_usage=tuple(model_rows), **differences)
+
+
 def _phase3_result_document(
     *,
     manifest: MechanismManifest,
@@ -831,6 +1240,76 @@ def _write_or_verify_immutable_json(path: Path, value: Mapping[str, Any]) -> Non
             raise ValueError("existing Phase 3 result artifact is unreadable") from exc
         if existing != dict(value):
             raise ValueError("existing Phase 3 result artifact differs from the resumed run")
+
+
+def _pilot_artifact_rows(
+    seed_directory: Path, checkpoint_path: Path, result_path: Path,
+) -> list[dict[str, str]]:
+    project_root = Path.cwd().resolve()
+    paths = [
+        path for path in seed_directory.rglob("*")
+        if path.is_file()
+        and path.name not in {"archive.sqlite-wal", "archive.sqlite-shm"}
+        and path.resolve() != result_path.resolve()
+    ]
+    paths.append(checkpoint_path)
+    rows = []
+    for path in sorted(set(paths), key=lambda item: str(item)):
+        # SQLite removes transient WAL/SHM sidecars as connections close; they
+        # are not part of the durable archive artifact and may disappear
+        # between rglob() and this validation.
+        if path.name in {"archive.sqlite-wal", "archive.sqlite-shm"}:
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(
+                f"Pilot result cannot index a symlink or non-file artifact: {path} "
+                f"(symlink={path.is_symlink()}, file={path.is_file()})"
+            )
+        resolved = path.resolve()
+        try:
+            relative = resolved.relative_to(project_root).as_posix()
+        except ValueError as exc:
+            raise ValueError("Pilot artifact path escapes the project directory") from exc
+        rows.append({
+            "path": relative,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        })
+    return rows
+
+
+def _verify_pilot_seed_result(
+    result: Mapping[str, Any],
+    *,
+    result_path: Path,
+    expected_manifest_sha256: str,
+    expected_context_sha256: str,
+    expected_evolution_seed: int,
+    expected_episode_seed_base: int,
+) -> None:
+    if (result.get("status") != "complete"
+            or result.get("manifest_sha256") != expected_manifest_sha256
+            or result.get("run_context_sha256") != expected_context_sha256
+            or result.get("evolution_seed") != expected_evolution_seed
+            or result.get("episode_seed_base") != expected_episode_seed_base):
+        raise ValueError("existing Pilot seed result differs from its manifest or provider context")
+    artifacts = result.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise TypeError("Pilot seed result artifact index is missing or malformed")
+    project_root = Path.cwd().resolve()
+    for item in artifacts:
+        if not isinstance(item, Mapping) or set(item) != {"path", "sha256"}:
+            raise ValueError("Pilot seed result contains a malformed artifact row")
+        path = (project_root / str(item["path"])).resolve()
+        try:
+            path.relative_to(project_root)
+        except ValueError as exc:
+            raise ValueError("Pilot seed result artifact escapes the project directory") from exc
+        if path.is_symlink() or not path.is_file():
+            raise FileNotFoundError("Pilot seed result references a missing or unsafe artifact")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
+            raise ValueError("Pilot seed result artifact hash does not match its indexed digest")
+    if result_path.is_symlink() or not result_path.is_file():
+        raise ValueError("Pilot seed result path is not a regular file")
 
 
 def _audit_dict(audit: IndependentEpisodeAudit) -> dict[str, Any]:

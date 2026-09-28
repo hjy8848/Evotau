@@ -25,7 +25,7 @@ from .customer_evolver import (
     OperatorSelector,
     propose_customer_candidates_with_selector,
 )
-from .manifest import MechanismManifest, sha256_json
+from .manifest import MechanismManifest, PilotManifest, sha256_json
 from .mutation import CustomerCandidate, propose_customer_candidates
 from .records import (
     CandidateEvaluation,
@@ -322,17 +322,48 @@ ServiceTransition = Callable[
 
 
 class TwoGenerationSmoke:
-    """A small injectable controller for mechanism testing, not an experiment CLI."""
+    """Injectable generation controller, configured as a two-generation smoke by default.
 
-    def __init__(self, *, manifest: dict | MechanismManifest, checkpoint_path: str,
+    Pilot callers may supply an explicit multi-generation mapping manifest and
+    a larger E task panel. The checked-in Phase 3 ``MechanismManifest`` remains
+    frozen to the original two-generation, one-E/one-V smoke.
+    """
+
+    def __init__(self, *, manifest: dict | MechanismManifest | PilotManifest, checkpoint_path: str,
                  runner: EpisodeRunner, task_ids: tuple[str, ...], seed: int,
                  request_budget: RequestBudget | None = None,
                  failure_archive: FailureArchive | None = None,
-                 manifest_context: Mapping[str, Any] | None = None):
+                 manifest_context: Mapping[str, Any] | None = None,
+                 evolution_task_ids: tuple[str, ...] | None = None,
+                 episode_seed_base: int | None = None,
+                 generations: int | None = None,
+                 max_episodes: int | None = None):
         if len(task_ids) != 2 or task_ids[0] == task_ids[1]:
-            raise ValueError("mechanism smoke requires distinct evolution and validation task IDs")
+            raise ValueError("controller requires distinct primary evolution and validation task IDs")
         self.manifest = manifest
-        manifest_payload = manifest.to_payload() if isinstance(manifest, MechanismManifest) else manifest
+        typed_manifest = isinstance(manifest, (MechanismManifest, PilotManifest))
+        manifest_payload = manifest.to_payload() if typed_manifest else manifest
+        if evolution_task_ids is None:
+            evolution_task_ids = (task_ids[0],)
+        if (not evolution_task_ids or len(set(evolution_task_ids)) != len(evolution_task_ids)
+                or any(not isinstance(item, str) or not item.strip() for item in evolution_task_ids)
+                or task_ids[1] in evolution_task_ids):
+            raise ValueError("controller E task IDs must be unique and disjoint from the primary V task")
+        configured_generations = (
+            manifest.generations if typed_manifest
+            else int(manifest.get("generations", 2))
+        )
+        self.generations = configured_generations if generations is None else generations
+        if type(self.generations) is not int or not 2 <= self.generations <= 8:
+            raise ValueError("controller supports a frozen generation count in the range 2..8")
+        if self.generations != configured_generations:
+            raise ValueError("controller generation count must match the frozen manifest")
+        if task_ids[0] not in evolution_task_ids:
+            raise ValueError("primary E task must belong to the frozen evolution task panel")
+        if isinstance(manifest, MechanismManifest) and self.generations != 2:
+            raise ValueError("the Phase 3 mechanism smoke remains frozen to exactly two generations")
+        if isinstance(manifest, MechanismManifest) and evolution_task_ids != (manifest.evolution_task_id,):
+            raise ValueError("the Phase 3 mechanism smoke remains frozen to one E task")
         self.manifest_context = None if manifest_context is None else dict(manifest_context)
         self.manifest_hash = manifest_fingerprint(
             manifest_payload if self.manifest_context is None else {
@@ -345,13 +376,31 @@ class TwoGenerationSmoke:
                 raise ValueError("controller task IDs and seed must match the frozen manifest")
             if request_budget is not None and request_budget.snapshot().cap != manifest.request_budget_cap:
                 raise ValueError("shared request budget cap must match the frozen manifest")
+        if isinstance(manifest, PilotManifest):
+            if (task_ids != (manifest.evolution_task_ids[0], manifest.validation_task_ids[0])
+                    or evolution_task_ids != manifest.evolution_task_ids
+                    or seed not in manifest.evolution_seeds):
+                raise ValueError("Pilot controller seed and task panels must match the frozen manifest")
+            if request_budget is not None and request_budget.snapshot().cap != manifest.request_budget_cap:
+                raise ValueError("shared request budget cap must match the frozen Pilot manifest")
         self.checkpoint_path = checkpoint_path
         self.runner = runner
         self.task_ids = task_ids
+        self.evolution_task_ids = evolution_task_ids
         self.seed = seed
         self.request_budget = request_budget
         self.failure_archive = failure_archive
-        self.max_episodes = manifest.max_episodes if isinstance(manifest, MechanismManifest) else int(manifest.get("max_episodes", 23))
+        self.episode_seed_base = seed if episode_seed_base is None else episode_seed_base
+        if type(self.episode_seed_base) is not int or self.episode_seed_base < 0:
+            raise ValueError("episode seed base must be a non-negative integer")
+        if isinstance(manifest, MechanismManifest) and self.episode_seed_base != seed:
+            raise ValueError("Phase 3 episode seed base must equal its frozen seed")
+        frozen_episode_cap = (
+            manifest.max_episodes if typed_manifest else int(manifest.get("max_episodes", 23))
+        )
+        self.max_episodes = frozen_episode_cap if max_episodes is None else max_episodes
+        if (type(self.max_episodes) is not int or not 0 <= self.max_episodes <= frozen_episode_cap):
+            raise ValueError("controller episode limit must fit within the frozen manifest cap")
         # Phase 3's 23-episode ceiling includes the Phase 0 integration episode.
         self.episode_attempts = 1 if self.manifest_context is not None else 0
         self._last_customer: CustomerStrategy | None = None
@@ -359,7 +408,8 @@ class TwoGenerationSmoke:
         self._commit_records: list[dict] = []
         self._episode_history: dict[str, EpisodeRecord] = {}
         self._progress: dict | None = None
-        if request_budget is not None and request_budget.snapshot().cap > 1800:
+        if (not isinstance(manifest, PilotManifest) and request_budget is not None
+                and request_budget.snapshot().cap > 1800):
             raise ValueError("Phase 3 shared provider-attempt budget cannot exceed 1,800")
 
     def _run_episode(self, **kwargs) -> EpisodeRecord:
@@ -396,6 +446,7 @@ class TwoGenerationSmoke:
         state = {
             "customer": customer.to_dict(), "service": service.to_dict(),
             "commits": list(self._commit_records), "seed": self.seed,
+            "episode_seed_base": self.episode_seed_base,
             "episode_attempts": self.episode_attempts,
             "run_context": self.manifest_context,
             "request_budget": _budget_snapshot_dict(self.request_budget),
@@ -429,8 +480,8 @@ class TwoGenerationSmoke:
                           service: ServiceStrategy, *, note: str = "",
                           customer_evolved: bool = False, service_evolved: bool = False,
                           decision_record: dict[str, Any] | None = None) -> GenerationCommit:
-        if generation not in (0, 1):
-            raise ValueError("minimal smoke has exactly two generations (0 and 1)")
+        if type(generation) is not int or not 0 <= generation < self.generations:
+            raise ValueError(f"generation must be in the frozen range 0..{self.generations - 1}")
         # The controller accepts only immutable strategy snapshots after their
         # selection/gate decisions have completed.
         commit = GenerationCommit(generation, customer_strategy_id(customer),
@@ -440,6 +491,7 @@ class TwoGenerationSmoke:
             "customer": customer.to_dict(), "service": service.to_dict(),
             "commits": [_commit_to_dict(commit)],
             "seed": self.seed,
+            "episode_seed_base": self.episode_seed_base,
             "episode_attempts": self.episode_attempts,
             "run_context": self.manifest_context,
             "request_budget": _budget_snapshot_dict(self.request_budget),
@@ -492,6 +544,11 @@ class TwoGenerationSmoke:
                 raise ValueError("initial Customer strategy does not match the frozen manifest")
             if sha256_json(service.to_dict()) != self.manifest.service_strategy_sha256:
                 raise ValueError("initial Service strategy does not match the frozen manifest")
+        if isinstance(self.manifest, PilotManifest):
+            if sha256_json(customer.to_dict()) != self.manifest.customer_strategy_sha256:
+                raise ValueError("initial Customer strategy does not match the frozen Pilot manifest")
+            if sha256_json(service.to_dict()) != self.manifest.service_strategy_sha256:
+                raise ValueError("initial Service strategy does not match the frozen Pilot manifest")
         commits: list[GenerationCommit] = []
         start_generation = 0
         if self._last_customer is None:
@@ -501,6 +558,8 @@ class TwoGenerationSmoke:
             restored = load_checkpoint(path, expected_manifest_hash=self.manifest_hash)
             if restored.state.get("run_context") != self.manifest_context:
                 raise ValueError("checkpoint Phase 0 run context does not match the current run")
+            if restored.state.get("episode_seed_base", self.seed) != self.episode_seed_base:
+                raise ValueError("checkpoint episode seed schedule differs from the current seed block")
             self.episode_attempts = int(restored.state.get("episode_attempts", 0))
             self._last_customer = customer = CustomerStrategy(**restored.state["customer"])
             self._last_service = service = _service_from_dict(restored.state["service"])
@@ -532,7 +591,7 @@ class TwoGenerationSmoke:
                 start_generation = max((item["generation"] for item in self._commit_records), default=-1) + 1
         elif isinstance(self.manifest, MechanismManifest) and self.manifest.real_provider_enabled and self.request_budget is None:
             raise ValueError("live provider-enabled mechanism runs require a shared RequestBudget")
-        for generation in range(start_generation, 2):
+        for generation in range(start_generation, self.generations):
             if self._progress is None or self._progress["generation"] != generation:
                 self._progress = {
                     "generation": generation, "customer": customer.to_dict(),
@@ -558,10 +617,10 @@ class TwoGenerationSmoke:
                     raise ValueError("prepared generation differs from its persisted decision record")
                 commits.append(commit)
                 continue
-            seed = self.seed + generation
+            seed = self.episode_seed_base + generation
             round_result = run_customer_round(
                 self._run_episode, incumbent=customer, service=service,
-                task_ids=(self.task_ids[0],), seeds=(seed,), generation=generation,
+                task_ids=self.evolution_task_ids, seeds=(seed,), generation=generation,
                 proposal_seed=self.seed + generation * 1009, count=candidates_per_generation,
                 verification_refs=verification_refs,
                 failure_verifier=failure_verifier,
@@ -570,8 +629,8 @@ class TwoGenerationSmoke:
                     () if self.failure_archive is None
                     else self.failure_archive.active_representatives(current_generation=generation)
                 ),
-                confirmation_task_ids=(self.task_ids[0],),
-                confirmation_seeds=(self.seed + 10_000 + generation,),
+                confirmation_task_ids=self.evolution_task_ids,
+                confirmation_seeds=(self.episode_seed_base + 10_000 + generation,),
                 request_budget=self.request_budget,
                 proposal_provider=customer_proposal_provider,
             )

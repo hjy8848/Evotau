@@ -107,7 +107,7 @@ def configured_runner(tmp_path: Path, monkeypatch, *, audit_provider=None):
     monkeypatch.setattr("evotau.native_runner.build_phase0_orchestrator", fake_builder)
     monkeypatch.setattr("evotau.native_runner.run_with_budget", fake_run_with_budget)
     policy_path = tmp_path / "unused-pinned-data/tau2/domains/retail/policy.md"
-    policy_path.parent.mkdir(parents=True)
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
     policy_path.write_text("fixture Retail policy", encoding="utf-8")
     runner = TauBenchEpisodeRunner(
         manifest=manifest,
@@ -148,6 +148,11 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
         task_id="73", seed=42, customer=CustomerStrategy(),
         service=ServiceStrategy(), panel_name="discovery",
     )
+    cached_record = runner(
+        task_id="73", seed=42, customer=CustomerStrategy(),
+        service=ServiceStrategy(), panel_name="discovery",
+    )
+    assert cached_record == record
     assert record.status == EpisodeStatus.COMPLETE
     assert record.task_success is False
     assert record.has_attributable_failure_candidate
@@ -176,6 +181,16 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
     escaped = replace(record, trajectory_ref="../../outside/native-simulation.json")
     with pytest.raises(ValueError, match="escapes its run directory"):
         runner.load_trajectory(escaped)
+
+    resumed_runner, resumed_budget, _resumed_provider = configured_runner(
+        tmp_path, monkeypatch, audit_provider=audit,
+    )
+    resumed_record = resumed_runner(
+        task_id="73", seed=42, customer=CustomerStrategy(),
+        service=ServiceStrategy(), panel_name="discovery",
+    )
+    assert resumed_record == record
+    assert resumed_budget.snapshot().attempts == 2
 
 
 def test_native_runner_without_independent_audit_is_uncertain_and_not_fit_eligible(

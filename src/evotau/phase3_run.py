@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from .manifest import MechanismManifest, sha256_json
+from .manifest import MechanismManifest, PilotManifest, sha256_json
 from .native_runner import _validate_phase0_parent, run_native_phase3
 from .phase0 import load_config
 from .phase0_run import _load_pinned_tasks
@@ -44,7 +44,8 @@ def load_provider_bundle(
     specification: str,
     *,
     config: Mapping[str, Any],
-    manifest: MechanismManifest,
+    manifest: MechanismManifest | PilotManifest,
+    seed: int | None = None,
 ) -> LoadedProviderBundle:
     """Load a caller-selected `module:factory` returning native runner callbacks."""
 
@@ -59,7 +60,10 @@ def load_provider_bundle(
     if not callable(factory):
         raise ProviderPluginError("provider plugin factory is not callable")
     try:
-        callbacks = factory(config=config, manifest=manifest)
+        factory_args = {"config": config, "manifest": manifest}
+        if seed is not None:
+            factory_args["seed"] = seed
+        callbacks = factory(**factory_args)
     except Exception as exc:
         raise ProviderPluginError(
             f"provider plugin factory failed ({type(exc).__name__})"

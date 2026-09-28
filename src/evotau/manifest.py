@@ -616,7 +616,240 @@ class MechanismManifest:
         return payload
 
 
-def write_manifest_once(path: str | Path, manifest: ExperimentManifest | MechanismManifest) -> Path:
+@dataclass(frozen=True, slots=True)
+class PilotManifest:
+    """Frozen Phase 4 design; one condition is executed over seed blocks."""
+
+    experiment_id: str
+    condition: str
+    upstream_repository: str
+    upstream_commit: str
+    upstream_package_version: str
+    evotau_git_commit: str | None
+    evotau_working_tree_clean: bool | None
+    evotau_source_sha256: str
+    evolution_task_ids: tuple[str, ...]
+    validation_task_ids: tuple[str, ...]
+    heldout_task_ids: tuple[str, ...]
+    excluded_task_ids: tuple[str, ...]
+    evolution_seeds: tuple[int, ...]
+    generations: int
+    customer_candidates: int
+    max_steps: int
+    max_episodes: int
+    request_budget_cap: int
+    provider_retries: int
+    max_concurrency: int
+    real_provider_enabled: bool
+    role_models: tuple[tuple[str, str | None], ...]
+    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...]
+    source_blob_sha1: tuple[tuple[str, str], ...]
+    customer_strategy_sha256: str
+    service_strategy_sha256: str
+    output_path: str
+    checkpoint_path: str
+    domain: str = "retail"
+    communication_mode: str = "half_duplex_text"
+    evaluation_type: str = "all"
+    split_name: str = "train"
+    heldout_split_name: str = "test"
+
+    def __post_init__(self) -> None:
+        _validate_code_provenance(self.evotau_git_commit, self.evotau_source_sha256)
+        if not self.experiment_id.strip():
+            raise ValueError("Pilot experiment ID must not be empty")
+        if self.condition not in {
+            "adaptive_coevolution", "one_shot_repair", "static_customer", "random_mutation",
+        }:
+            raise ValueError("Pilot condition is not a preregistered EvoTau condition")
+        if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
+            TAU_BENCH_REPOSITORY, TAU_BENCH_COMMIT, TAU2_PACKAGE_VERSION,
+        ):
+            raise ValueError("Pilot must use the audited tau-bench pin")
+        if (self.domain, self.communication_mode, self.evaluation_type) != (
+            "retail", "half_duplex_text", "all",
+        ):
+            raise ValueError("Pilot is fixed to Retail half-duplex text with evaluation_type=all")
+        if self.split_name != "train" or self.heldout_split_name != "test":
+            raise ValueError("Pilot E/V/H must use official train/train/test splits")
+        if not 4 <= len(self.evolution_task_ids) <= 6:
+            raise ValueError("Pilot freezes four to six E tasks")
+        if not 2 <= len(self.validation_task_ids) <= 3:
+            raise ValueError("Pilot freezes two to three V tasks")
+        if not 2 <= len(self.heldout_task_ids) <= 3:
+            raise ValueError("Pilot freezes two to three sealed H tasks")
+        groups = self.evolution_task_ids + self.validation_task_ids + self.heldout_task_ids
+        if any(not isinstance(item, str) or not item.strip() for item in groups):
+            raise ValueError("Pilot task IDs must be non-empty strings")
+        if len(groups) != len(set(groups)):
+            raise ValueError("Pilot E/V/H task IDs must be unique and disjoint")
+        if set(groups) & set(self.excluded_task_ids):
+            raise ValueError("Pilot cannot select an excluded task")
+        if len(self.evolution_seeds) < 3 or len(set(self.evolution_seeds)) != len(self.evolution_seeds):
+            raise ValueError("Pilot requires at least three unique evolution seeds")
+        if any(type(seed) is not int or seed < 0 for seed in self.evolution_seeds):
+            raise ValueError("Pilot seeds must be non-negative integers")
+        if self.generations != 3 or self.customer_candidates != 2:
+            raise ValueError("Pilot freezes exactly three generations and K=2 Customer candidates")
+        if self.max_steps != 64:
+            raise ValueError("Pilot max_steps must be 64")
+        if type(self.max_episodes) is not int or self.max_episodes <= 0:
+            raise ValueError("Pilot max_episodes must be a positive per-seed cap")
+        if type(self.request_budget_cap) is not int or self.request_budget_cap <= 0:
+            raise ValueError("Pilot request_budget_cap must be a positive per-seed cap")
+        if self.provider_retries != 0 or self.max_concurrency != 1:
+            raise ValueError("Pilot requires provider retries=0 and concurrency=1")
+        if type(self.real_provider_enabled) is not bool:
+            raise ValueError("Pilot real_provider_enabled must be boolean")
+        models = dict(self.role_models)
+        if tuple(name for name, _ in self.role_models) != MECHANISM_ROLE_NAMES:
+            raise ValueError(f"Pilot models must freeze exactly {sorted(MECHANISM_ROLE_NAMES)}")
+        freeze_role_model_args(
+            _role_model_args_payload(self.role_model_args), roles=MECHANISM_ROLE_NAMES,
+        )
+        if self.real_provider_enabled and any(not models[name] for name in models):
+            raise ValueError("live Pilot requires frozen model IDs for every role")
+        blobs = dict(self.source_blob_sha1)
+        missing = REQUIRED_SOURCE_PATHS - set(blobs)
+        if missing:
+            raise ValueError(f"Pilot is missing upstream source fingerprints: {sorted(missing)}")
+        if any(not re.fullmatch(r"[0-9a-f]{40}", digest) for digest in blobs.values()):
+            raise ValueError("Pilot source fingerprints must be lowercase Git blob SHA-1 values")
+        for name, digest in (
+            ("customer", self.customer_strategy_sha256),
+            ("service", self.service_strategy_sha256),
+        ):
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise ValueError(f"Pilot {name} strategy hash must be a SHA-256 hex digest")
+        _relative_path(self.output_path, "output_path")
+        _relative_path(self.checkpoint_path, "checkpoint_path")
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any]) -> PilotManifest:
+        experiment = raw["experiment"]
+        if experiment.get("phase") != "4-pilot":
+            raise ValueError("PilotManifest requires phase='4-pilot'")
+        selection = experiment["task_selection"]
+        if selection.get("source_split") != "train" or selection.get("heldout_split") != "test":
+            raise ValueError("Pilot task_selection must declare train E/V and test H sources")
+        if any(not isinstance(selection.get(name), list) for name in ("evolution", "validation", "heldout")):
+            raise TypeError("Pilot E/V/H task selections must be JSON arrays")
+        seeds = experiment.get("evolution_seeds")
+        if not isinstance(seeds, list):
+            raise TypeError("Pilot evolution_seeds must be a JSON array")
+        upstream = experiment["upstream"]
+        code = capture_code_provenance()
+        models = experiment.get("models", {})
+        customer = experiment.get("customer_strategy")
+        service = experiment.get("service_strategy") or {"rules": []}
+        return cls(
+            experiment_id=str(experiment["id"]),
+            condition=str(experiment["condition"]),
+            upstream_repository=str(upstream["repository"]),
+            upstream_commit=str(upstream["commit"]),
+            upstream_package_version=str(upstream["package_version"]),
+            evotau_git_commit=code.git_commit,
+            evotau_working_tree_clean=code.working_tree_clean,
+            evotau_source_sha256=code.source_sha256,
+            evolution_task_ids=tuple(str(item) for item in selection["evolution"]),
+            validation_task_ids=tuple(str(item) for item in selection["validation"]),
+            heldout_task_ids=tuple(str(item) for item in selection["heldout"]),
+            excluded_task_ids=tuple(str(item) for item in selection.get("excluded", ())),
+            evolution_seeds=tuple(seeds),
+            generations=int(experiment["generations"]),
+            customer_candidates=int(experiment.get("customer_candidates", 2)),
+            max_steps=int(experiment["max_steps"]),
+            max_episodes=int(experiment["max_episodes"]),
+            request_budget_cap=int(experiment["request_budget_cap"]),
+            provider_retries=int(experiment["provider_retries"]),
+            max_concurrency=int(experiment["max_concurrency"]),
+            real_provider_enabled=experiment["real_provider_enabled"],
+            role_models=_freeze_role_models(models, roles=MECHANISM_ROLE_NAMES),
+            role_model_args=freeze_role_model_args(
+                experiment.get("model_args"), roles=MECHANISM_ROLE_NAMES,
+            ),
+            source_blob_sha1=tuple(sorted(
+                (str(path), str(digest).lower())
+                for path, digest in experiment["source_blob_sha1"].items()
+            )),
+            customer_strategy_sha256=sha256_json(
+                {"disclosure": "minimal_on_request", "request_order": "scenario_order",
+                 "challenge_style": "none", "challenge_budget": 0}
+                if customer is None else customer
+            ),
+            service_strategy_sha256=sha256_json(service),
+            output_path=_relative_path(str(experiment["output_path"]), "output_path"),
+            checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
+            heldout_split_name=str(selection["heldout_split"]),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "experiment_id": self.experiment_id,
+            "phase": "4-pilot",
+            "condition": self.condition,
+            "upstream": {
+                "repository": self.upstream_repository, "commit": self.upstream_commit,
+                "package_version": self.upstream_package_version,
+            },
+            "evotau": {
+                "git_commit": self.evotau_git_commit,
+                "working_tree_clean": self.evotau_working_tree_clean,
+                "source_sha256": self.evotau_source_sha256,
+            },
+            "domain": self.domain, "communication_mode": self.communication_mode,
+            "evaluation_type": self.evaluation_type,
+            "task_selection": {
+                "source_split": self.split_name,
+                "evolution": list(self.evolution_task_ids),
+                "validation": list(self.validation_task_ids),
+                "heldout_split": self.heldout_split_name,
+                "heldout": list(self.heldout_task_ids),
+                "excluded": list(self.excluded_task_ids),
+            },
+            "evolution_seeds": list(self.evolution_seeds),
+            "generations": self.generations,
+            "customer_candidates": self.customer_candidates,
+            "max_steps": self.max_steps,
+            "max_episodes": self.max_episodes,
+            "request_budget_cap": self.request_budget_cap,
+            "provider_retries": self.provider_retries,
+            "max_concurrency": self.max_concurrency,
+            "real_provider_enabled": self.real_provider_enabled,
+            "role_models": dict(self.role_models),
+            "role_model_args": _role_model_args_payload(self.role_model_args),
+            "runtime_arguments": _role_runtime_arguments(self.role_model_args),
+            "source_blob_sha1": dict(self.source_blob_sha1),
+            "failure_taxonomy": [
+                {
+                    "workflow_stage": stage,
+                    "policy_rule_id": policy_rule_id,
+                    "mistake_type": mistake,
+                }
+                for stage, policy_rule_id, mistake in MVP_FAILURE_TAXONOMY
+            ],
+            "failure_taxonomy_sha256": sha256_json(MVP_FAILURE_TAXONOMY),
+            "strategy_sha256": {
+                "customer": self.customer_strategy_sha256,
+                "service": self.service_strategy_sha256,
+            },
+            "paths": {"output": self.output_path, "checkpoint": self.checkpoint_path},
+        }
+
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self.to_payload())
+
+    def to_document(self) -> dict[str, Any]:
+        payload = self.to_payload()
+        payload["manifest_sha256"] = self.sha256
+        return payload
+
+
+def write_manifest_once(
+    path: str | Path,
+    manifest: ExperimentManifest | MechanismManifest | PilotManifest,
+) -> Path:
     """Write an immutable JSON manifest; never replace an existing artifact."""
 
     target = Path(path)

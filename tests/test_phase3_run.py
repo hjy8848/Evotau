@@ -65,6 +65,26 @@ def test_provider_bundle_accepts_independent_audit_and_separate_repair_callbacks
     assert received == [(config, frozen_manifest)]
 
 
+def test_provider_bundle_passes_pilot_seed_to_factory(monkeypatch) -> None:
+    received = []
+
+    def factory(*, config, manifest, seed):
+        received.append((config, manifest, seed))
+        return {
+            "audit_provider": lambda *_args: None,
+            "service_transition": lambda *_args: None,
+        }
+
+    specification = register_plugin(monkeypatch, factory)
+    config = {"experiment": {"id": "pilot-fixture"}}
+    frozen_manifest = manifest()
+    result = load_provider_bundle(
+        specification, config=config, manifest=frozen_manifest, seed=29,
+    )
+    assert result.callbacks["audit_provider"]
+    assert received == [(config, frozen_manifest, 29)]
+
+
 def test_provider_bundle_rejects_missing_audit_and_incomplete_repair_route(monkeypatch) -> None:
     specification = register_plugin(
         monkeypatch,

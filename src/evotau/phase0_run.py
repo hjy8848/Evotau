@@ -14,7 +14,7 @@ from typing import Any
 import yaml
 
 from .budget import RequestBudget
-from .eligibility import validate_smoke_selection
+from .eligibility import validate_generalization_selection, validate_smoke_selection
 from .manifest import ExperimentManifest, verify_git_blob_sha1, write_manifest_once
 from .phase0 import load_config
 from .strategies import CustomerStrategy, ServiceRule, ServiceStrategy
@@ -77,22 +77,51 @@ def _load_pinned_tasks(
         split_data = json.load(handle)
     evolution_ids = getattr(manifest, "evolution_task_ids", None)
     validation_ids = getattr(manifest, "validation_task_ids", None)
+    heldout_ids = getattr(manifest, "heldout_task_ids", ())
     if evolution_ids is None:
         evolution_ids = (manifest.evolution_task_id,)
     if validation_ids is None:
         validation_ids = (manifest.validation_task_id,)
-    validate_smoke_selection(
-        tasks_data,
-        split_data,
-        evolution_task_id=evolution_ids[0],
-        validation_task_id=validation_ids[0],
-        excluded_task_ids=task_selection.get("excluded", ()),
-    )
-    selected = get_tasks(
-        manifest.domain,
-        task_split_name=manifest.split_name,
-        task_ids=list(task_ids),
-    )
+    if heldout_ids:
+        heldout_split = getattr(manifest, "heldout_split_name", "test")
+        validate_generalization_selection(
+            tasks_data,
+            split_data,
+            evolution_task_ids=evolution_ids,
+            validation_task_ids=validation_ids,
+            heldout_task_ids=heldout_ids,
+            excluded_task_ids=task_selection.get("excluded", ()),
+        )
+        train_ids = (*evolution_ids, *validation_ids)
+        train_id_set, heldout_id_set = set(train_ids), set(heldout_ids)
+        heldout_requested = tuple(task_id for task_id in task_ids if task_id in heldout_id_set)
+        train_requested = tuple(task_id for task_id in task_ids if task_id in train_id_set)
+        if set(task_ids) - set(train_ids) - set(heldout_ids):
+            raise ValueError("requested task IDs are outside the frozen Pilot E/V/H panels")
+        selected = []
+        if train_requested:
+            selected.extend(get_tasks(
+                manifest.domain, task_split_name=manifest.split_name,
+                task_ids=list(train_requested),
+            ))
+        if heldout_requested:
+            selected.extend(get_tasks(
+                manifest.domain, task_split_name=heldout_split,
+                task_ids=list(heldout_requested),
+            ))
+    else:
+        validate_smoke_selection(
+            tasks_data,
+            split_data,
+            evolution_task_id=evolution_ids[0],
+            validation_task_id=validation_ids[0],
+            excluded_task_ids=task_selection.get("excluded", ()),
+        )
+        selected = get_tasks(
+            manifest.domain,
+            task_split_name=manifest.split_name,
+            task_ids=list(task_ids),
+        )
     tasks_by_id = {str(task.id): task for task in selected}
     if set(tasks_by_id) != set(task_ids):
         raise ValueError("pinned τ-bench did not return exactly the requested official-train tasks")

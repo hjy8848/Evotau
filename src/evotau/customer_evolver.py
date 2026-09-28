@@ -53,7 +53,7 @@ class CustomerEvolutionProposalInput:
     failure_signals: tuple[EvolutionFailureSignal, ...]
 
     def __post_init__(self) -> None:
-        if self.generation not in (0, 1) or self.proposal_seed < 0:
+        if type(self.generation) is not int or not 0 <= self.generation < 8 or self.proposal_seed < 0:
             raise ValueError("Customer Evolver input has an invalid generation or seed")
         if (len(set(self.allowed_operators)) != len(self.allowed_operators)
                 or not set(self.allowed_operators) <= set(MUTATION_OPERATORS)):

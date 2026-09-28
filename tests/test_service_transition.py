@@ -159,6 +159,33 @@ def test_gated_transition_executes_complete_paired_gate_and_accepts_only_candida
     assert any(call["task_id"] == "V" and call["customer"] == customer for call in calls)
 
 
+def test_gated_transition_pairs_clean_and_validation_units_across_pilot_panels():
+    customer, incumbent, failure, _historical, calls, _proposals, episode_runner, transition = _fixture(
+        remaining_episodes=14,
+    )
+    transition = replace(
+        transition,
+        evolution_task_ids=("E", "E2"),
+        validation_task_ids=("V", "V2"),
+    )
+
+    candidate, report, note = transition(0, customer, incumbent, (failure,), episode_runner, None)
+
+    assert candidate != incumbent
+    assert report is not None and report.accepted
+    assert len(report.unit_episode_refs) == 7
+    clean_tasks = {
+        call["task_id"] for call in calls if "-clean-" in call["panel_name"]
+    }
+    validation_tasks = {
+        call["task_id"] for call in calls if "validation-" in call["panel_name"]
+    }
+    assert clean_tasks == {"E", "E2"}
+    assert validation_tasks == {"V", "V2"}
+    assert len(calls) == 14
+    assert note.startswith("accepted:")
+
+
 def test_gated_transition_preflights_episode_and_request_budgets_before_proposal():
     customer, incumbent, failure, _historical, calls, proposals, runner, transition = _fixture(
         remaining_episodes=9,

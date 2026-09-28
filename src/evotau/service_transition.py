@@ -62,6 +62,8 @@ class GatedServiceTransition:
     proposal_provider: ProposalProvider
     audit_provider: RepairAuditProvider
     token_counter: Callable[[str], int]
+    evolution_task_ids: tuple[str, ...] = ()
+    validation_task_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.evolution_task_id or not self.validation_task_id:
@@ -74,6 +76,23 @@ class GatedServiceTransition:
             raise TypeError("Service transition requires proposal and independent audit providers")
         if not callable(self.token_counter):
             raise TypeError("Service transition requires the frozen agent-model token counter")
+        e_tasks = self.evolution_task_ids or (self.evolution_task_id,)
+        v_tasks = self.validation_task_ids or (self.validation_task_id,)
+        if (not e_tasks or not v_tasks or len(set(e_tasks)) != len(e_tasks)
+                or len(set(v_tasks)) != len(v_tasks)
+                or any(not isinstance(item, str) or not item.strip() for item in (*e_tasks, *v_tasks))
+                or set(e_tasks) & set(v_tasks)):
+            raise ValueError("Service transition requires unique, disjoint frozen E/V task panels")
+        if self.evolution_task_id not in e_tasks or self.validation_task_id not in v_tasks:
+            raise ValueError("primary E/V task IDs must belong to their frozen panels")
+
+    @property
+    def e_tasks(self) -> tuple[str, ...]:
+        return self.evolution_task_ids or (self.evolution_task_id,)
+
+    @property
+    def v_tasks(self) -> tuple[str, ...]:
+        return self.validation_task_ids or (self.validation_task_id,)
 
     def __call__(
         self,
@@ -84,12 +103,12 @@ class GatedServiceTransition:
         episode_runner: ServiceTransitionEpisodeRunner,
         request_budget: RequestBudget | None,
     ) -> tuple[ServiceStrategy, GateReport | None, str]:
-        if generation not in (0, 1):
-            raise ValueError("Phase 3 Service transition supports generations 0 and 1")
+        if type(generation) is not int or not 0 <= generation < 8:
+            raise ValueError("Service transition generation must be in the frozen range 0..7")
         target, target_customer, target_episode = self._select_target(failures, episode_runner)
         if target is None or target_customer is None or target_episode is None:
             return incumbent, None, "inconclusive: no E-task verified failure has resolvable strategy and trajectory evidence"
-        historical = self._select_historical(episode_runner, incumbent)
+        historical = self._select_historical(episode_runner, incumbent, task_id=target.task_id)
         if historical is None:
             return incumbent, None, "inconclusive: no valid incumbent-passing E-task replay is available"
         history_customer = episode_runner.resolve_customer_strategy(historical.customer_strategy_id)
@@ -123,7 +142,10 @@ class GatedServiceTransition:
 
         s0_id = service_strategy_id(self.initial_service)
         requires_separate_s0_anchor = service_strategy_id(incumbent) != s0_id
-        required_episodes = 11 if requires_separate_s0_anchor else 10
+        required_episodes = (
+            6 + 2 * len(self.e_tasks) + 2 * len(self.v_tasks)
+            + (len(self.e_tasks) if requires_separate_s0_anchor else 0)
+        )
         if episode_runner.remaining_episodes < required_episodes:
             return incumbent, None, (
                 "inconclusive: complete Service gate requires "
@@ -187,7 +209,7 @@ class GatedServiceTransition:
         units: list[GateUnit] = []
         partial_episode_refs: list[tuple[str, str]] = []
         stopped_for_budget: Exception | None = None
-        base_seed = self.seed + 20_000 + generation * 16
+        base_seed = self.seed + 20_000 + generation * 1_024
 
         def run_pair(
             *, key: str, panel: str, task_id: str, seed: int,
@@ -227,40 +249,48 @@ class GatedServiceTransition:
                     seed=base_seed + 2, panel_name="historical-1",
                     fixed_customer=history_customer,
                 ))
-                clean_old = episode_runner(
-                    task_id=self.evolution_task_id, seed=base_seed + 3, customer=None,
-                    service=incumbent, panel_name=f"service-g{generation}-clean-incumbent",
-                )
-                try:
-                    clean_new = episode_runner(
-                        task_id=self.evolution_task_id, seed=base_seed + 3, customer=None,
-                        service=candidate, panel_name=f"service-g{generation}-clean-candidate",
+                for index, task_id in enumerate(self.e_tasks, start=1):
+                    unit_key = f"clean-{index}"
+                    panel_suffix = "clean" if len(self.e_tasks) == 1 else unit_key
+                    seed = base_seed + 2 + index
+                    clean_old = episode_runner(
+                        task_id=task_id, seed=seed, customer=None,
+                        service=incumbent,
+                        panel_name=f"service-g{generation}-{panel_suffix}-incumbent",
                     )
-                except Exception:
-                    partial_episode_refs.append(("clean-1:incumbent", clean_old.episode_id))
-                    raise
-                if requires_separate_s0_anchor:
                     try:
-                        initial_s0 = episode_runner(
-                            task_id=self.evolution_task_id, seed=base_seed + 3, customer=None,
-                            service=self.initial_service, panel_name=f"service-g{generation}-clean-initial-s0",
+                        clean_new = episode_runner(
+                            task_id=task_id, seed=seed, customer=None,
+                            service=candidate,
+                            panel_name=f"service-g{generation}-{panel_suffix}-candidate",
                         )
                     except Exception:
-                        partial_episode_refs.extend((
-                            ("clean-1:incumbent", clean_old.episode_id),
-                            ("clean-1:candidate", clean_new.episode_id),
-                        ))
+                        partial_episode_refs.append((f"{unit_key}:incumbent", clean_old.episode_id))
                         raise
-                else:
-                    initial_s0 = clean_old
-                units.append(GateUnit(
-                    "clean-1", "clean", clean_old, clean_new, initial_s0=initial_s0,
-                ))
-                units.append(run_pair(
-                    key="validation-1", panel="validation", task_id=self.validation_task_id,
-                    seed=base_seed + 4, panel_name="validation-1",
-                    fixed_customer=customer,
-                ))
+                    if requires_separate_s0_anchor:
+                        try:
+                            initial_s0 = episode_runner(
+                                task_id=task_id, seed=seed, customer=None,
+                                service=self.initial_service,
+                                panel_name=f"service-g{generation}-{panel_suffix}-initial-s0",
+                            )
+                        except Exception:
+                            partial_episode_refs.extend((
+                                (f"{unit_key}:incumbent", clean_old.episode_id),
+                                (f"{unit_key}:candidate", clean_new.episode_id),
+                            ))
+                            raise
+                    else:
+                        initial_s0 = clean_old
+                    units.append(GateUnit(
+                        unit_key, "clean", clean_old, clean_new, initial_s0=initial_s0,
+                    ))
+                for index, task_id in enumerate(self.v_tasks, start=1):
+                    units.append(run_pair(
+                        key=f"validation-{index}", panel="validation", task_id=task_id,
+                        seed=base_seed + 2 + len(self.e_tasks) + index,
+                        panel_name=f"validation-{index}", fixed_customer=customer,
+                    ))
             except Exception as exc:
                 if not _is_budget_exhaustion(exc):
                     raise
@@ -288,7 +318,7 @@ class GatedServiceTransition:
     ) -> tuple[FailureRecord | None, CustomerStrategy | None, EpisodeRecord | None]:
         severity_rank = {"critical": 0, "high": 1, "material": 2, "low": 3}
         eligible = sorted(
-            (item for item in failures if item.task_id == self.evolution_task_id),
+            (item for item in failures if item.task_id in self.e_tasks),
             key=lambda item: (
                 -item.generation, severity_rank.get(item.severity.lower(), 4), item.failure_id,
             ),
@@ -318,9 +348,11 @@ class GatedServiceTransition:
         self,
         runner: ServiceTransitionEpisodeRunner,
         incumbent: ServiceStrategy,
+        *,
+        task_id: str,
     ) -> EpisodeRecord | None:
         matches = runner.passing_history(
-            task_id=self.evolution_task_id,
+            task_id=task_id,
             service_id=service_strategy_id(incumbent),
         )
         return next((
