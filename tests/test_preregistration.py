@@ -109,6 +109,36 @@ def formal_plan():
     }
 
 
+def power_result(plan, calculation):
+    hypothesis = next(
+        item for item in plan["hypotheses"]
+        if item["hypothesis_id"] == calculation["hypothesis_id"]
+    )
+    alpha = plan["familywise_alpha"]
+    family_size = sum(item["primary"] for item in plan["hypotheses"])
+    return {
+        "schema_version": 1,
+        "status": "target_power_reached",
+        "study_id": plan["study_id"],
+        "hypothesis_id": calculation["hypothesis_id"],
+        "pilot_artifact_sha256": calculation["pilot_artifact_sha256"],
+        "calculator_source_sha256": calculation["calculator_artifact"]["sha256"],
+        "statistical_method": hypothesis["statistical_method"],
+        "alternative": hypothesis["alternative"],
+        "noninferiority_margin": (
+            plan["noninferiority_margins"].get(hypothesis["endpoint"])
+            if hypothesis["alternative"] == "non_inferior" else None
+        ),
+        "target_power": calculation["target_power"],
+        "planned_seed_blocks": calculation["planned_seed_blocks"],
+        "familywise_alpha": alpha,
+        "primary_family_size": family_size,
+        "conservative_per_hypothesis_alpha": alpha / family_size,
+        "planned_power_lower_bound": calculation["target_power"] + 0.01,
+        "power_input_sha256": sha("power-input-" + calculation["hypothesis_id"]),
+    }
+
+
 def test_formal_preregistration_requires_pilot_backed_complete_research_design():
     document = formal_plan()
     raw = json.dumps(document, sort_keys=True).encode()
@@ -177,12 +207,13 @@ def test_formal_preflight_verifies_local_artifact_hashes_and_writes_once(tmp_pat
     for name, reference in document["pilot_artifacts"].items():
         write_ref(reference, name)
     for item in document["power_calculations"]:
-        write_ref(item["calculation_artifact"], "power-" + item["hypothesis_id"])
         write_ref(item["calculator_artifact"], "calculator-" + item["hypothesis_id"])
         rq = next(row["research_question"] for row in document["hypotheses"]
                   if row["hypothesis_id"] == item["hypothesis_id"])
         pilot_name = {"RQ1": "rq1_report", "RQ2": "rq2_report", "RQ3": "rq3_report"}[rq]
         item["pilot_artifact_sha256"] = document["pilot_artifacts"][pilot_name]["sha256"]
+        result = json.dumps(power_result(document, item), sort_keys=True)
+        write_ref(item["calculation_artifact"], result)
 
     plan_path = tmp_path / "formal-plan.json"
     plan_path.write_text(json.dumps(document, sort_keys=True, indent=2), encoding="utf-8")
@@ -196,6 +227,21 @@ def test_formal_preflight_verifies_local_artifact_hashes_and_writes_once(tmp_pat
         main(["--input", str(plan_path), "--output", str(output_path)])
     assert error.value.code == 2
     assert json.loads(output_path.read_text(encoding="utf-8")) == report
+
+    first_calculation = document["power_calculations"][0]
+    calculation_path = tmp_path / first_calculation["calculation_artifact"]["path"]
+    result = json.loads(calculation_path.read_text(encoding="utf-8"))
+    result["planned_seed_blocks"] -= 1
+    raw_result = json.dumps(result, sort_keys=True).encode()
+    calculation_path.write_bytes(raw_result)
+    first_calculation["calculation_artifact"]["sha256"] = hashlib.sha256(raw_result).hexdigest()
+    raw_plan = json.dumps(document, sort_keys=True).encode()
+    with pytest.raises(ValueError, match="planned_seed_blocks differs"):
+        validate_formal_preregistration(
+            document,
+            exact_input_sha256=hashlib.sha256(raw_plan).hexdigest(),
+            artifact_root=tmp_path,
+        )
 
 
 def test_formal_preflight_rejects_artifact_path_escape(tmp_path):

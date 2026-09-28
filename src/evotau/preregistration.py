@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -254,6 +255,10 @@ def validate_formal_preregistration(
     calculations = value["power_calculations"]
     if not isinstance(calculations, list):
         raise TypeError("power_calculations must be a JSON array")
+    primary_ids = {
+        identifier for identifier, (_, primary, *_) in parsed_hypotheses.items() if primary
+    }
+    family_size = len(primary_ids)
     calculation_fields = {
         "hypothesis_id", "pilot_artifact_sha256", "calculator_artifact",
         "calculation_artifact", "target_power", "planned_seed_blocks",
@@ -264,14 +269,14 @@ def validate_formal_preregistration(
         if not isinstance(item, dict) or set(item) != calculation_fields:
             raise ValueError(f"power_calculations[{index}] has missing or unknown fields")
         identifier = item["hypothesis_id"]
-        if identifier not in parsed_hypotheses or not parsed_hypotheses[identifier][1]:
+        if identifier not in primary_ids:
             raise ValueError("power calculations must refer to a primary hypothesis")
         if identifier in seen_power:
             raise ValueError("each primary hypothesis requires exactly one power calculation")
         seen_power.add(identifier)
         if item["pilot_artifact_sha256"] not in pilot_hashes.values():
             raise ValueError("power calculation must cite a listed pilot artifact")
-        _verify_artifact_reference(
+        calculator_digest = _verify_artifact_reference(
             item["calculator_artifact"], f"power_calculations[{index}].calculator_artifact",
             artifact_root,
         )
@@ -285,10 +290,31 @@ def validate_formal_preregistration(
         planned = item["planned_seed_blocks"]
         if type(planned) is not int or planned < 3:
             raise ValueError("planned_seed_blocks must be at least three")
+        if artifact_root is not None:
+            hypothesis = next(
+                row for row in hypotheses if row["hypothesis_id"] == identifier
+            )
+            _verify_power_calculation_result(
+                item["calculation_artifact"], artifact_root,
+                expected={
+                    "study_id": value["study_id"],
+                    "hypothesis_id": identifier,
+                    "pilot_artifact_sha256": item["pilot_artifact_sha256"],
+                    "calculator_source_sha256": calculator_digest,
+                    "statistical_method": hypothesis["statistical_method"],
+                    "alternative": hypothesis["alternative"],
+                    "noninferiority_margin": (
+                        margins.get(hypothesis["endpoint"])
+                        if hypothesis["alternative"] == "non_inferior" else None
+                    ),
+                    "target_power": target,
+                    "planned_seed_blocks": planned,
+                    "familywise_alpha": alpha,
+                    "primary_family_size": family_size,
+                    "conservative_per_hypothesis_alpha": alpha / family_size,
+                },
+            )
         required_power[identifier] = planned
-    primary_ids = {
-        identifier for identifier, (_, primary, *_) in parsed_hypotheses.items() if primary
-    }
     if seen_power != primary_ids:
         raise ValueError("every primary hypothesis needs one pilot-backed power calculation")
     planned_blocks = max(required_power.values())
@@ -386,6 +412,54 @@ def _verify_artifact_reference(value: Any, name: str, root: Path | None) -> str:
         if actual != digest:
             raise ValueError(f"{name} artifact SHA-256 does not match the referenced file")
     return digest
+
+
+def _verify_power_calculation_result(
+    reference: dict[str, Any], root: Path, *, expected: dict[str, Any],
+) -> None:
+    relative = Path(reference["path"])
+    path = (root.resolve() / relative).resolve(strict=True)
+    try:
+        result = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("power calculation artifact must be a readable JSON result") from exc
+    if not isinstance(result, dict):
+        raise TypeError("power calculation artifact must be a JSON object")
+    required = {
+        "schema_version", "status", "power_input_sha256", "planned_power_lower_bound",
+        *expected.keys(),
+    }
+    if not required <= set(result):
+        raise ValueError("power calculation result is missing required preregistration fields")
+    if type(result["schema_version"]) is not int or result["schema_version"] != 1:
+        raise ValueError("unsupported power calculation result schema_version")
+    if result["status"] != "target_power_reached":
+        raise ValueError("power calculation did not reach its registered target power")
+    _require_sha256(result["power_input_sha256"], "power_input_sha256")
+    lower_bound = result["planned_power_lower_bound"]
+    if type(lower_bound) not in {int, float} or not math.isfinite(lower_bound):
+        raise ValueError("power calculation lower confidence bound must be finite")
+    if lower_bound < expected["target_power"] or lower_bound > 1:
+        raise ValueError("power calculation lower confidence bound is below target power")
+    for name, required_value in expected.items():
+        actual = result[name]
+        if name == "conservative_per_hypothesis_alpha":
+            if (type(actual) not in {int, float}
+                    or not math.isclose(actual, required_value, rel_tol=1e-12, abs_tol=1e-15)):
+                raise ValueError("power calculation multiplicity threshold differs from the registered family")
+        elif name in {"target_power", "familywise_alpha"}:
+            if (type(actual) not in {int, float}
+                    or not math.isclose(actual, required_value, rel_tol=1e-12, abs_tol=1e-15)):
+                raise ValueError(f"power calculation {name} differs from preregistration")
+        elif name == "noninferiority_margin":
+            if required_value is None:
+                if actual is not None:
+                    raise ValueError("power calculation includes an unregistered non-inferiority margin")
+            elif (type(actual) not in {int, float}
+                  or not math.isclose(actual, required_value, rel_tol=1e-12, abs_tol=1e-15)):
+                raise ValueError("power calculation margin differs from preregistration")
+        elif actual != required_value:
+            raise ValueError(f"power calculation {name} differs from preregistration")
 
 
 def main(argv: list[str] | None = None) -> int:

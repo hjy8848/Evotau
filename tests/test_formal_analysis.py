@@ -4,7 +4,7 @@ import hashlib
 import json
 
 import pytest
-from test_preregistration import formal_plan, sha
+from test_preregistration import formal_plan, power_result, sha
 
 from evotau.formal_analysis import (
     _holm_adjust,
@@ -205,15 +205,15 @@ def test_formal_analysis_cli_verifies_artifact_hashes_and_writes_once(tmp_path):
         _write_reference(tmp_path, reference, name.encode())
     for item in plan["power_calculations"]:
         calculator = f"calculator-{item['hypothesis_id']}".encode()
-        calculation = f"power-{item['hypothesis_id']}".encode()
         _write_reference(tmp_path, item["calculator_artifact"], calculator)
-        _write_reference(tmp_path, item["calculation_artifact"], calculation)
         rq = next(
             hypothesis["research_question"] for hypothesis in plan["hypotheses"]
             if hypothesis["hypothesis_id"] == item["hypothesis_id"]
         )
         pilot_name = {"RQ1": "rq1_report", "RQ2": "rq2_report", "RQ3": "rq3_report"}[rq]
         item["pilot_artifact_sha256"] = plan["pilot_artifacts"][pilot_name]["sha256"]
+        calculation = json.dumps(power_result(plan, item), sort_keys=True).encode()
+        _write_reference(tmp_path, item["calculation_artifact"], calculation)
 
     plan_path = tmp_path / "formal-plan.json"
     plan_path.write_text(json.dumps(plan, sort_keys=True, indent=2), encoding="utf-8")
