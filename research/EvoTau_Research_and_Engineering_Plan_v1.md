@@ -1486,4 +1486,10 @@ Phase 0 之后的实现顺序建议：
 - 每个 Customer proposal 现在明确记录 `changed_fields`、模板化 `expected_behavioral_effect`、`supporting_failure_ids` 和探索/失败条件 rationale；只有与 mutation operator 相关的失败才标作 failure-conditioned。
 - 新增 archive cap/排序/coverage、replay 幂等和 lineage 测试。当前完整验证为 **52 passed**（含 pinned τ-bench 构造集成），Ruff、compileall、两项 eligibility preflight 和 `git diff --check` 均通过。
 
+**Frozen MVP failure taxonomy update**
+
+- 将计划要求的三类窄范围执行错误固化为 Phase 3 manifest 中的有序 taxonomy，并写入独立 SHA-256：缺失身份核验、写入前缺少明确确认、写入范围不完整。
+- `FailureRecord` 构造与验证拒绝 taxonomy 以外的 signature，`promote_verified_failure` 将此类记录保留为未晋升诊断；因此任意 reviewer 标签不能进入 Customer fitness、Service repair 输入或 replay archive。失败条件 mutation 的支持 ID 仍按对应算子精确关联。
+- 补充 manifest taxonomy/hash 与越界拒绝测试。当前完整验证为 **52 passed**（含 pinned τ-bench 构造集成）；Ruff 与 `git diff --check` 通过。Phase 0/3 preflight 与 compileall 仍需在提交前复验。
+
 **仍未完成的计划项**：Phase 0 Engineering Exit 仍要求一次完整 native `run_simulation`、native scoring/reviewer 和实际 provider-attempt 计数；checked-in Phase 0/3 configs 仍关闭 provider 且未冻结模型 ID，所以此轮没有发出模型请求。live Phase 3 还需要用户侧独立审计与 ServiceTransition 实现，并以同一角色模型的有效 Phase 0 结果启动。10–25 episode research smoke、Pilot/Formal 还依赖前阶段实测成本、归因校准（至少 30 条）、任务池与预注册预算；目前没有运行，也不能由软件测试替代这些研究证据。

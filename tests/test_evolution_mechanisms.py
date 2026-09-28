@@ -15,7 +15,7 @@ from evotau.checkpoint import (
 )
 from evotau.crossplay import build_crossplay_matrix
 from evotau.lifecycle import TwoGenerationSmoke, evaluate_customer_panel
-from evotau.manifest import MechanismManifest
+from evotau.manifest import MVP_FAILURE_TAXONOMY, MechanismManifest, sha256_json
 from evotau.mutation import propose_customer_candidates
 from evotau.phase0 import load_config
 from evotau.records import (
@@ -45,9 +45,9 @@ def episode(*, name="e1", task="task-1", seed=1, customer="c", service="s",
         episode_id=name, task_id=task, seed=seed, customer_strategy_id=customer,
         service_strategy_id=service, status=status, task_success=success,
         customer_valid=True, strategy_applicable=True, customer_strategy_adherent=True,
-        policy_violation=violation, policy_rule_id="policy.refund_limit",
-        mistake_type="unauthorized_refund", workflow_stage="decision",
-        evidence=(EvidenceRef(2, "tool", "refund issued above policy limit"),), tool_calls=calls,
+        policy_violation=violation, policy_rule_id="retail.policy:explicit_confirmation",
+        mistake_type="missing_explicit_confirmation", workflow_stage="pre_write",
+        evidence=(EvidenceRef(2, "tool", "write occurred before explicit confirmation"),), tool_calls=calls,
     )
 
 
@@ -63,6 +63,17 @@ def test_attribution_requires_validity_adherence_evidence_and_independent_audit(
                                         independent_verification_ref="audit:1").promoted
     assert not promote_verified_failure(replace(ep, evidence=()), generation=0,
                                         independent_verification_ref="audit:1").promoted
+    out_of_scope = replace(
+        ep, policy_rule_id="retail.policy:refund_limit", mistake_type="unauthorized_refund",
+        workflow_stage="decision",
+    )
+    decision = promote_verified_failure(
+        out_of_scope, generation=0, independent_verification_ref="audit:out-of-scope",
+    )
+    assert not decision.promoted
+    assert "outside the frozen MVP taxonomy" in decision.reason
+    with pytest.raises(ValueError, match="outside the frozen Retail MVP taxonomy"):
+        FailureRecord.verify(out_of_scope, generation=0, verifier="audit:out-of-scope")
 
 
 def test_customer_mutation_determinism_and_incumbent_retention_on_tie():
@@ -90,8 +101,8 @@ def test_failure_conditioned_mutation_records_exact_supporting_failure_lineage()
     by_operator = {proposal.operator: proposal for proposal in proposals}
     assert by_operator["request_order"].rationale == "failure_conditioned"
     assert by_operator["request_order"].supporting_failure_ids == (failure.failure_id,)
-    assert by_operator["challenge"].supporting_failure_ids == ()
-    assert by_operator["challenge"].rationale == "exploration"
+    assert by_operator["challenge"].supporting_failure_ids == (failure.failure_id,)
+    assert by_operator["challenge"].rationale == "failure_conditioned"
     assert by_operator["disclosure"].supporting_failure_ids == ()
 
 
@@ -289,7 +300,7 @@ def test_archive_active_representatives_are_capped_and_prioritize_recent_recurre
     signatures = []
     for index in range(35):
         signature = FailureSignature(
-            "retail", f"stage-{index}", f"policy.rule-{index}", "policy-mistake",
+            "retail", "pre_write", f"policy.rule-{index}", "missing_explicit_confirmation",
         )
         item = replace(
             base,
@@ -441,7 +452,13 @@ def test_phase3_manifest_freezes_tasks_generations_and_hard_caps():
     assert manifest.validation_task_id == "93"
     assert manifest.max_episodes == 23 and manifest.request_budget_cap == 1800
     assert not manifest.real_provider_enabled
-    assert manifest.sha256 == manifest_fingerprint(manifest.to_payload())
+    payload = manifest.to_payload()
+    assert payload["failure_taxonomy"] == [
+        {"workflow_stage": stage, "mistake_type": mistake}
+        for stage, mistake in MVP_FAILURE_TAXONOMY
+    ]
+    assert payload["failure_taxonomy_sha256"] == sha256_json(MVP_FAILURE_TAXONOMY)
+    assert manifest.sha256 == manifest_fingerprint(payload)
     invalid = load_config(config_path)
     invalid["experiment"]["request_budget_cap"] = 1801
     with pytest.raises(ValueError, match="1800"):
@@ -469,9 +486,9 @@ def test_manifest_bound_controller_uses_a_fresh_e_seed_for_confirmation(tmp_path
             customer_valid=True,
             customer_strategy_adherent=True,
             policy_violation=is_winner,
-            policy_rule_id="policy.confirmation",
-            mistake_type="missing_confirmation",
-            workflow_stage="write_before_confirmation",
+            policy_rule_id="retail.policy:explicit_confirmation",
+            mistake_type="missing_explicit_confirmation",
+            workflow_stage="pre_write",
             evidence=(EvidenceRef(2, "tool", "write occurred before confirmation"),) if is_winner else (),
         )
 

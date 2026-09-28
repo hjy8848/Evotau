@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from .manifest import sha256_json
+from .manifest import MVP_FAILURE_TAXONOMY, sha256_json
 from .strategies import CustomerStrategy, ServiceStrategy
 
 
@@ -59,6 +59,12 @@ class FailureSignature:
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
+
+
+def is_mvp_failure_signature(signature: FailureSignature) -> bool:
+    return signature.domain == "retail" and (
+        signature.workflow_stage, signature.mistake_type
+    ) in MVP_FAILURE_TAXONOMY
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +186,8 @@ class FailureRecord:
             raise ValueError("verified failure must cite trajectory evidence")
         if self.signature.policy_rule_id != self.policy_ref:
             raise ValueError("failure signature and policy reference must agree")
+        if not is_mvp_failure_signature(self.signature):
+            raise ValueError("failure signature is outside the frozen Retail MVP taxonomy")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -211,6 +219,8 @@ class FailureRecord:
         signature = FailureSignature(
             "retail", episode.workflow_stage, episode.policy_rule_id, episode.mistake_type
         )
+        if not is_mvp_failure_signature(signature):
+            raise ValueError("episode failure is outside the frozen Retail MVP taxonomy")
         failure_id = sha256_json(
             {"episode": episode.episode_key, "signature": signature.to_dict(), "verifier": verifier}
         )[:20]

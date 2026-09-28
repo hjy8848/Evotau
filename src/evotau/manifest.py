@@ -14,6 +14,11 @@ from typing import Any
 TAU_BENCH_REPOSITORY = "sierra-research/tau2-bench"
 TAU_BENCH_COMMIT = "b7ea9074c1cba482b30687fecdb5c8425fd6f619"
 TAU2_PACKAGE_VERSION = "1.0.1"
+MVP_FAILURE_TAXONOMY = (
+    ("identity_verification", "missing_identity_verification"),
+    ("pre_write", "missing_explicit_confirmation"),
+    ("pre_write", "incomplete_write_scope"),
+)
 
 REQUIRED_SOURCE_PATHS = frozenset(
     {
@@ -502,6 +507,11 @@ class MechanismManifest:
                 "cache_enabled": False,
                 "review_mode": "full",
             },
+            "failure_taxonomy": [
+                {"workflow_stage": stage, "mistake_type": mistake}
+                for stage, mistake in MVP_FAILURE_TAXONOMY
+            ],
+            "failure_taxonomy_sha256": sha256_json(MVP_FAILURE_TAXONOMY),
             "strategy_sha256": {"customer": self.customer_strategy_sha256,
                                 "service": self.service_strategy_sha256},
             "output_path": self.output_path, "checkpoint_path": self.checkpoint_path,

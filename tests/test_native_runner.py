@@ -119,9 +119,9 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
             strategy_applicable=True,
             customer_strategy_adherent=True,
             policy_violation=True,
-            policy_rule_id="retail.policy:confirmation",
-            mistake_type="missing_confirmation",
-            workflow_stage="before_write",
+            policy_rule_id="retail.policy:explicit_confirmation",
+            mistake_type="missing_explicit_confirmation",
+            workflow_stage="pre_write",
             evidence=(EvidenceRef(2, "tool", "write occurred before confirmation"),),
         )
 
