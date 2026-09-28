@@ -50,10 +50,10 @@ def formal_plan():
         "tau2_commit": "b" * 40,
         "shared_manifest_artifact": {"path": "manifest.json", "sha256": sha("manifest")},
         "pilot_artifacts": pilot_artifacts,
-        "model_ids": {role: f"provider/{role}-model" for role in ("agent", "customer", "reviewer")},
+        "model_ids": {role: f"provider/{role}-model" for role in ("agent", "customer", "reviewer", "evaluator")},
         "sampling_parameters": {
             role: {"temperature": 0.0, "max_tokens": 1000}
-            for role in ("agent", "customer", "reviewer")
+            for role in ("agent", "customer", "reviewer", "evaluator")
         },
         "task_panels": {"E": ["E1", "E2"], "V": ["V1"], "H": ["H1"]},
         "eligibility_review_artifact": {"path": "eligibility-review.json", "sha256": sha("eligibility")},

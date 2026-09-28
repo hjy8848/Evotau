@@ -94,10 +94,13 @@ class TauBenchEpisodeRunner:
         if request_budget.snapshot().cap != manifest.request_budget_cap:
             raise ValueError("shared request budget cap must match the frozen mechanism manifest")
         self.models = dict(manifest.role_models)
-        if set(self.models) != {"agent", "customer", "reviewer"} or any(
+        if set(self.models) != {"agent", "customer", "reviewer", "evaluator"} or any(
             not self.models[name] for name in self.models
         ):
-            raise ValueError("native Phase 3 runs require frozen agent, customer, and reviewer models")
+            raise ValueError(
+                "native Phase 3 runs require frozen agent, customer, reviewer, and evaluator models"
+            )
+        self.model_args = {role: dict(args) for role, args in manifest.role_model_args}
         experiment = config.get("experiment", {})
         if (experiment.get("id") != manifest.experiment_id
                 or MechanismManifest.from_mapping(config).sha256 != manifest.sha256):
@@ -190,6 +193,8 @@ class TauBenchEpisodeRunner:
                 task=task,
                 agent_model=self.models["agent"],
                 customer_model=self.models["customer"],
+                agent_model_args=self.model_args["agent"],
+                customer_model_args=self.model_args["customer"],
                 seed=seed,
                 max_steps=self.manifest.max_steps,
                 customer_strategy=customer,
@@ -201,6 +206,9 @@ class TauBenchEpisodeRunner:
                 orchestrator,
                 self.request_budget,
                 reviewer_model=self.models["reviewer"],
+                reviewer_model_args=self.model_args["reviewer"],
+                evaluator_model=self.models["evaluator"],
+                evaluator_model_args=self.model_args["evaluator"],
                 on_simulation=on_simulation,
                 after_review=after_review,
             )
@@ -326,7 +334,7 @@ def run_native_phase3(
 ) -> tuple[tuple[Any, ...], BudgetSnapshot]:
     """Run the frozen two-generation controller on native τ-bench episodes.
 
-    A config must explicitly enable the provider and freeze all three role
+    A config must explicitly enable the provider and freeze all four role
     models. `audit_provider` must return independent Customer validity,
     adherence, and policy-attribution judgments; the native τ-bench reviewer
     alone is intentionally insufficient. A verified failure requires either
@@ -468,6 +476,10 @@ def _validate_phase0_parent(
         raise ValueError("Phase 0 and Phase 3 pinned source fingerprints differ")
     if phase0_document.get("role_models") != dict(manifest.role_models):
         raise ValueError("Phase 0 and Phase 3 frozen role models differ")
+    if phase0_document.get("role_model_args") != {
+        role: dict(args) for role, args in manifest.role_model_args
+    }:
+        raise ValueError("Phase 0 and Phase 3 frozen role model arguments differ")
     if result.get("task_id") is None or str(result["task_id"]) != manifest.evolution_task_id:
         raise ValueError("Phase 0 result task ID does not match the Phase 3 evolution task")
     simulation_name = result.get("simulation_file")

@@ -59,6 +59,7 @@ def configured_runner(tmp_path: Path, monkeypatch, *, audit_provider=None):
         "agent": "mock-agent",
         "customer": "mock-customer",
         "reviewer": "mock-reviewer",
+        "evaluator": "mock-evaluator",
     }
     experiment["output_path"] = "runs/native-phase3-test"
     experiment["checkpoint_path"] = "checkpoints/native-phase3-test"
@@ -66,6 +67,8 @@ def configured_runner(tmp_path: Path, monkeypatch, *, audit_provider=None):
     budget = RequestBudget(manifest.request_budget_cap)
 
     def fake_builder(**kwargs):
+        assert kwargs["agent_model_args"] == {"temperature": 0.0}
+        assert kwargs["customer_model_args"] == {"temperature": 0.0}
         return SimpleNamespace(
             agent=SimpleNamespace(system_prompt="native policy"),
             user=SimpleNamespace(system_prompt="native guidelines"),
@@ -80,9 +83,13 @@ def configured_runner(tmp_path: Path, monkeypatch, *, audit_provider=None):
     )
 
     def fake_run_with_budget(
-        orchestrator, request_budget, *, reviewer_model, on_simulation, after_review
+        orchestrator, request_budget, *, reviewer_model, reviewer_model_args,
+        evaluator_model, evaluator_model_args, on_simulation, after_review
     ):
         assert reviewer_model == "mock-reviewer"
+        assert reviewer_model_args == {"temperature": 0.0}
+        assert evaluator_model == "mock-evaluator"
+        assert evaluator_model_args == {"temperature": 0.0}
         simulation = FakeSimulation()
         on_simulation(simulation)
         with request_budget.instrument_tau_llm_utils(provider):
@@ -235,7 +242,9 @@ def test_native_phase3_requires_phase0_artifact_and_binds_its_budget(tmp_path: P
     config = load_config(ROOT / "configs/mvp.yaml")
     experiment = config["experiment"]
     experiment["real_provider_enabled"] = True
-    experiment["models"] = {role: "fixture-model" for role in ("agent", "customer", "reviewer")}
+    experiment["models"] = {
+        role: "fixture-model" for role in ("agent", "customer", "reviewer", "evaluator")
+    }
     phase0_manifest = ExperimentManifest.from_mapping(config)
     phase0_dir = tmp_path / "phase0"
     phase0_dir.mkdir()
@@ -271,6 +280,11 @@ def test_native_phase3_requires_phase0_artifact_and_binds_its_budget(tmp_path: P
     assert context["phase0_simulation_id"] == "phase0-sim"
     assert len(context["phase0_result_sha256"]) == 64
 
+    phase3_config["experiment"]["model_args"]["reviewer"]["temperature"] = 0.5
+    changed_phase3_manifest = MechanismManifest.from_mapping(phase3_config)
+    with pytest.raises(ValueError, match="role model arguments differ"):
+        _validate_phase0_parent(result_path, changed_phase3_manifest)
+
     result["status"] = "incomplete"
     result_path.write_text(json.dumps(result), encoding="utf-8")
     with pytest.raises(ValueError, match="completed schema-version-1"):
@@ -295,6 +309,7 @@ def test_native_runner_loads_pinned_e_and_v_tasks_without_provider_calls(
         "agent": "offline-construction-check",
         "customer": "offline-construction-check",
         "reviewer": "offline-construction-check",
+        "evaluator": "offline-construction-check",
     }
     experiment["output_path"] = "runs/native-phase3-integration-test"
     experiment["checkpoint_path"] = "checkpoints/native-phase3-integration-test"
@@ -337,6 +352,7 @@ def test_pinned_native_run_simulation_evaluation_and_review_without_provider_cal
         "agent": "evotau-offline-agent",
         "customer": "evotau-offline-customer",
         "reviewer": "evotau-offline-reviewer",
+        "evaluator": "evotau-offline-evaluator",
     }
     experiment["output_path"] = "runs/pinned-native-offline-e2e"
     manifest = ExperimentManifest.from_mapping(config)
@@ -461,6 +477,7 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
         "agent": "evotau-full-offline-agent",
         "customer": "evotau-full-offline-customer",
         "reviewer": "evotau-full-offline-reviewer",
+        "evaluator": "evotau-full-offline-evaluator",
     }
     phase0_config = load_config(ROOT / "configs/mvp.yaml")
     phase0_config["experiment"]["real_provider_enabled"] = True

@@ -219,6 +219,28 @@ def test_manifest_hash_is_stable_and_writer_refuses_overwrite(tmp_path: Path) ->
         write_manifest_once(target, manifest)
 
 
+def test_manifest_freezes_all_model_roles_and_sampling_arguments() -> None:
+    config = __import__("yaml").safe_load((ROOT / "configs/mvp.yaml").read_text(encoding="utf-8"))
+    manifest = ExperimentManifest.from_mapping(config)
+    assert dict(manifest.role_models) == {
+        "agent": None, "customer": None, "reviewer": None, "evaluator": None,
+    }
+    assert manifest.to_payload()["role_model_args"] == {
+        role: {"temperature": 0.0}
+        for role in ("agent", "customer", "reviewer", "evaluator")
+    }
+    changed = __import__("copy").deepcopy(config)
+    changed["experiment"]["model_args"]["evaluator"]["temperature"] = 0.2
+    assert ExperimentManifest.from_mapping(changed).sha256 != manifest.sha256
+    changed["experiment"]["model_args"]["evaluator"]["temperature"] = 2.1
+    with pytest.raises(ValueError, match="temperature"):
+        ExperimentManifest.from_mapping(changed)
+    changed = __import__("copy").deepcopy(config)
+    del changed["experiment"]["models"]["evaluator"]
+    with pytest.raises(ValueError, match="models must contain exactly"):
+        ExperimentManifest.from_mapping(changed)
+
+
 def test_saved_phase0_manifest_is_self_consistent_and_matches_the_frozen_protocol() -> None:
     config = __import__("yaml").safe_load((ROOT / "configs/mvp.yaml").read_text(encoding="utf-8"))
     manifest = ExperimentManifest.from_mapping(config)
@@ -399,6 +421,7 @@ def test_phase0_run_record_is_immutable_and_contains_budget_and_native_result(
         "agent": "mock-agent",
         "customer": "mock-customer",
         "reviewer": "mock-reviewer",
+        "evaluator": "mock-evaluator",
     }
     experiment["output_path"] = "runs/phase0-record-test"
     manifest = ExperimentManifest.from_mapping(config)
@@ -500,6 +523,7 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
         "agent": "mock-agent",
         "customer": "mock-customer",
         "reviewer": "mock-reviewer",
+        "evaluator": "mock-evaluator",
     }
     manifest = ExperimentManifest.from_mapping(config)
 
@@ -578,14 +602,20 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
     evaluation_module.EvaluationType = SimpleNamespace(ALL=object())
     reviewer_module = add_module("tau2.evaluator.reviewer")
     reviewer_module.ReviewMode = SimpleNamespace(FULL=object())
+    nl_evaluator_module = add_module("tau2.evaluator.evaluator_nl_assertions")
+    nl_evaluator_module.DEFAULT_LLM_NL_ASSERTIONS = "upstream-default-evaluator"
+    nl_evaluator_module.DEFAULT_LLM_NL_ASSERTIONS_ARGS = {"temperature": 0.7}
+    review_judge_module = add_module("tau2.evaluator.review_llm_judge")
+    auth_classifier_module = add_module("tau2.evaluator.auth_classifier")
     review_calls = []
     provider_calls = []
+    generation_calls = []
 
     def review_simulation(**kwargs):
         assert llm_utils.DEFAULT_MAX_RETRIES == 0
         review_calls.append(kwargs)
-        llm_utils.completion(model="mock-reviewer")
-        llm_utils.completion(model="mock-reviewer")
+        review_judge_module.generate(call_name="llm_judge_review")
+        auth_classifier_module.generate(call_name="classify_authentication")
         return {"has_errors": False}, {"classification": "clean"}
 
     reviewer_module.review_simulation = review_simulation
@@ -598,6 +628,21 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
         provider_calls.append(kwargs["model"])
         return {"model": kwargs["model"]}
 
+    def review_generate(*, call_name, **kwargs):
+        generation_calls.append((kwargs["model"], kwargs["temperature"], call_name))
+        return llm_utils.completion(**kwargs, call_name=call_name)
+
+    def evaluator_generate(*, call_name, **kwargs):
+        model_args = dict(nl_evaluator_module.DEFAULT_LLM_NL_ASSERTIONS_ARGS)
+        model_args.update(kwargs)
+        model_args.setdefault("model", nl_evaluator_module.DEFAULT_LLM_NL_ASSERTIONS)
+        generation_calls.append((model_args["model"], model_args["temperature"], call_name))
+        return llm_utils.completion(**model_args, call_name=call_name)
+
+    review_judge_module.generate = review_generate
+    auth_classifier_module.generate = review_generate
+    nl_evaluator_module.generate = evaluator_generate
+
     llm_utils.completion = completion
     sys.modules["tau2.utils"].llm_utils = llm_utils
 
@@ -605,6 +650,7 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
         assert llm_utils.DEFAULT_MAX_RETRIES == 0
         calls.append((orchestrator, evaluation_type))
         llm_utils.completion(model="mock-agent")
+        nl_evaluator_module.generate(call_name="NLAssertionsEvaluator")
         return SimpleNamespace(
             reward=1.0,
             task_id=orchestrator.kwargs["task"].id,
@@ -625,8 +671,12 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
     assert orchestrator.kwargs["max_steps"] == 64
     assert orchestrator.kwargs["agent"].system_prompt == "native retail policy"
     assert orchestrator.kwargs["user"].system_prompt == "native user guidelines and scenario"
-    assert orchestrator.kwargs["agent"].kwargs["llm_args"] == {"num_retries": 0}
-    assert orchestrator.kwargs["user"].kwargs["llm_args"] == {"num_retries": 0}
+    assert orchestrator.kwargs["agent"].kwargs["llm_args"] == {
+        "temperature": 0.0, "num_retries": 0,
+    }
+    assert orchestrator.kwargs["user"].kwargs["llm_args"] == {
+        "temperature": 0.0, "num_retries": 0,
+    }
     assert orchestrator.kwargs["user"].kwargs["tools"] is None
     assert result.reward == 1.0
     assert result.task_id == "73"
@@ -638,9 +688,18 @@ def test_mock_native_runtime_assembles_scores_and_records_under_budget(monkeypat
     assert review_calls[0]["user_info"].global_simulation_guidelines == (
         "native global user guidelines"
     )
-    assert provider_calls == ["mock-agent", "mock-reviewer", "mock-reviewer"]
-    assert budget.snapshot().attempts == 3
-    assert budget.snapshot().successes == 3
+    assert provider_calls == [
+        "mock-agent", "mock-evaluator", "mock-reviewer", "mock-reviewer",
+    ]
+    assert generation_calls == [
+        ("mock-evaluator", 0.0, "NLAssertionsEvaluator"),
+        ("mock-reviewer", 0.0, "llm_judge_review"),
+        ("mock-reviewer", 0.0, "classify_authentication"),
+    ]
+    assert budget.snapshot().attempts == 4
+    assert budget.snapshot().successes == 4
+    assert nl_evaluator_module.DEFAULT_LLM_NL_ASSERTIONS == "upstream-default-evaluator"
+    assert nl_evaluator_module.DEFAULT_LLM_NL_ASSERTIONS_ARGS == {"temperature": 0.7}
     assert llm_utils.DEFAULT_MAX_RETRIES == 5
 
 
