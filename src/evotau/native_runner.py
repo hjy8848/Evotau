@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from .budget import BudgetSnapshot, RequestBudget
+from .checkpoint import manifest_fingerprint
 from .manifest import MechanismManifest, sha256_json, write_manifest_once
 from .phase0_run import _load_pinned_tasks, _write_json_once
 from .records import (
@@ -408,7 +409,16 @@ def run_native_phase3(
         service_transition=service_transition,
         candidates_per_generation=manifest.customer_candidates,
     )
-    return commits, budget.snapshot()
+    final_budget = budget.snapshot()
+    result = _phase3_result_document(
+        manifest=manifest,
+        output_directory=output_directory,
+        run_context=run_context,
+        commits=commits,
+        provider_budget=final_budget,
+    )
+    _write_or_verify_immutable_json(output_directory / "phase3-result.json", result)
+    return commits, final_budget
 
 
 def _validate_phase0_parent(
@@ -513,6 +523,177 @@ def _snapshot_delta(before: BudgetSnapshot, after: BudgetSnapshot) -> dict[str, 
             "completion_tokens", "usage_responses", "usage_unavailable", "cache_hits",
         )
     }
+
+
+def _phase3_result_document(
+    *,
+    manifest: MechanismManifest,
+    output_directory: Path,
+    run_context: Mapping[str, Any],
+    commits: tuple[Any, ...],
+    provider_budget: BudgetSnapshot,
+) -> dict[str, Any]:
+    """Index immutable Phase 3 outputs and bind every artifact by SHA-256."""
+
+    output_root = output_directory.resolve()
+    manifest_path = output_root / "manifest.json"
+    context_path = output_root / "run-context.json"
+    checkpoint_path = Path(manifest.checkpoint_path).expanduser().resolve()
+    for label, path in (
+        ("manifest", manifest_path), ("run context", context_path),
+        ("generation checkpoint", checkpoint_path),
+    ):
+        if not path.is_file():
+            raise FileNotFoundError(f"completed Phase 3 is missing its {label} artifact")
+
+    saved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    saved_context = json.loads(context_path.read_text(encoding="utf-8"))
+    if saved_manifest != manifest.to_document() or saved_context != dict(run_context):
+        raise ValueError("Phase 3 provenance artifacts changed before result indexing")
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint_state = checkpoint.get("state")
+    if not isinstance(checkpoint_state, dict):
+        raise TypeError("Phase 3 generation checkpoint has no state object")
+    expected_checkpoint_hash = manifest_fingerprint({
+        "manifest": manifest.to_payload(), "run_context": dict(run_context),
+    })
+    if checkpoint.get("manifest_hash") != expected_checkpoint_hash:
+        raise ValueError("Phase 3 generation checkpoint is not bound to its manifest and parent run")
+    if checkpoint_state.get("request_budget") != provider_budget.to_dict():
+        raise ValueError("Phase 3 final provider budget differs from the checkpoint")
+    if checkpoint_state.get("commits") != [
+        {
+            "generation": item.generation,
+            "customer_id": item.customer_id,
+            "service_id": item.service_id,
+            "customer_evolved": item.customer_evolved,
+            "service_evolved": item.service_evolved,
+            "completed": item.completed,
+            "note": item.note,
+            "decision_record": item.decision_record,
+        }
+        for item in commits
+    ]:
+        raise ValueError("Phase 3 result commits differ from the generation checkpoint")
+
+    episode_rows: list[dict[str, Any]] = []
+    episode_root = output_root / "episodes"
+    if episode_root.exists():
+        if episode_root.is_symlink() or not episode_root.is_dir():
+            raise ValueError("Phase 3 episode artifact root is not a regular directory")
+        for directory in sorted(episode_root.iterdir(), key=lambda item: item.name):
+            if directory.is_symlink() or not directory.is_dir():
+                raise ValueError("Phase 3 episode artifact directory contains an unexpected entry")
+            names = (
+                "episode-record.json", "run-telemetry.json",
+                "native-simulation.json", "incomplete-run.json",
+            )
+            artifacts: dict[str, dict[str, str]] = {}
+            payloads: dict[str, Any] = {}
+            for name in names:
+                path = directory / name
+                if not path.exists():
+                    continue
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("Phase 3 episode artifact is not a regular file")
+                raw = path.read_bytes()
+                artifacts[name.removesuffix(".json").replace("-", "_")] = {
+                    "path": path.relative_to(output_root).as_posix(),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                }
+                payloads[name] = json.loads(raw.decode("utf-8"))
+
+            record = payloads.get("episode-record.json")
+            telemetry = payloads.get("run-telemetry.json")
+            simulation = payloads.get("native-simulation.json")
+            incomplete = payloads.get("incomplete-run.json")
+            if record is not None:
+                if telemetry is None or simulation is None or incomplete is not None:
+                    raise ValueError("completed episode is missing telemetry/simulation or also marked incomplete")
+                if (
+                    record.get("episode_id") != simulation.get("id")
+                    or record.get("task_id") != str(simulation.get("task_id"))
+                    or record.get("seed") != simulation.get("seed")
+                    or telemetry.get("simulation_id") != record.get("episode_id")
+                ):
+                    raise ValueError("Phase 3 episode record, telemetry and simulation do not agree")
+                status = "complete"
+                episode_id = record["episode_id"]
+                task_id = record["task_id"]
+                seed = record["seed"]
+                panel_name = telemetry.get("panel_name")
+            elif incomplete is not None:
+                status = "incomplete"
+                episode_id = None
+                task_id = incomplete.get("task_id")
+                seed = incomplete.get("seed")
+                panel_name = incomplete.get("panel_name")
+            else:
+                raise ValueError("Phase 3 episode directory has no complete or interruption record")
+            episode_rows.append({
+                "attempt_id": directory.name,
+                "episode_id": episode_id,
+                "task_id": task_id,
+                "seed": seed,
+                "panel_name": panel_name,
+                "status": status,
+                "artifacts": artifacts,
+            })
+
+    completed = sum(row["status"] == "complete" for row in episode_rows)
+    if completed < len(commits):
+        raise ValueError("Phase 3 result has fewer completed native episodes than committed generations")
+    expected_attempts = checkpoint_state.get("episode_attempts")
+    if type(expected_attempts) is not int or expected_attempts < 1:
+        raise ValueError("Phase 3 checkpoint has an invalid episode-attempt count")
+    phase3_attempts = expected_attempts - 1  # The parent Phase 0 episode shares this ceiling.
+    if phase3_attempts != len(episode_rows):
+        raise ValueError("Phase 3 episode artifacts do not reconcile with the checkpoint attempt count")
+    return {
+        "schema_version": 1,
+        "status": "complete",
+        "experiment_id": manifest.experiment_id,
+        "manifest_sha256": manifest.sha256,
+        "run_context_sha256": hashlib.sha256(context_path.read_bytes()).hexdigest(),
+        "phase0_result_sha256": run_context["phase0_result_sha256"],
+        "generation_checkpoint": {
+            "path": manifest.checkpoint_path,
+            "sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
+        },
+        "generation_commits": [
+            {
+                "generation": item.generation,
+                "customer_id": item.customer_id,
+                "service_id": item.service_id,
+                "customer_evolved": item.customer_evolved,
+                "service_evolved": item.service_evolved,
+                "completed": item.completed,
+                "note": item.note,
+                "decision_record": item.decision_record,
+            }
+            for item in commits
+        ],
+        "provider_budget": provider_budget.to_dict(),
+        "episode_attempt_count": len(episode_rows),
+        "phase3_episode_attempt_count": phase3_attempts,
+        "completed_episode_count": completed,
+        "incomplete_episode_count": len(episode_rows) - completed,
+        "episodes": episode_rows,
+    }
+
+
+def _write_or_verify_immutable_json(path: Path, value: Mapping[str, Any]) -> None:
+    """Create an immutable summary, accepting only an identical resume result."""
+
+    try:
+        _write_json_once(path, value)
+    except FileExistsError:
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("existing Phase 3 result artifact is unreadable") from exc
+        if existing != dict(value):
+            raise ValueError("existing Phase 3 result artifact differs from the resumed run")
 
 
 def _audit_dict(audit: IndependentEpisodeAudit) -> dict[str, Any]:

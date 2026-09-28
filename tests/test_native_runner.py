@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import replace
@@ -592,3 +593,43 @@ def test_pinned_native_phase0_to_two_generation_phase3_without_provider_calls(
         "manifest": phase3_manifest.to_payload(), "run_context": run_context,
     })
     assert checkpoint["state"]["request_budget"]["attempts"] == budget.attempts
+
+    result_path = tmp_path / "runs/full-offline-phase3/phase3-result.json"
+    phase3_result_bytes = result_path.read_bytes()
+    phase3_result = json.loads(phase3_result_bytes)
+    assert phase3_result["status"] == "complete"
+    assert phase3_result["manifest_sha256"] == phase3_manifest.sha256
+    assert phase3_result["phase0_result_sha256"] == run_context["phase0_result_sha256"]
+    assert phase3_result["provider_budget"] == budget.to_dict()
+    assert phase3_result["completed_episode_count"] == len(audit_calls)
+    assert phase3_result["incomplete_episode_count"] == 0
+    assert len(phase3_result["generation_commits"]) == 2
+    for episode_item in phase3_result["episodes"]:
+        assert episode_item["status"] == "complete"
+        for artifact in episode_item["artifacts"].values():
+            artifact_path = result_path.parent / artifact["path"]
+            assert hashlib.sha256(artifact_path.read_bytes()).hexdigest() == artifact["sha256"]
+
+    resumed_commits, resumed_budget = run_native_phase3(
+        config_path=phase3_path,
+        data_dir=data_dir,
+        phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
+        audit_provider=audit_provider,
+        service_transition=forbidden_service_transition,
+    )
+    assert resumed_commits == commits
+    assert resumed_budget == budget
+    assert len(calls) == budget.attempts
+    assert result_path.read_bytes() == phase3_result_bytes
+
+    first_record = phase3_result["episodes"][0]["artifacts"]["episode_record"]["path"]
+    artifact_path = result_path.parent / first_record
+    artifact_path.write_text(artifact_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="existing Phase 3 result artifact differs"):
+        run_native_phase3(
+            config_path=phase3_path,
+            data_dir=data_dir,
+            phase0_result_path=tmp_path / "runs/full-offline-phase0/phase0-result.json",
+            audit_provider=audit_provider,
+            service_transition=forbidden_service_transition,
+        )
