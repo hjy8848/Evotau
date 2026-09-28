@@ -379,6 +379,45 @@ def _require_complete_rq3(
     return result
 
 
+def paired_differences_from_report(
+    plan: Mapping[str, Any],
+    hypothesis: Mapping[str, Any],
+    document: Mapping[str, Any],
+) -> tuple[tuple[int, float], ...]:
+    """Derive one hypothesis's ordered Pilot differences from its report."""
+
+    if not isinstance(document, Mapping) or set(document) != {"input_sha256", "analysis"}:
+        raise ValueError("Pilot report must contain input_sha256 and analysis")
+    _sha_value(document["input_sha256"], "Pilot report input_sha256")
+    analysis = document["analysis"]
+    if not isinstance(analysis, Mapping):
+        raise TypeError("Pilot report analysis must be a JSON object")
+    seeds = tuple(plan["independent_evolution_seeds"])
+    expected_seeds = set(seeds)
+    rq = hypothesis["research_question"]
+    endpoint = hypothesis["endpoint"]
+    if rq == "RQ1":
+        values = _require_complete_rq1(analysis, plan, expected_seeds)
+        adaptive = values["adaptive_customer"]
+        baseline = values[hypothesis["contrast"]]
+        return tuple(
+            (seed, adaptive[seed][endpoint] - baseline[seed][endpoint])
+            for seed in seeds
+        )
+    if rq == "RQ2":
+        values = _require_complete_rq2(analysis, plan, expected_seeds)
+        return tuple((seed, values[endpoint][seed]) for seed in seeds)
+    if rq == "RQ3":
+        values = _require_complete_rq3(analysis, plan, expected_seeds)
+        adaptive = values["adaptive_coevolution"]
+        baseline = values[hypothesis["contrast"]]
+        return tuple(
+            (seed, adaptive[seed][endpoint] - baseline[seed][endpoint])
+            for seed in seeds
+        )
+    raise ValueError("Pilot report hypothesis must refer to RQ1, RQ2, or RQ3")
+
+
 def _require_descriptive_status(analysis: Mapping[str, Any], name: str) -> None:
     if analysis.get("status") != "descriptive":
         raise ValueError(f"{name} report is not complete and descriptive")

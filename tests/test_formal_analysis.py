@@ -4,7 +4,7 @@ import hashlib
 import json
 
 import pytest
-from test_preregistration import formal_plan, power_result, sha
+from test_preregistration import formal_plan, power_input_document, power_result, sha
 
 from evotau.formal_analysis import (
     _holm_adjust,
@@ -199,10 +199,18 @@ def _write_reference(root, reference, content):
 
 def test_formal_analysis_cli_verifies_artifact_hashes_and_writes_once(tmp_path):
     plan = formal_plan()
+    pilot_reports = report_bundle(plan)
     _write_reference(tmp_path, plan["shared_manifest_artifact"], b"manifest")
     _write_reference(tmp_path, plan["eligibility_review_artifact"], b"eligibility")
     for name, reference in plan["pilot_artifacts"].items():
-        _write_reference(tmp_path, reference, name.encode())
+        if name == "cost_profile":
+            _write_reference(tmp_path, reference, name.encode())
+        else:
+            report_name = name.removesuffix("_report")
+            _write_reference(
+                tmp_path, reference,
+                json.dumps(pilot_reports[report_name], sort_keys=True).encode(),
+            )
     for item in plan["power_calculations"]:
         calculator = f"calculator-{item['hypothesis_id']}".encode()
         _write_reference(tmp_path, item["calculator_artifact"], calculator)
@@ -212,6 +220,10 @@ def test_formal_analysis_cli_verifies_artifact_hashes_and_writes_once(tmp_path):
         )
         pilot_name = {"RQ1": "rq1_report", "RQ2": "rq2_report", "RQ3": "rq3_report"}[rq]
         item["pilot_artifact_sha256"] = plan["pilot_artifacts"][pilot_name]["sha256"]
+        power_input = json.dumps(
+            power_input_document(plan, item, pilot_reports[rq.lower()]), sort_keys=True,
+        ).encode()
+        _write_reference(tmp_path, item["pilot_power_input_artifact"], power_input)
         calculation = json.dumps(power_result(plan, item), sort_keys=True).encode()
         _write_reference(tmp_path, item["calculation_artifact"], calculation)
 

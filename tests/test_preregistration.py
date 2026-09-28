@@ -73,6 +73,10 @@ def formal_plan():
                     {"RQ1": "rq1_report", "RQ2": "rq2_report", "RQ3": "rq3_report"}
                     [item["research_question"]]
                 ]["sha256"],
+                "pilot_power_input_artifact": {
+                    "path": f"power-inputs/{item['hypothesis_id']}.json",
+                    "sha256": sha("power-input-" + item["hypothesis_id"]),
+                },
                 "calculator_artifact": {
                     "path": f"calculators/{item['hypothesis_id']}.py",
                     "sha256": sha("calculator-" + item["hypothesis_id"]),
@@ -82,6 +86,8 @@ def formal_plan():
                     "sha256": sha("power-" + item["hypothesis_id"]),
                 },
                 "target_power": 0.8,
+                "minimum_relevant_effect": 0.5,
+                "maximum_seed_blocks": 6,
                 "planned_seed_blocks": 6,
             }
             for item in hypotheses
@@ -122,6 +128,7 @@ def power_result(plan, calculation):
         "study_id": plan["study_id"],
         "hypothesis_id": calculation["hypothesis_id"],
         "pilot_artifact_sha256": calculation["pilot_artifact_sha256"],
+        "power_input_sha256": calculation["pilot_power_input_artifact"]["sha256"],
         "calculator_source_sha256": calculation["calculator_artifact"]["sha256"],
         "statistical_method": hypothesis["statistical_method"],
         "permutation_seed": hypothesis["permutation_seed"],
@@ -132,12 +139,49 @@ def power_result(plan, calculation):
             if hypothesis["alternative"] == "non_inferior" else None
         ),
         "target_power": calculation["target_power"],
+        "minimum_relevant_effect_null_adjusted": calculation["minimum_relevant_effect"],
+        "maximum_seed_blocks": calculation["maximum_seed_blocks"],
         "planned_seed_blocks": calculation["planned_seed_blocks"],
         "familywise_alpha": alpha,
         "primary_family_size": family_size,
         "conservative_per_hypothesis_alpha": alpha / family_size,
         "planned_power_lower_bound": calculation["target_power"] + 0.01,
-        "power_input_sha256": sha("power-input-" + calculation["hypothesis_id"]),
+    }
+
+
+def power_input_document(plan, calculation, pilot_report):
+    from evotau.formal_analysis import paired_differences_from_report
+
+    hypothesis = next(
+        item for item in plan["hypotheses"]
+        if item["hypothesis_id"] == calculation["hypothesis_id"]
+    )
+    return {
+        "schema_version": 1,
+        "study_id": plan["study_id"],
+        "hypothesis_id": calculation["hypothesis_id"],
+        "pilot_artifact_sha256": calculation["pilot_artifact_sha256"],
+        "pilot_seed_blocks": [
+            {"evolution_seed": seed, "difference": difference}
+            for seed, difference in paired_differences_from_report(
+                plan, hypothesis, pilot_report,
+            )
+        ],
+        "alternative": hypothesis["alternative"],
+        "noninferiority_margin": (
+            plan["noninferiority_margins"].get(hypothesis["endpoint"])
+            if hypothesis["alternative"] == "non_inferior" else None
+        ),
+        "minimum_relevant_effect": calculation["minimum_relevant_effect"],
+        "familywise_alpha": plan["familywise_alpha"],
+        "primary_family_size": sum(item["primary"] for item in plan["hypotheses"]),
+        "target_power": calculation["target_power"],
+        "maximum_seed_blocks": calculation["maximum_seed_blocks"],
+        "simulation_replicates": 1_000,
+        "simulation_seed": 313,
+        "statistical_method": hypothesis["statistical_method"],
+        "permutation_seed": hypothesis["permutation_seed"],
+        "permutation_replicates": hypothesis["permutation_replicates"],
     }
 
 
@@ -196,6 +240,9 @@ def test_formal_preregistration_rejects_duplicate_or_unsupported_primary_contras
 
 def test_formal_preflight_verifies_local_artifact_hashes_and_writes_once(tmp_path, capsys):
     document = formal_plan()
+    from test_formal_analysis import report_bundle
+
+    reports = report_bundle(document)
 
     def write_ref(reference, content):
         path = tmp_path / reference["path"]
@@ -207,13 +254,21 @@ def test_formal_preflight_verifies_local_artifact_hashes_and_writes_once(tmp_pat
     write_ref(document["shared_manifest_artifact"], "manifest")
     write_ref(document["eligibility_review_artifact"], "eligibility")
     for name, reference in document["pilot_artifacts"].items():
-        write_ref(reference, name)
+        if name == "cost_profile":
+            write_ref(reference, name)
+        else:
+            report_name = name.removesuffix("_report")
+            write_ref(reference, json.dumps(reports[report_name], sort_keys=True))
     for item in document["power_calculations"]:
         write_ref(item["calculator_artifact"], "calculator-" + item["hypothesis_id"])
         rq = next(row["research_question"] for row in document["hypotheses"]
                   if row["hypothesis_id"] == item["hypothesis_id"])
         pilot_name = {"RQ1": "rq1_report", "RQ2": "rq2_report", "RQ3": "rq3_report"}[rq]
         item["pilot_artifact_sha256"] = document["pilot_artifacts"][pilot_name]["sha256"]
+        power_input = json.dumps(
+            power_input_document(document, item, reports[rq.lower()]), sort_keys=True,
+        )
+        write_ref(item["pilot_power_input_artifact"], power_input)
         result = json.dumps(power_result(document, item), sort_keys=True)
         write_ref(item["calculation_artifact"], result)
 
@@ -224,6 +279,25 @@ def test_formal_preflight_verifies_local_artifact_hashes_and_writes_once(tmp_pat
     report = json.loads(output_path.read_text(encoding="utf-8"))
     assert report["local_artifacts_verified"] is True
     assert report["registry_url"] == document["registry_url"]
+
+    first_calculation = document["power_calculations"][0]
+    input_reference = first_calculation["pilot_power_input_artifact"]
+    input_path = tmp_path / input_reference["path"]
+    original_input = input_path.read_bytes()
+    modified_input = json.loads(original_input)
+    modified_input["pilot_seed_blocks"][0]["difference"] += 0.25
+    altered = json.dumps(modified_input, sort_keys=True).encode()
+    input_path.write_bytes(altered)
+    input_reference["sha256"] = hashlib.sha256(altered).hexdigest()
+    raw_plan = json.dumps(document, sort_keys=True).encode()
+    with pytest.raises(ValueError, match="Pilot differences differ from the source report"):
+        validate_formal_preregistration(
+            document,
+            exact_input_sha256=hashlib.sha256(raw_plan).hexdigest(),
+            artifact_root=tmp_path,
+        )
+    input_path.write_bytes(original_input)
+    input_reference["sha256"] = hashlib.sha256(original_input).hexdigest()
 
     with pytest.raises(SystemExit) as error:
         main(["--input", str(plan_path), "--output", str(output_path)])

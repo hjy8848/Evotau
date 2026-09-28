@@ -43,6 +43,13 @@ PRIMARY_CONTRASTS = {
     ("RQ3", "sustained_two_chain_response", "frozen_service", "greater"),
     ("RQ3", "sustained_two_chain_response", "random_mutation", "greater"),
 }
+_POWER_INPUT_FIELDS = {
+    "schema_version", "study_id", "hypothesis_id", "pilot_artifact_sha256",
+    "pilot_seed_blocks", "alternative", "noninferiority_margin",
+    "minimum_relevant_effect", "familywise_alpha", "primary_family_size",
+    "target_power", "maximum_seed_blocks", "simulation_replicates", "simulation_seed",
+    "statistical_method", "permutation_seed", "permutation_replicates",
+}
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -260,8 +267,9 @@ def validate_formal_preregistration(
     }
     family_size = len(primary_ids)
     calculation_fields = {
-        "hypothesis_id", "pilot_artifact_sha256", "calculator_artifact",
-        "calculation_artifact", "target_power", "planned_seed_blocks",
+        "hypothesis_id", "pilot_artifact_sha256", "pilot_power_input_artifact",
+        "calculator_artifact", "calculation_artifact", "target_power",
+        "minimum_relevant_effect", "maximum_seed_blocks", "planned_seed_blocks",
     }
     seen_power: set[str] = set()
     required_power: dict[str, int] = {}
@@ -274,8 +282,14 @@ def validate_formal_preregistration(
         if identifier in seen_power:
             raise ValueError("each primary hypothesis requires exactly one power calculation")
         seen_power.add(identifier)
-        if item["pilot_artifact_sha256"] not in pilot_hashes.values():
-            raise ValueError("power calculation must cite a listed pilot artifact")
+        hypothesis = next(row for row in hypotheses if row["hypothesis_id"] == identifier)
+        pilot_key = f"{hypothesis['research_question'].lower()}_report"
+        if item["pilot_artifact_sha256"] != pilot_hashes[pilot_key]:
+            raise ValueError("power calculation must cite the Pilot report for its hypothesis")
+        input_digest = _verify_artifact_reference(
+            item["pilot_power_input_artifact"],
+            f"power_calculations[{index}].pilot_power_input_artifact", artifact_root,
+        )
         calculator_digest = _verify_artifact_reference(
             item["calculator_artifact"], f"power_calculations[{index}].calculator_artifact",
             artifact_root,
@@ -290,9 +304,42 @@ def validate_formal_preregistration(
         planned = item["planned_seed_blocks"]
         if type(planned) is not int or planned < 3:
             raise ValueError("planned_seed_blocks must be at least three")
+        minimum_effect = item["minimum_relevant_effect"]
+        if type(minimum_effect) not in {int, float} or not math.isfinite(minimum_effect) or minimum_effect <= 0:
+            raise ValueError("minimum_relevant_effect must be positive and finite")
+        maximum_blocks = item["maximum_seed_blocks"]
+        if type(maximum_blocks) is not int or maximum_blocks < planned:
+            raise ValueError("maximum_seed_blocks must cover planned_seed_blocks")
         if artifact_root is not None:
-            hypothesis = next(
-                row for row in hypotheses if row["hypothesis_id"] == identifier
+            pilot_report = _read_artifact_json(
+                value["pilot_artifacts"][pilot_key], artifact_root,
+                f"pilot_artifacts.{pilot_key}",
+            )
+            from .formal_analysis import paired_differences_from_report
+
+            pilot_differences = paired_differences_from_report(value, hypothesis, pilot_report)
+            _verify_power_input_artifact(
+                item["pilot_power_input_artifact"], artifact_root,
+                expected={
+                    "schema_version": 1,
+                    "study_id": value["study_id"],
+                    "hypothesis_id": identifier,
+                    "pilot_artifact_sha256": item["pilot_artifact_sha256"],
+                    "alternative": hypothesis["alternative"],
+                    "noninferiority_margin": (
+                        margins.get(hypothesis["endpoint"])
+                        if hypothesis["alternative"] == "non_inferior" else None
+                    ),
+                    "minimum_relevant_effect": minimum_effect,
+                    "familywise_alpha": alpha,
+                    "primary_family_size": family_size,
+                    "target_power": target,
+                    "maximum_seed_blocks": maximum_blocks,
+                    "statistical_method": hypothesis["statistical_method"],
+                    "permutation_seed": hypothesis["permutation_seed"],
+                    "permutation_replicates": hypothesis["permutation_replicates"],
+                },
+                expected_pilot_differences=pilot_differences,
             )
             _verify_power_calculation_result(
                 item["calculation_artifact"], artifact_root,
@@ -300,6 +347,7 @@ def validate_formal_preregistration(
                     "study_id": value["study_id"],
                     "hypothesis_id": identifier,
                     "pilot_artifact_sha256": item["pilot_artifact_sha256"],
+                    "power_input_sha256": input_digest,
                     "calculator_source_sha256": calculator_digest,
                     "statistical_method": hypothesis["statistical_method"],
                     "permutation_seed": hypothesis["permutation_seed"],
@@ -310,6 +358,8 @@ def validate_formal_preregistration(
                         if hypothesis["alternative"] == "non_inferior" else None
                     ),
                     "target_power": target,
+                    "minimum_relevant_effect_null_adjusted": minimum_effect,
+                    "maximum_seed_blocks": maximum_blocks,
                     "planned_seed_blocks": planned,
                     "familywise_alpha": alpha,
                     "primary_family_size": family_size,
@@ -462,6 +512,66 @@ def _verify_power_calculation_result(
                 raise ValueError("power calculation margin differs from preregistration")
         elif actual != required_value:
             raise ValueError(f"power calculation {name} differs from preregistration")
+
+
+def _read_artifact_json(reference: dict[str, Any], root: Path, name: str) -> dict[str, Any]:
+    resolved_root = root.resolve()
+    path = (resolved_root / Path(reference["path"])).resolve(strict=True)
+    if resolved_root not in path.parents:
+        raise ValueError(f"{name}.path resolves outside the preregistration artifact directory")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{name} must be a readable JSON artifact") from exc
+    if not isinstance(document, dict):
+        raise TypeError(f"{name} must be a JSON object")
+    return document
+
+
+def _verify_power_input_artifact(
+    reference: dict[str, Any],
+    root: Path,
+    *,
+    expected: dict[str, Any],
+    expected_pilot_differences: tuple[tuple[int, float], ...],
+) -> None:
+    value = _read_artifact_json(reference, root, "pilot_power_input_artifact")
+    if set(value) != _POWER_INPUT_FIELDS:
+        raise ValueError("Pilot power input has missing or unknown fields")
+    for name, required_value in expected.items():
+        actual = value[name]
+        if name in {
+            "minimum_relevant_effect", "familywise_alpha", "target_power",
+            "noninferiority_margin",
+        }:
+            if required_value is None:
+                if actual is not None:
+                    raise ValueError(f"power input {name} differs from preregistration")
+            elif (type(actual) not in {int, float} or not math.isfinite(actual)
+                  or not math.isclose(actual, required_value, rel_tol=1e-12, abs_tol=1e-15)):
+                raise ValueError(f"power input {name} differs from preregistration")
+        elif actual != required_value:
+            raise ValueError(f"power input {name} differs from preregistration")
+    if type(value["primary_family_size"]) is not int or value["primary_family_size"] < 1:
+        raise ValueError("power input primary_family_size must be a positive integer")
+    if type(value["simulation_replicates"]) is not int or value["simulation_replicates"] < 1_000:
+        raise ValueError("power input simulation_replicates must be at least 1,000")
+    if type(value["simulation_seed"]) is not int or value["simulation_seed"] < 0:
+        raise ValueError("power input simulation_seed must be a non-negative integer")
+    rows = value["pilot_seed_blocks"]
+    if not isinstance(rows, list) or len(rows) != len(expected_pilot_differences):
+        raise ValueError("power input Pilot seed blocks do not match the source report denominator")
+    if value["maximum_seed_blocks"] < len(rows):
+        raise ValueError("power input maximum_seed_blocks must cover the Pilot denominator")
+    for row, (expected_seed, expected_difference) in zip(rows, expected_pilot_differences, strict=True):
+        if not isinstance(row, dict) or set(row) != {"evolution_seed", "difference"}:
+            raise ValueError("power input Pilot seed-block row has missing or unknown fields")
+        if row["evolution_seed"] != expected_seed or type(row["evolution_seed"]) is not int:
+            raise ValueError("power input Pilot evolution seeds differ from the source report")
+        difference = row["difference"]
+        if (type(difference) not in {int, float} or not math.isfinite(difference)
+                or not math.isclose(difference, expected_difference, rel_tol=1e-12, abs_tol=1e-12)):
+            raise ValueError("power input Pilot differences differ from the source report")
 
 
 def main(argv: list[str] | None = None) -> int:
