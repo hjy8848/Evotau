@@ -8,7 +8,6 @@ import json
 import os
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -210,7 +209,7 @@ def execute_phase0(
                 "service": service_strategy.to_dict(),
             },
             "rendered_prompt_sha256": prompt_hashes,
-            "provider_budget": asdict(budget.snapshot()),
+            "provider_budget": budget.snapshot().to_dict(),
         }
     except Exception as exc:
         failure_record = {
@@ -223,7 +222,7 @@ def execute_phase0(
             "rendered_prompt_sha256": prompt_hashes,
             "native_simulation_saved": simulation_saved,
             "simulation_file": simulation_path.name if simulation_saved else None,
-            "provider_budget": asdict(budget.snapshot()),
+            "provider_budget": budget.snapshot().to_dict(),
         }
         _write_json_once(result_path, failure_record)
         raise Phase0ExecutionError(type(exc).__name__) from exc

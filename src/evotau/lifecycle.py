@@ -679,7 +679,7 @@ def _service_from_dict(value: dict) -> ServiceStrategy:
 def _budget_snapshot_dict(budget: RequestBudget | None) -> dict | None:
     if budget is None:
         return None
-    return asdict(budget.snapshot())
+    return budget.snapshot().to_dict()
 
 
 def _commit_to_dict(commit: GenerationCommit) -> dict[str, Any]:

@@ -9,7 +9,12 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from evotau.budget import ProviderBudgetExceeded, RequestBudget
+from evotau.budget import (
+    BudgetSnapshot,
+    ModelUsageSnapshot,
+    ProviderBudgetExceeded,
+    RequestBudget,
+)
 from evotau.eligibility import (
     TaskEligibilityError,
     validate_generalization_selection,
@@ -320,6 +325,10 @@ def test_request_budget_blocks_before_dispatch_and_counts_failures() -> None:
     assert budget.snapshot().denied == 1
     assert budget.snapshot().usage_unavailable == 2
     assert budget.snapshot().remaining == 0
+    by_model = {item.model_id: item for item in budget.snapshot().model_usage}
+    assert by_model["model-a"].successes == 1
+    assert by_model["model-b"].failures == 1
+    assert by_model["model-c"].denied == 1
 
 
 def test_request_budget_records_reported_tokens_and_cache_hits() -> None:
@@ -336,6 +345,12 @@ def test_request_budget_records_reported_tokens_and_cache_hits() -> None:
     assert snapshot.completion_tokens == 4
     assert snapshot.usage_responses == 1
     assert snapshot.cache_hits == 1
+    assert snapshot.model_usage == (ModelUsageSnapshot(
+        model_id="model-a", attempts=1, successes=1, prompt_tokens=13,
+        completion_tokens=4, usage_responses=1, cache_hits=1,
+    ),)
+    restored = BudgetSnapshot(**json.loads(json.dumps(snapshot.to_dict())))
+    assert restored == snapshot
 
 
 def test_nested_budget_instrumentation_counts_tau_and_direct_litellm_calls_once() -> None:

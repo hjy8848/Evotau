@@ -269,8 +269,8 @@ class TauBenchEpisodeRunner:
                 "customer_strategy_id": record.customer_strategy_id,
                 "service_strategy_id": record.service_strategy_id,
                 "rendered_prompt_sha256": prompt_hashes,
-                "budget_before": asdict(before),
-                "budget_after": asdict(after),
+                "budget_before": before.to_dict(),
+                "budget_after": after.to_dict(),
                 "budget_delta": _snapshot_delta(before, after),
                 "independent_audit": None if audit_result is None else _audit_dict(audit_result),
             })
@@ -286,8 +286,8 @@ class TauBenchEpisodeRunner:
                 "failure_type": type(exc).__name__,
                 "native_simulation_saved": simulation_path.exists(),
                 "rendered_prompt_sha256": prompt_hashes,
-                "budget_before": asdict(before),
-                "budget_after": asdict(after),
+                "budget_before": before.to_dict(),
+                "budget_after": after.to_dict(),
                 "budget_delta": _snapshot_delta(before, after),
             })
             raise NativeEpisodeRunError(type(exc).__name__) from exc
@@ -487,7 +487,7 @@ def _validate_phase0_parent(
         "phase0_result_sha256": hashlib.sha256(result_bytes).hexdigest(),
         "phase0_manifest_sha256": recorded_manifest_hash,
         "phase0_simulation_id": simulation_id,
-        "phase0_provider_budget": asdict(phase0_budget),
+        "phase0_provider_budget": phase0_budget.to_dict(),
     }
     return phase0_budget, context
 

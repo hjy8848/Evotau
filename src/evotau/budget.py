@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from threading import Lock, RLock, local
 from types import ModuleType
 from typing import Any
@@ -12,6 +12,37 @@ from typing import Any
 
 class ProviderBudgetExceeded(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class ModelUsageSnapshot:
+    """Provider-attempt and token counters for one requested model ID."""
+
+    model_id: str
+    attempts: int = 0
+    successes: int = 0
+    failures: int = 0
+    denied: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    usage_responses: int = 0
+    usage_unavailable: int = 0
+    cache_hits: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model_id, str) or not self.model_id.strip():
+            raise ValueError("model usage requires a non-empty model ID")
+        counters = (
+            self.attempts, self.successes, self.failures, self.denied,
+            self.prompt_tokens, self.completion_tokens,
+            self.usage_responses, self.usage_unavailable, self.cache_hits,
+        )
+        if any(type(value) is not int or value < 0 for value in counters):
+            raise ValueError("model usage counters must be non-negative integers")
+        if self.successes + self.failures != self.attempts:
+            raise ValueError("model usage success/failure counters are inconsistent")
+        if self.usage_responses + self.usage_unavailable > self.attempts:
+            raise ValueError("model usage counters exceed provider attempts")
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,10 +57,39 @@ class BudgetSnapshot:
     usage_responses: int = 0
     usage_unavailable: int = 0
     cache_hits: int = 0
+    model_usage: tuple[ModelUsageSnapshot, ...] = ()
+
+    def __post_init__(self) -> None:
+        rows = []
+        for row in self.model_usage:
+            if isinstance(row, ModelUsageSnapshot):
+                rows.append(row)
+            elif isinstance(row, Mapping):
+                rows.append(ModelUsageSnapshot(**row))
+            else:
+                raise TypeError("model_usage entries must be snapshots or JSON objects")
+        if len({row.model_id for row in rows}) != len(rows):
+            raise ValueError("model usage snapshot repeats a model ID")
+        object.__setattr__(self, "model_usage", tuple(sorted(rows, key=lambda row: row.model_id)))
+        if rows:
+            counter_names = (
+                "attempts", "successes", "failures", "denied", "prompt_tokens",
+                "completion_tokens", "usage_responses", "usage_unavailable", "cache_hits",
+            )
+            if any(
+                sum(getattr(row, name) for row in rows) != getattr(self, name)
+                for name in counter_names
+            ):
+                raise ValueError("per-model usage does not reconcile with the global budget snapshot")
 
     @property
     def remaining(self) -> int:
         return self.cap - self.attempts
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["model_usage"] = [asdict(item) for item in self.model_usage]
+        return value
 
 
 class RequestBudget:
@@ -48,19 +108,35 @@ class RequestBudget:
         self._usage_responses = 0
         self._usage_unavailable = 0
         self._cache_hits = 0
+        self._models: dict[str, dict[str, int]] = {}
         self._lock = Lock()
         self._patch_lock = RLock()
         self._active_patches = local()
 
     def _begin(self, model: str | None) -> int:
         with self._lock:
+            model_id = self._model_key(model)
+            model_usage = self._model_counters(model_id)
             if self._attempts >= self._cap:
                 self._denied += 1
+                model_usage["denied"] += 1
                 raise ProviderBudgetExceeded(
                     f"provider request denied before dispatch: cap {self._cap} reached"
                 )
             self._attempts += 1
+            model_usage["attempts"] += 1
             return self._attempts
+
+    @staticmethod
+    def _model_key(model: str | None) -> str:
+        return model.strip() if isinstance(model, str) and model.strip() else "__unknown_model__"
+
+    def _model_counters(self, model_id: str) -> dict[str, int]:
+        return self._models.setdefault(model_id, {
+            "attempts": 0, "successes": 0, "failures": 0, "denied": 0,
+            "prompt_tokens": 0, "completion_tokens": 0,
+            "usage_responses": 0, "usage_unavailable": 0, "cache_hits": 0,
+        })
 
     @staticmethod
     def _field(value: Any, name: str) -> Any:
@@ -68,13 +144,17 @@ class RequestBudget:
             return value.get(name)
         return getattr(value, name, None)
 
-    def _finish(self, succeeded: bool, response: Any = None) -> None:
+    def _finish(
+        self, succeeded: bool, response: Any = None, *, model: str | None = None,
+    ) -> None:
         usage = self._field(response, "usage") if succeeded else None
         prompt_tokens = self._field(usage, "prompt_tokens")
         completion_tokens = self._field(usage, "completion_tokens")
         with self._lock:
+            model_usage = self._model_counters(self._model_key(model))
             if succeeded:
                 self._successes += 1
+                model_usage["successes"] += 1
                 if (
                     isinstance(prompt_tokens, int)
                     and prompt_tokens >= 0
@@ -84,14 +164,21 @@ class RequestBudget:
                     self._prompt_tokens += prompt_tokens
                     self._completion_tokens += completion_tokens
                     self._usage_responses += 1
+                    model_usage["prompt_tokens"] += prompt_tokens
+                    model_usage["completion_tokens"] += completion_tokens
+                    model_usage["usage_responses"] += 1
                 else:
                     self._usage_unavailable += 1
+                    model_usage["usage_unavailable"] += 1
                 hidden_params = self._field(response, "_hidden_params") or {}
                 if self._field(hidden_params, "cache_hit") is True:
                     self._cache_hits += 1
+                    model_usage["cache_hits"] += 1
             else:
                 self._failures += 1
                 self._usage_unavailable += 1
+                model_usage["failures"] += 1
+                model_usage["usage_unavailable"] += 1
 
     def snapshot(self) -> BudgetSnapshot:
         with self._lock:
@@ -106,6 +193,10 @@ class RequestBudget:
                 usage_responses=self._usage_responses,
                 usage_unavailable=self._usage_unavailable,
                 cache_hits=self._cache_hits,
+                model_usage=tuple(
+                    ModelUsageSnapshot(model_id=model_id, **counters)
+                    for model_id, counters in self._models.items()
+                ),
             )
 
     def restore_usage(self, snapshot: BudgetSnapshot) -> None:
@@ -135,6 +226,29 @@ class RequestBudget:
             self._usage_responses = snapshot.usage_responses
             self._usage_unavailable = snapshot.usage_unavailable
             self._cache_hits = snapshot.cache_hits
+            if snapshot.model_usage:
+                self._models = {
+                    row.model_id: {
+                        name: getattr(row, name)
+                        for name in (
+                            "attempts", "successes", "failures", "denied", "prompt_tokens",
+                            "completion_tokens", "usage_responses", "usage_unavailable", "cache_hits",
+                        )
+                    }
+                    for row in snapshot.model_usage
+                }
+            elif any(counters):
+                self._models = {"__unattributed__": {
+                    "attempts": snapshot.attempts,
+                    "successes": snapshot.successes,
+                    "failures": snapshot.failures,
+                    "denied": snapshot.denied,
+                    "prompt_tokens": snapshot.prompt_tokens,
+                    "completion_tokens": snapshot.completion_tokens,
+                    "usage_responses": snapshot.usage_responses,
+                    "usage_unavailable": snapshot.usage_unavailable,
+                    "cache_hits": snapshot.cache_hits,
+                }}
 
     def absorb_usage(self, snapshot: BudgetSnapshot) -> None:
         """Add attempts from a completed child phase to this run's global budget."""
@@ -161,6 +275,27 @@ class RequestBudget:
             self._usage_responses += snapshot.usage_responses
             self._usage_unavailable += snapshot.usage_unavailable
             self._cache_hits += snapshot.cache_hits
+            if snapshot.model_usage:
+                source_models = snapshot.model_usage
+            elif any(counters):
+                source_models = (ModelUsageSnapshot(
+                    model_id="__unattributed__",
+                    attempts=snapshot.attempts,
+                    successes=snapshot.successes,
+                    failures=snapshot.failures,
+                    denied=snapshot.denied,
+                    prompt_tokens=snapshot.prompt_tokens,
+                    completion_tokens=snapshot.completion_tokens,
+                    usage_responses=snapshot.usage_responses,
+                    usage_unavailable=snapshot.usage_unavailable,
+                    cache_hits=snapshot.cache_hits,
+                ),)
+            else:
+                source_models = ()
+            for row in source_models:
+                target = self._model_counters(row.model_id)
+                for name in target:
+                    target[name] += getattr(row, name)
 
     @contextmanager
     def instrument_tau_llm_utils(self, llm_utils: ModuleType | Any) -> Iterator[None]:
@@ -187,13 +322,14 @@ class RequestBudget:
                 # The manifest freezes transport retries to zero for every role.
                 if litellm_module is not None:
                     kwargs["num_retries"] = 0
-                self._begin(None if model is None else str(model))
+                model_id = None if model is None else str(model)
+                self._begin(model_id)
                 try:
                     result = original_completion(*args, **kwargs)
                 except BaseException:
-                    self._finish(succeeded=False)
+                    self._finish(succeeded=False, model=model_id)
                     raise
-                self._finish(succeeded=True, response=result)
+                self._finish(succeeded=True, response=result, model=model_id)
                 return result
 
             llm_utils.completion = guarded_completion
