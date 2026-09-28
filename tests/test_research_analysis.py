@@ -400,3 +400,16 @@ def test_rq3_json_interchange_rejects_unknown_fields_and_bad_schema():
         load_rq3_document({**document, "note": "unregistered metadata"})
     with pytest.raises(ValueError, match="unsupported RQ3 input schema_version"):
         load_rq3_document({**document, "schema_version": 2})
+
+
+def test_rq3_transition_summary_is_recomputed_from_serialized_crossplay_matrices():
+    document = json.loads(json.dumps({
+        "schema_version": 1,
+        "runs": [run.to_dict() for run in _rq3_runs()],
+    }))
+    transition = document["runs"][0]["transitions"][0]
+    assert transition["discovery_matrix"]["cells"]
+    transition["old_customer_old_service_rate"] = 0.123
+
+    with pytest.raises(ValueError, match="does not match its source matrices"):
+        load_rq3_document(document)

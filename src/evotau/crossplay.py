@@ -6,7 +6,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 from .records import (
@@ -109,14 +109,75 @@ class CrossPlayMatrix:
             _validate_cell(cell)
 
     def to_dict(self) -> dict[str, Any]:
+        cells = []
+        for cell in self.cells:
+            value = asdict(cell)
+            value["verified_signature_keys"] = list(cell.verified_signature_keys)
+            value["recurrent_signature_keys"] = list(cell.recurrent_signature_keys)
+            value["verified_signature_episode_counts"] = [
+                list(item) for item in cell.verified_signature_episode_counts
+            ]
+            cells.append(value)
         return {
             "customer_strategy_ids": list(self.customer_strategy_ids),
             "service_strategy_ids": list(self.service_strategy_ids),
             "task_ids": list(self.task_ids),
             "seeds": list(self.seeds),
-            "cells": [asdict(cell) for cell in self.cells],
+            "cells": cells,
             "repaired_signature_keys": list(self.repaired_signature_keys),
         }
+
+    @classmethod
+    def from_dict(cls, value: Any) -> CrossPlayMatrix:
+        """Load and validate a complete serialized cross-play matrix."""
+
+        required = {
+            "customer_strategy_ids", "service_strategy_ids", "task_ids", "seeds",
+            "cells", "repaired_signature_keys",
+        }
+        if not isinstance(value, dict) or set(value) != required:
+            raise ValueError("cross-play matrix has missing or unknown fields")
+        array_fields = (
+            "customer_strategy_ids", "service_strategy_ids", "task_ids", "seeds",
+            "cells", "repaired_signature_keys",
+        )
+        if any(not isinstance(value[name], list) for name in array_fields):
+            raise TypeError("cross-play matrix fields must be JSON arrays")
+        cell_fields = {item.name for item in fields(CrossPlayCell)}
+        cells: list[CrossPlayCell] = []
+        for index, row in enumerate(value["cells"]):
+            if not isinstance(row, dict) or set(row) != cell_fields:
+                raise ValueError(f"cross-play cell {index} has missing or unknown fields")
+            for name in (
+                "verified_signature_keys", "recurrent_signature_keys",
+                "verified_signature_episode_counts",
+            ):
+                if not isinstance(row[name], list):
+                    raise TypeError(f"cross-play cell {index} {name} must be a JSON array")
+            try:
+                cells.append(CrossPlayCell(
+                    **{
+                        **row,
+                        "verified_signature_keys": tuple(row["verified_signature_keys"]),
+                        "recurrent_signature_keys": tuple(row["recurrent_signature_keys"]),
+                        "verified_signature_episode_counts": tuple(
+                            tuple(item) for item in row["verified_signature_episode_counts"]
+                        ),
+                    }
+                ))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid cross-play cell {index}: {exc}") from exc
+        try:
+            return cls(
+                customer_strategy_ids=tuple(value["customer_strategy_ids"]),
+                service_strategy_ids=tuple(value["service_strategy_ids"]),
+                task_ids=tuple(value["task_ids"]),
+                seeds=tuple(value["seeds"]),
+                cells=tuple(cells),
+                repaired_signature_keys=tuple(value["repaired_signature_keys"]),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid cross-play matrix: {exc}") from exc
 
 
 def build_crossplay_matrix(

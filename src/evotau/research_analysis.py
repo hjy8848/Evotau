@@ -31,6 +31,8 @@ class AdaptationResponseReport:
     outcome: AdaptationOutcome
     discovery_matrix_sha256: str
     confirmation_matrix_sha256: str
+    discovery_matrix: CrossPlayMatrix
+    confirmation_matrix: CrossPlayMatrix
     discovery_seed_count: int
     confirmation_seed_count: int
     old_customer_old_service_rate: float | None
@@ -53,6 +55,13 @@ class AdaptationResponseReport:
     new_service_strategy_id: str
 
     def __post_init__(self) -> None:
+        if (not isinstance(self.discovery_matrix, CrossPlayMatrix)
+                or not isinstance(self.confirmation_matrix, CrossPlayMatrix)):
+            raise TypeError("adaptation response must retain both cross-play source matrices")
+        if self.discovery_matrix_sha256 != sha256_json(self.discovery_matrix.to_dict()):
+            raise ValueError("discovery matrix hash does not match its retained source matrix")
+        if self.confirmation_matrix_sha256 != sha256_json(self.confirmation_matrix.to_dict()):
+            raise ValueError("confirmation matrix hash does not match its retained source matrix")
         if type(self.generation) is not int or self.generation < 0:
             raise ValueError("adaptation response generation must be a non-negative integer")
         if (not self.task_ids or len(set(self.task_ids)) != len(self.task_ids)
@@ -80,6 +89,8 @@ class AdaptationResponseReport:
         result["task_ids"] = list(self.task_ids)
         result["discovery_seeds"] = list(self.discovery_seeds)
         result["confirmation_seeds"] = list(self.confirmation_seeds)
+        result["discovery_matrix"] = self.discovery_matrix.to_dict()
+        result["confirmation_matrix"] = self.confirmation_matrix.to_dict()
         return result
 
     @classmethod
@@ -91,16 +102,20 @@ class AdaptationResponseReport:
         if any(not isinstance(value[name], list) for name in arrays):
             raise TypeError("RQ3 transition arrays must be JSON arrays")
         try:
-            return cls(
-                **{
-                    **value,
-                    "outcome": AdaptationOutcome(value["outcome"]),
-                    "reasons": tuple(value["reasons"]),
-                    "task_ids": tuple(value["task_ids"]),
-                    "discovery_seeds": tuple(value["discovery_seeds"]),
-                    "confirmation_seeds": tuple(value["confirmation_seeds"]),
-                }
+            discovery_matrix = CrossPlayMatrix.from_dict(value["discovery_matrix"])
+            confirmation_matrix = CrossPlayMatrix.from_dict(value["confirmation_matrix"])
+            expected = _analyze_adaptation_response_with_ids(
+                discovery_matrix,
+                confirmation_matrix,
+                generation=value["generation"],
+                old_customer_id=value["old_customer_strategy_id"],
+                new_customer_id=value["new_customer_strategy_id"],
+                old_service_id=value["old_service_strategy_id"],
+                new_service_id=value["new_service_strategy_id"],
             )
+            if expected.to_dict() != value:
+                raise ValueError("RQ3 transition summary does not match its source matrices")
+            return expected
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"invalid RQ3 transition report: {exc}") from exc
 
@@ -124,6 +139,31 @@ def analyze_adaptation_response(
     conclusions still require analysis over independent evolution runs.
     """
 
+    c_old = customer_strategy_id(old_customer)
+    c_new = customer_strategy_id(new_customer)
+    s_old = service_strategy_id(old_service)
+    s_new = service_strategy_id(new_service)
+    return _analyze_adaptation_response_with_ids(
+        discovery,
+        confirmation,
+        generation=generation,
+        old_customer_id=c_old,
+        new_customer_id=c_new,
+        old_service_id=s_old,
+        new_service_id=s_new,
+    )
+
+
+def _analyze_adaptation_response_with_ids(
+    discovery: CrossPlayMatrix,
+    confirmation: CrossPlayMatrix,
+    *,
+    generation: int,
+    old_customer_id: str,
+    new_customer_id: str,
+    old_service_id: str,
+    new_service_id: str,
+) -> AdaptationResponseReport:
     if discovery.task_ids != confirmation.task_ids:
         raise ValueError("discovery and confirmation matrices must use the same frozen task panel")
     if not discovery.seeds or not confirmation.seeds:
@@ -134,24 +174,31 @@ def analyze_adaptation_response(
         raise ValueError("discovery and confirmation matrices must use the same Service strategies")
     if not set(discovery.seeds).isdisjoint(confirmation.seeds):
         raise ValueError("confirmation must use episode seeds not used for discovery")
-
-    c_old = customer_strategy_id(old_customer)
-    c_new = customer_strategy_id(new_customer)
-    s_old = service_strategy_id(old_service)
-    s_new = service_strategy_id(new_service)
-    _require_matrix_strategy_ids(discovery, c_old, c_new, s_old, s_new)
+    _require_matrix_strategy_ids(
+        discovery, old_customer_id, new_customer_id, old_service_id, new_service_id,
+    )
 
     rates = {
-        "old_customer_old_service_rate": _failure_rate(confirmation, c_old, s_old),
-        "old_customer_new_service_rate": _failure_rate(confirmation, c_old, s_new),
-        "new_customer_new_service_rate": _failure_rate(confirmation, c_new, s_new),
-        "new_customer_old_service_rate": _failure_rate(confirmation, c_new, s_old),
+        "old_customer_old_service_rate": _failure_rate(
+            confirmation, old_customer_id, old_service_id,
+        ),
+        "old_customer_new_service_rate": _failure_rate(
+            confirmation, old_customer_id, new_service_id,
+        ),
+        "new_customer_new_service_rate": _failure_rate(
+            confirmation, new_customer_id, new_service_id,
+        ),
+        "new_customer_old_service_rate": _failure_rate(
+            confirmation, new_customer_id, old_service_id,
+        ),
     }
     if any(value is None for value in rates.values()):
         return AdaptationResponseReport(
             outcome=AdaptationOutcome.INCONCLUSIVE,
             discovery_matrix_sha256=sha256_json(discovery.to_dict()),
             confirmation_matrix_sha256=sha256_json(confirmation.to_dict()),
+            discovery_matrix=discovery,
+            confirmation_matrix=confirmation,
             discovery_seed_count=len(discovery.seeds),
             confirmation_seed_count=len(confirmation.seeds),
             **rates,
@@ -165,10 +212,10 @@ def analyze_adaptation_response(
             task_ids=discovery.task_ids,
             discovery_seeds=discovery.seeds,
             confirmation_seeds=confirmation.seeds,
-            old_customer_strategy_id=c_old,
-            new_customer_strategy_id=c_new,
-            old_service_strategy_id=s_old,
-            new_service_strategy_id=s_new,
+            old_customer_strategy_id=old_customer_id,
+            new_customer_strategy_id=new_customer_id,
+            old_service_strategy_id=old_service_id,
+            new_service_strategy_id=new_service_id,
         )
 
     p_old_old = rates["old_customer_old_service_rate"]
@@ -193,6 +240,8 @@ def analyze_adaptation_response(
         outcome=outcome,
         discovery_matrix_sha256=sha256_json(discovery.to_dict()),
         confirmation_matrix_sha256=sha256_json(confirmation.to_dict()),
+        discovery_matrix=discovery,
+        confirmation_matrix=confirmation,
         discovery_seed_count=len(discovery.seeds),
         confirmation_seed_count=len(confirmation.seeds),
         **rates,
@@ -206,10 +255,10 @@ def analyze_adaptation_response(
         task_ids=discovery.task_ids,
         discovery_seeds=discovery.seeds,
         confirmation_seeds=confirmation.seeds,
-        old_customer_strategy_id=c_old,
-        new_customer_strategy_id=c_new,
-        old_service_strategy_id=s_old,
-        new_service_strategy_id=s_new,
+        old_customer_strategy_id=old_customer_id,
+        new_customer_strategy_id=new_customer_id,
+        old_service_strategy_id=old_service_id,
+        new_service_strategy_id=new_service_id,
     )
 
 
