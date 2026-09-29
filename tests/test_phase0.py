@@ -241,6 +241,40 @@ def test_manifest_freezes_all_model_roles_and_sampling_arguments() -> None:
         ExperimentManifest.from_mapping(changed)
 
 
+def test_manifest_freezes_openai_compatible_route_and_thinking_mode() -> None:
+    config = __import__("yaml").safe_load((ROOT / "configs/mvp.yaml").read_text(encoding="utf-8"))
+    config["experiment"]["models"] = {
+        role: "openai/deepseek-v4-flash"
+        for role in ("agent", "customer", "reviewer", "evaluator")
+    }
+    for args in config["experiment"]["model_args"].values():
+        args.update({
+            "api_base": "https://inferaiapi.com/v1",
+            "thinking_mode": "disabled",
+        })
+    manifest = ExperimentManifest.from_mapping(config)
+    payload = manifest.to_payload()
+    assert payload["role_model_args"]["agent"]["thinking_mode"] == "disabled"
+    assert payload["runtime_arguments"]["agent_llm_args"]["extra_body"] == {
+        "thinking": {"type": "disabled"}
+    }
+    assert payload["runtime_arguments"]["agent_llm_args"]["api_base"] == (
+        "https://inferaiapi.com/v1"
+    )
+    assert payload["runtime_arguments"]["reviewer_llm_args"]["extra_body"] == {
+        "thinking": {"type": "disabled"}
+    }
+    config["experiment"]["model_args"]["agent"]["thinking_mode"] = "maybe"
+    with pytest.raises(ValueError, match="thinking_mode"):
+        ExperimentManifest.from_mapping(config)
+    config["experiment"]["model_args"]["agent"]["thinking_mode"] = "disabled"
+    config["experiment"]["model_args"]["agent"]["api_base"] = (
+        "https://user:secret@inferaiapi.com/v1"
+    )
+    with pytest.raises(ValueError, match="without credentials"):
+        ExperimentManifest.from_mapping(config)
+
+
 def test_saved_phase0_manifest_is_self_consistent_and_matches_the_frozen_protocol() -> None:
     config = __import__("yaml").safe_load((ROOT / "configs/mvp.yaml").read_text(encoding="utf-8"))
     manifest = ExperimentManifest.from_mapping(config)

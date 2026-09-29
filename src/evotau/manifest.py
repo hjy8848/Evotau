@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from urllib.parse import urlsplit
 
 TAU_BENCH_REPOSITORY = "sierra-research/tau2-bench"
 TAU_BENCH_COMMIT = "b7ea9074c1cba482b30687fecdb5c8425fd6f619"
@@ -18,6 +19,7 @@ ROLE_NAMES = ("agent", "customer", "reviewer", "evaluator")
 MECHANISM_ROLE_NAMES = (*ROLE_NAMES, "evolver")
 MODEL_ARGUMENT_NAMES = frozenset({
     "temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty",
+    "api_base", "thinking_mode",
 })
 DEFAULT_ROLE_MODEL_ARGS = {role: {"temperature": 0.0} for role in MECHANISM_ROLE_NAMES}
 MVP_FAILURE_TAXONOMY = (
@@ -159,7 +161,7 @@ def freeze_role_model_args(
     raw: Mapping[str, Any] | None,
     *,
     roles: tuple[str, ...] = ROLE_NAMES,
-) -> tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...]:
+) -> tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...]:
     """Validate and freeze the generation arguments applied to each model role."""
 
     if raw is None:
@@ -176,12 +178,36 @@ def freeze_role_model_args(
                 f"model_args.{role} contains unsupported arguments: "
                 f"{sorted(set(params) - MODEL_ARGUMENT_NAMES)}"
             )
-        normalized: list[tuple[str, float | int]] = []
+        normalized: list[tuple[str, float | int | str]] = []
         for name, value in sorted(params.items()):
             if name == "max_tokens":
                 if type(value) is not int or value <= 0:
                     raise ValueError(f"model_args.{role}.max_tokens must be a positive integer")
                 normalized.append((name, value))
+                continue
+            if name == "thinking_mode":
+                if not isinstance(value, str) or value not in {"disabled", "enabled"}:
+                    raise ValueError(
+                        f"model_args.{role}.thinking_mode must be 'disabled' or 'enabled'"
+                    )
+                normalized.append((name, value))
+                continue
+            if name == "api_base":
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"model_args.{role}.api_base must be an HTTP(S) URL")
+                parsed = urlsplit(value)
+                if (
+                    parsed.scheme not in {"http", "https"}
+                    or not parsed.netloc
+                    or parsed.username is not None
+                    or parsed.password is not None
+                    or parsed.query
+                    or parsed.fragment
+                ):
+                    raise ValueError(
+                        f"model_args.{role}.api_base must be an HTTP(S) URL without credentials"
+                    )
+                normalized.append((name, value.rstrip("/")))
                 continue
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"model_args.{role}.{name} must be numeric")
@@ -212,15 +238,28 @@ def _freeze_role_models(
 
 
 def _role_model_args_payload(
-    values: tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...],
-) -> dict[str, dict[str, float | int]]:
+    values: tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...],
+) -> dict[str, dict[str, float | int | str]]:
     return {role: dict(params) for role, params in values}
 
 
-def _role_runtime_arguments(
-    values: tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...],
-) -> dict[str, Any]:
+def role_model_args_for_runtime(
+    values: tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...],
+) -> dict[str, dict[str, Any]]:
+    """Translate frozen role settings into LiteLLM completion keyword arguments."""
+
     params = _role_model_args_payload(values)
+    for role in params:
+        thinking_mode = params[role].pop("thinking_mode", None)
+        if thinking_mode is not None:
+            params[role]["extra_body"] = {"thinking": {"type": thinking_mode}}
+    return params
+
+
+def _role_runtime_arguments(
+    values: tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...],
+) -> dict[str, Any]:
+    params = role_model_args_for_runtime(values)
     result = {
         "agent_llm_args": {**params["agent"], "num_retries": 0},
         "customer_llm_args": {**params["customer"], "num_retries": 0},
@@ -261,7 +300,7 @@ class ExperimentManifest:
     max_concurrency: int
     real_provider_enabled: bool
     role_models: tuple[tuple[str, str | None], ...]
-    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...]
+    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...]
     source_blob_sha1: tuple[tuple[str, str], ...]
     customer_strategy_sha256: str
     service_strategy_sha256: str
@@ -456,7 +495,7 @@ class MechanismManifest:
     max_concurrency: int
     real_provider_enabled: bool
     role_models: tuple[tuple[str, str | None], ...]
-    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...]
+    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...]
     source_blob_sha1: tuple[tuple[str, str], ...]
     output_path: str
     checkpoint_path: str
@@ -642,7 +681,7 @@ class PilotManifest:
     max_concurrency: int
     real_provider_enabled: bool
     role_models: tuple[tuple[str, str | None], ...]
-    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int], ...]], ...]
+    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...]
     source_blob_sha1: tuple[tuple[str, str], ...]
     customer_strategy_sha256: str
     service_strategy_sha256: str

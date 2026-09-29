@@ -10,7 +10,11 @@ from typing import Any
 from uuid import uuid4
 
 from .budget import RequestBudget
-from .manifest import TAU2_PACKAGE_VERSION, TAU_BENCH_COMMIT
+from .manifest import (
+    TAU2_PACKAGE_VERSION,
+    TAU_BENCH_COMMIT,
+    role_model_args_for_runtime,
+)
 from .prompts import append_strategy_block
 from .strategies import (
     CustomerStrategy,
@@ -286,7 +290,7 @@ def run_phase0_episode(
     ):
         raise ValueError("Phase 0 must start with an unused request budget")
     models = dict(manifest.role_models)
-    model_args = {role: dict(args) for role, args in manifest.role_model_args}
+    model_args = role_model_args_for_runtime(manifest.role_model_args)
     orchestrator = build_phase0_orchestrator(
         task=task,
         agent_model=models["agent"],
