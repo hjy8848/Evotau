@@ -17,7 +17,13 @@ from .budget import BudgetSnapshot, ModelUsageSnapshot, RequestBudget
 from .checkpoint import load_checkpoint, manifest_fingerprint
 from .communication import observe_communication_protocol
 from .customer_evolver import LLMCustomerEvolver, OperatorSelector
-from .manifest import MechanismManifest, PilotManifest, sha256_json, write_manifest_once
+from .manifest import (
+    MechanismManifest,
+    PilotManifest,
+    role_model_args_for_runtime,
+    sha256_json,
+    write_manifest_once,
+)
 from .phase0_run import _load_pinned_tasks, _write_json_once
 from .records import (
     EpisodeRecord,
@@ -479,11 +485,10 @@ def run_native_phase3(
     customer, service = _parse_strategies(config["experiment"])
     customer = customer or CustomerStrategy()
     role_models = dict(manifest.role_models)
-    role_model_args = {role: dict(args) for role, args in manifest.role_model_args}
     if customer_proposal_provider is None:
         customer_proposal_provider = LLMCustomerEvolver(
             model=role_models["evolver"],
-            model_args=role_model_args["evolver"],
+            model_args=role_model_args_for_runtime(manifest.role_model_args)["evolver"],
         )
     agent_model = role_models["agent"]
     from litellm import token_counter
@@ -619,7 +624,6 @@ def run_native_pilot(
     customer, service = _parse_strategies(config["experiment"])
     customer = customer or CustomerStrategy()
     role_models = dict(manifest.role_models)
-    role_model_args = {role: dict(args) for role, args in manifest.role_model_args}
     from litellm import token_counter
 
     service_token_counter = lambda text: token_counter(model=role_models["agent"], text=text)
@@ -709,7 +713,8 @@ def run_native_pilot(
         if (manifest.condition not in {"random_mutation", "static_customer", "frozen_customer"}
                 and "customer_proposal_provider" not in callbacks):
             callbacks["customer_proposal_provider"] = LLMCustomerEvolver(
-                model=role_models["evolver"], model_args=role_model_args["evolver"],
+                model=role_models["evolver"],
+                model_args=role_model_args_for_runtime(manifest.role_model_args)["evolver"],
             )
         if (manifest.condition not in {
             "random_mutation", "static_customer", "frozen_service", "adaptive_customer",

@@ -12,6 +12,7 @@ from evotau.customer_evolver import (
     LLMCustomerEvolver,
     propose_customer_candidates_with_selector,
 )
+from evotau.manifest import role_model_args_for_runtime
 from evotau.records import (
     EvidenceRef,
     FailureRecord,
@@ -125,15 +126,27 @@ def test_llm_customer_evolver_uses_frozen_model_args_and_strict_json(monkeypatch
         proposal_seed=202,
         failure_signals=(),
     )
+    evolver_args = role_model_args_for_runtime((
+        ("evolver", (
+            ("api_base", "https://inferaiapi.com/v1"),
+            ("temperature", 0.0),
+            ("thinking_mode", "disabled"),
+        )),
+    ))["evolver"]
     evolver = LLMCustomerEvolver(
-        model="provider/evolver-model", model_args={"temperature": 0.0},
+        model="provider/evolver-model", model_args=evolver_args,
     )
 
     assert evolver(context) == ("disclosure", "request_order")
     model, call_name, kwargs, messages = calls[0]
     assert model == "provider/evolver-model"
     assert call_name == "evotau_customer_evolver"
-    assert kwargs == {"num_retries": 0, "temperature": 0.0}
+    assert kwargs == {
+        "num_retries": 0,
+        "temperature": 0.0,
+        "api_base": "https://inferaiapi.com/v1",
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
     prompt_context = json.loads(messages[-1].content)
     assert prompt_context["failure_signals"] == []
     assert set(prompt_context) == {

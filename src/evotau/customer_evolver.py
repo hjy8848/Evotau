@@ -145,7 +145,7 @@ class LLMCustomerEvolver:
     """Rank existing legal operators; the LLM cannot invent Customer fields."""
 
     model: str
-    model_args: Mapping[str, int | float]
+    model_args: Mapping[str, Any]
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model.strip():
