@@ -36,16 +36,20 @@
 .episode-list-link strong { display: block; margin-bottom: 2px; color: var(--text-1); font: 11px var(--font-mono); overflow-wrap: anywhere; }
 .trace-inspect { margin-top: 5px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; }
 .filter-bar { padding: 12px; border-bottom: 1px solid var(--line); }
-.trace-list { padding: 0 14px; }
-.trace-row { position: relative; display: grid; grid-template-columns: 42px minmax(0,1fr); gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
-.trace-turn { padding-top: 1px; color: var(--text-3); font: 10px var(--font-mono); }
-.trace-content { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.trace-head { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+.trace-list { padding: 8px 18px 18px; }
+.trace-row { position: relative; display: grid; grid-template-columns: 30px minmax(0,1fr); align-items: start; gap: 9px; padding: 9px 0; border-bottom: 0; }
+.trace-turn { padding-top: 8px; color: var(--text-3); font: 10px var(--font-mono); }
+.trace-content { min-width: 0; overflow-wrap: anywhere; }
+.trace-row[data-role="user"] .trace-content,.trace-row[data-role="assistant"] .trace-content { width: fit-content; max-width: min(86%,700px); padding: 10px 13px; border: 1px solid var(--line); }
+.trace-row[data-role="user"] .trace-content { justify-self: start; border-color: color-mix(in srgb,var(--violet) 30%,var(--line)); border-radius: 4px 14px 14px 14px; background: var(--violet-soft); }
+.trace-row[data-role="assistant"] .trace-content { justify-self: end; border-color: color-mix(in srgb,var(--blue) 30%,var(--line)); border-radius: 14px 4px 14px 14px; background: var(--blue-soft); }
+.trace-row[data-role="tool_call"] .trace-content,.trace-row[data-role="tool_result"] .trace-content { width: min(100%,700px); justify-self: center; padding: 8px 12px; border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); background: var(--bg-0); }
+.trace-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
 .trace-head strong { font-size: 11px; font-weight: 650; }
-.trace-text { color: var(--text-2); font-size: 12px; }
+.trace-text { color: var(--text-2); font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
 .trace-row[data-role="user"] .trace-head strong { color: var(--violet); }
 .trace-row[data-role="assistant"] .trace-head strong { color: var(--blue); }
-.trace-actions { margin-top: 6px; }
+.trace-actions { margin-top: 7px; }
 .trace-actions button { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; }
 .trace-tool { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg-0); }
 .trace-tool.call { border-left: 2px solid var(--warning); }
@@ -93,6 +97,7 @@
 .run-overview .inspector-panel .list-row { font-size: 10px; }
 .preview-meta { overflow-wrap: anywhere; }
 @keyframes breathe { 50% { opacity: .45; } }
+@media (max-width: 640px) { .trace-list { padding: 6px 10px 12px; } .trace-row { grid-template-columns: 24px minmax(0,1fr); gap: 6px; } .trace-row[data-role="user"] .trace-content,.trace-row[data-role="assistant"] .trace-content { max-width: 94%; padding: 9px 11px; } }
 @media (max-width: 1240px) { .run-overview { grid-template-columns: minmax(0,1fr) 250px; } .episode-layout { grid-template-columns: 180px minmax(0,1fr); } .episode-layout > .inspector-panel { position: fixed; top: 60px; right: 0; z-index: 9; width: min(320px,90vw); height: calc(100vh - 60px); max-height: none; border-radius: 0; transform: translateX(102%); transition: transform .2s ease; } .episode-layout > .inspector-panel.is-open { transform: translateX(0); } }
 @media (max-width: 850px) { .run-overview,.crossplay-detail { grid-template-columns: minmax(0,1fr); } .run-overview > .inspector-panel { position: static; max-height: none; } .episode-layout { grid-template-columns: minmax(0,1fr); } .episode-list { position: static; max-height: 230px; } .story-generation::before { display: none; } }
 @media (max-width: 760px) { .strategy-diff-grid { grid-template-columns: 1fr; } }
