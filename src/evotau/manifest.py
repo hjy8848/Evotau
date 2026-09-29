@@ -655,6 +655,8 @@ class PilotManifest:
     heldout_split_name: str = "test"
     static_customer_portfolio_json: str | None = None
     static_customer_portfolio_sha256: str | None = None
+    task_semantic_review_json: str | None = None
+    task_semantic_review_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _validate_code_provenance(self.evotau_git_commit, self.evotau_source_sha256)
@@ -687,6 +689,26 @@ class PilotManifest:
             raise ValueError("Pilot E/V/H task IDs must be unique and disjoint")
         if set(groups) & set(self.excluded_task_ids):
             raise ValueError("Pilot cannot select an excluded task")
+        if (self.task_semantic_review_json is None
+                or self.task_semantic_review_sha256 is None):
+            raise ValueError("Pilot requires a frozen ex-ante task semantic review")
+        try:
+            review_document = json.loads(self.task_semantic_review_json)
+            from .task_review import validate_task_semantic_review
+
+            normalized_review, review_sha256 = validate_task_semantic_review(
+                review_document,
+                expected_panels=(
+                    *((task_id, "evolution") for task_id in self.evolution_task_ids),
+                    *((task_id, "validation") for task_id in self.validation_task_ids),
+                    *((task_id, "heldout") for task_id in self.heldout_task_ids),
+                ),
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ValueError(f"invalid Pilot task semantic review: {exc}") from exc
+        if (canonical_json(normalized_review) != self.task_semantic_review_json
+                or review_sha256 != self.task_semantic_review_sha256):
+            raise ValueError("Pilot task semantic review canonical payload or digest differs")
         if len(self.evolution_seeds) < 3 or len(set(self.evolution_seeds)) != len(self.evolution_seeds):
             raise ValueError("Pilot requires at least three unique evolution seeds")
         if any(type(seed) is not int or seed < 0 for seed in self.evolution_seeds):
@@ -761,6 +783,13 @@ class PilotManifest:
             raise ValueError("Pilot task_selection must declare train E/V and test H sources")
         if any(not isinstance(selection.get(name), list) for name in ("evolution", "validation", "heldout")):
             raise TypeError("Pilot E/V/H task selections must be JSON arrays")
+        selected_ids = tuple(
+            str(task_id)
+            for name in ("evolution", "validation", "heldout")
+            for task_id in selection[name]
+        )
+        if len(selected_ids) != len(set(selected_ids)):
+            raise ValueError("Pilot E/V/H task IDs must be unique and disjoint")
         seeds = experiment.get("evolution_seeds")
         if not isinstance(seeds, list):
             raise TypeError("Pilot evolution_seeds must be a JSON array")
@@ -769,6 +798,18 @@ class PilotManifest:
         models = experiment.get("models", {})
         customer = experiment.get("customer_strategy")
         service = experiment.get("service_strategy") or {"rules": []}
+        expected_panels = (
+            *((str(task_id), "evolution") for task_id in selection["evolution"]),
+            *((str(task_id), "validation") for task_id in selection["validation"]),
+            *((str(task_id), "heldout") for task_id in selection["heldout"]),
+        )
+        raw_task_review = experiment.get("task_semantic_review")
+        from .task_review import validate_task_semantic_review
+
+        normalized_task_review, task_review_sha256 = validate_task_semantic_review(
+            raw_task_review, expected_panels=expected_panels,
+        )
+        task_review_json = canonical_json(normalized_task_review)
         static_portfolio_json = None
         static_portfolio_sha256 = None
         if experiment.get("condition") == "static_customer":
@@ -825,6 +866,8 @@ class PilotManifest:
             heldout_split_name=str(selection["heldout_split"]),
             static_customer_portfolio_json=static_portfolio_json,
             static_customer_portfolio_sha256=static_portfolio_sha256,
+            task_semantic_review_json=task_review_json,
+            task_semantic_review_sha256=task_review_sha256,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -882,6 +925,8 @@ class PilotManifest:
         if self.static_customer_portfolio_json is not None:
             payload["static_customer_portfolio"] = json.loads(self.static_customer_portfolio_json)
             payload["static_customer_portfolio_sha256"] = self.static_customer_portfolio_sha256
+        payload["task_semantic_review"] = json.loads(self.task_semantic_review_json)
+        payload["task_semantic_review_sha256"] = self.task_semantic_review_sha256
         return payload
 
     @property

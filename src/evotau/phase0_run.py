@@ -92,6 +92,11 @@ def _load_pinned_tasks(
             heldout_task_ids=heldout_ids,
             excluded_task_ids=task_selection.get("excluded", ()),
         )
+        semantic_review_json = getattr(manifest, "task_semantic_review_json", None)
+        if semantic_review_json is not None:
+            from .task_review import verify_reviewed_task_hashes
+
+            verify_reviewed_task_hashes(json.loads(semantic_review_json), tasks_data)
         train_ids = (*evolution_ids, *validation_ids)
         train_id_set, heldout_id_set = set(train_ids), set(heldout_ids)
         heldout_requested = tuple(task_id for task_id in task_ids if task_id in heldout_id_set)

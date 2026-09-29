@@ -1690,3 +1690,10 @@ Phase 0 之后的实现顺序建议：
 - Static discovery failures trigger an exact task/Customer/Service/signature reproduction on a fresh seed. Only independently reviewed, matching records become verified failures. Reproductions consume the same per-seed episode and provider caps and are included in run-cost accounting.
 - Each adaptive, random, and static seed block now exports a schema-v2-compatible `rq1_study_run` with E-only discovery observations, reproduction attempts, verified failures, and actual provider-attempt counts. The root `pilot-result.json` contains `rq1_study_runs`, ready to combine across frozen condition manifests for `evotau-rq1-analyze`; V/H and generation-confirmation data are excluded from the discovery denominator.
 - Added stubbed three-seed tests for all three RQ1 conditions, including static fresh-seed failure promotion, analyzer-schema loading, equal discovery schedules, artifact integrity, and idempotent resume. Stub fixtures make no model calls and are not study evidence. Full pinned-runtime validation: **162 passed**; Ruff, `compileall`, `git diff --check`, and Phase 0/3 eligibility preflights against the pinned τ-bench Retail files pass. No provider call or study data was produced. Provider-backed Pilot, portfolio scientific review, human attribution calibration, and Formal remain unrun.
+
+**Pilot task semantic review binding update（2026-09-29）**
+
+- Pilot manifest 现在必须内嵌版本化的预运行人工任务审查：逐条确认任务无需欺骗、与策略/工具兼容且可满足；并对全部 E/V/H 任务两两确认语义场景不同。每项包含 reviewer、UTC 时间、理由，以及针对规范化完整 task object 的 SHA-256。
+- Manifest hash 固定审查内容；提供 pinned τ-bench data 时，preflight 与 Phase 4 task loader 会将每项审查哈希重新对照任务对象，任务内容或分组改变则拒绝运行。未绑定 pinned 数据时，preflight 明确标为只验证 manifest 内绑定，不表示验证过官方任务内容。
+- 测试中的审查文本明确是 synthetic fixture，不是研究判断。该改动补上了人工审查与 frozen Pilot task partition 之间的软件溯源/防过期连接；真实任务选择与人工语义判断、provider-backed Pilot、30 条双人 attribution calibration 和 Formal 仍未完成。
+- Pilot 结果 artifact indexing 现在会在哈希归档前对 WAL 模式 SQLite archive 做 `TRUNCATE` checkpoint，避免暂存 WAL 页面延迟写回主文件后导致不可变结果在 resume 时误报哈希损坏。完整验证为 **164 passed**（启用四项 pinned-runtime 集成）；Ruff、`compileall`、`git diff --check` 及 pinned τ-bench 数据上的 Phase 0/3 task preflight 均通过。没有发出真实 provider 请求。

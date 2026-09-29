@@ -35,6 +35,10 @@ def validate_pilot_config(
             heldout_task_ids=manifest.heldout_task_ids,
             excluded_task_ids=manifest.excluded_task_ids,
         )
+        review_document = json.loads(manifest.task_semantic_review_json)
+        from .task_review import verify_reviewed_task_hashes
+
+        verify_reviewed_task_hashes(review_document, tasks)
         selection = {
             "status": "eligible_partition_validated",
             "evolution_task_ids": list(selected.evolution_task_ids),
@@ -57,6 +61,18 @@ def validate_pilot_config(
         "max_episodes_per_seed": manifest.max_episodes,
         "request_budget_cap_per_seed": manifest.request_budget_cap,
         "real_provider_enabled": manifest.real_provider_enabled,
+        "task_semantic_review": {
+            "status": (
+                "pinned_task_hashes_verified" if data_dir is not None
+                else "manifest_bound_not_checked_against_pinned_tasks"
+            ),
+            "review_id": json.loads(manifest.task_semantic_review_json)["review_id"],
+            "sha256": manifest.task_semantic_review_sha256,
+            "task_count": len(json.loads(manifest.task_semantic_review_json)["task_reviews"]),
+            "pairwise_review_count": len(
+                json.loads(manifest.task_semantic_review_json)["pairwise_reviews"]
+            ),
+        },
         "task_selection": selection,
     }
 

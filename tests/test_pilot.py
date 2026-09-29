@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from itertools import combinations
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,7 @@ import yaml
 from evotau.archive import FailureArchive
 from evotau.budget import RequestBudget
 from evotau.lifecycle import TwoGenerationSmoke
-from evotau.manifest import PilotManifest, git_blob_sha1
+from evotau.manifest import PilotManifest, git_blob_sha1, sha256_json
 from evotau.native_runner import run_native_pilot
 from evotau.phase0 import load_config
 from evotau.pilot_preflight import main, validate_pilot_config
@@ -43,6 +44,42 @@ def _eligible_task(task_id: str, index: int) -> dict:
     }
 
 
+def _test_semantic_review(tasks: list[dict], selection: dict) -> dict:
+    panel_rows = [
+        *((task_id, "evolution") for task_id in selection["evolution"]),
+        *((task_id, "validation") for task_id in selection["validation"]),
+        *((task_id, "heldout") for task_id in selection["heldout"]),
+    ]
+    task_map = {item["id"]: item for item in tasks}
+    return {
+        "schema_version": 1,
+        "review_id": "fixture-task-review-v1",
+        "reviewer_id": "synthetic-test-fixture",
+        "reviewed_at": "2026-09-29T00:00:00Z",
+        "task_reviews": [
+            {
+                "task_id": task_id,
+                "panel": panel,
+                "task_sha256": sha256_json(task_map[task_id]),
+                "no_deception_required": True,
+                "policy_tool_compatible": True,
+                "satisfiable": True,
+                "rationale": "Synthetic fixture only; no research judgment.",
+            }
+            for task_id, panel in panel_rows
+        ],
+        "pairwise_reviews": [
+            {
+                "left_task_id": left,
+                "right_task_id": right,
+                "distinct_scenario": True,
+                "rationale": "Synthetic fixture only; distinct fixture IDs.",
+            }
+            for left, right in combinations((task_id for task_id, _panel in panel_rows), 2)
+        ],
+    }
+
+
 def _pilot_fixture(tmp_path: Path):
     config = load_config(ROOT / "configs/phase3-mechanism.yaml")
     experiment = config["experiment"]
@@ -70,6 +107,9 @@ def _pilot_fixture(tmp_path: Path):
         *(_eligible_task(f"V{index}", index + 10) for index in range(1, 3)),
         *(_eligible_task(f"H{index}", index + 20) for index in range(1, 3)),
     ]
+    experiment["task_semantic_review"] = _test_semantic_review(
+        tasks, experiment["task_selection"],
+    )
     split = {
         "train": ["E1", "E2", "E3", "E4", "V1", "V2"],
         "test": ["H1", "H2"],
@@ -79,7 +119,7 @@ def _pilot_fixture(tmp_path: Path):
     data_root = tmp_path / "data"
     task_path = data_root / "tau2/domains/retail/tasks.json"
     split_path = data_root / "tau2/domains/retail/split_tasks.json"
-    task_path.parent.mkdir(parents=True)
+    task_path.parent.mkdir(parents=True, exist_ok=True)
     task_path.write_bytes(task_bytes)
     split_path.write_bytes(split_bytes)
     experiment["source_blob_sha1"]["data/tau2/domains/retail/tasks.json"] = git_blob_sha1(task_bytes)
@@ -97,6 +137,8 @@ def test_pilot_manifest_freezes_three_generation_multiseed_evh_design(tmp_path):
     assert len(manifest.validation_task_ids) == 2
     assert len(manifest.heldout_task_ids) == 2
     assert manifest.to_payload()["failure_taxonomy_sha256"]
+    assert manifest.to_payload()["task_semantic_review_sha256"]
+    assert len(manifest.to_payload()["task_semantic_review"]["pairwise_reviews"]) == 28
     assert manifest.to_document()["manifest_sha256"] == manifest.sha256
 
 
@@ -190,10 +232,30 @@ def test_pilot_manifest_rejects_incomplete_frozen_design(tmp_path, field, value,
         PilotManifest.from_mapping(config)
 
 
+def test_pilot_manifest_requires_approved_task_and_pairwise_review(tmp_path):
+    config, _data_root = _pilot_fixture(tmp_path)
+    del config["experiment"]["task_semantic_review"]
+    with pytest.raises(ValueError, match="missing or unknown fields"):
+        PilotManifest.from_mapping(config)
+
+    config, _data_root = _pilot_fixture(tmp_path)
+    config["experiment"]["task_semantic_review"]["task_reviews"][0]["satisfiable"] = False
+    with pytest.raises(ValueError, match="failed required ex-ante review: satisfiable"):
+        PilotManifest.from_mapping(config)
+
+    config, _data_root = _pilot_fixture(tmp_path)
+    config["experiment"]["task_semantic_review"]["pairwise_reviews"].pop()
+    with pytest.raises(ValueError, match="assess every selected task pair"):
+        PilotManifest.from_mapping(config)
+
+
 def test_pilot_preflight_checks_pinned_files_entity_leakage_and_write_once(tmp_path):
     config, data_root = _pilot_fixture(tmp_path)
     result = validate_pilot_config(config, data_dir=data_root)
     assert result["task_selection"]["status"] == "eligible_partition_validated"
+    assert result["task_semantic_review"]["status"] == "pinned_task_hashes_verified"
+    assert result["task_semantic_review"]["task_count"] == 8
+    assert result["task_semantic_review"]["pairwise_review_count"] == 28
     assert len(result["task_selection"]["evolution_entity_keys"]) == 8
     assert result["task_selection"]["heldout_task_ids"] == ["H1", "H2"]
 
@@ -213,6 +275,20 @@ def test_pilot_preflight_checks_pinned_files_entity_leakage_and_write_once(tmp_p
 
     config["experiment"]["task_selection"]["heldout"] = ["H1", "E1"]
     with pytest.raises(ValueError, match="unique and disjoint"):
+        validate_pilot_config(config, data_dir=data_root)
+
+
+def test_pilot_preflight_rejects_semantic_review_bound_to_another_task_revision(tmp_path):
+    config, data_root = _pilot_fixture(tmp_path)
+    task_path = data_root / "tau2/domains/retail/tasks.json"
+    tasks = json.loads(task_path.read_text(encoding="utf-8"))
+    tasks[0]["user_scenario"]["instructions"]["known_info"] += " Revised fixture wording."
+    task_bytes = json.dumps(tasks).encode()
+    task_path.write_bytes(task_bytes)
+    config["experiment"]["source_blob_sha1"]["data/tau2/domains/retail/tasks.json"] = git_blob_sha1(
+        task_bytes,
+    )
+    with pytest.raises(ValueError, match="not bound to pinned task E1"):
         validate_pilot_config(config, data_dir=data_root)
 
 

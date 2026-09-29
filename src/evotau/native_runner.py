@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 import math
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from pathlib import Path
@@ -1384,6 +1385,14 @@ def _write_or_verify_immutable_json(path: Path, value: Mapping[str, Any]) -> Non
 def _pilot_artifact_rows(
     seed_directory: Path, checkpoint_path: Path | None, result_path: Path,
 ) -> list[dict[str, str]]:
+    archive_path = seed_directory / "archive.sqlite"
+    if archive_path.is_file():
+        # Freeze the durable SQLite image before hashing it. WAL pages are part
+        # of the archive state but sidecars are transient and not indexed.
+        with sqlite3.connect(archive_path, timeout=5.0) as db:
+            checkpoint = db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if checkpoint is None or checkpoint[0] != 0:
+            raise RuntimeError("Pilot archive could not be checkpointed before artifact indexing")
     project_root = Path.cwd().resolve()
     paths = [
         path for path in seed_directory.rglob("*")
