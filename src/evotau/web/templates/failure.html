@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · Failure Inspector{% endblock %}
+{% block content %}
+<div class="eyebrow">Failure inspector</div><h1>{{ state.label }}</h1>
+{% if provisional %}<div class="notice warning-box">这是单场失败候选，尚未通过独立审计和新 seed 复现，因此不计入 fitness，也不能据此驱动 repair。</div>
+<section class="card"><p>Episode <a href="/runs/{{ run.run_id|urlencode }}/episodes/{{ failure.episode_id|urlencode }}">{{ failure.episode_id }}</a> · Task {{ failure.task_id }} · Generation {{ failure.generation if failure.generation is not none else 'Unavailable' }}</p>
+<p>Failure category：{{ failure.failure_category or '任务未成功；没有独立验证的归因类别。' }}</p><p>Policy rule：{{ failure.policy_rule_id or 'Unavailable' }}</p><p>Stage：{{ failure.workflow_stage or 'Unavailable' }}</p><p>Mistake：{{ failure.mistake_type or 'Unavailable' }}</p><p>Evidence：{% for item in failure.evidence %}turn {{ item.turn_index }} · {{ item.source }} · {{ item.summary }}{% else %}Unavailable{% endfor %}</p></section>
+{% else %}<div class="notice danger-box">该失败来自 verified failure archive，可作为已验证 Service failure 查看。仅显示 archive 中已有的证据和引用。</div>
+<section class="grid"><div class="card span-6"><h2>失败来源</h2><p>Failure ID：<span class="mono">{{ failure.failure_id }}</span></p><p>Task {{ failure.task_id }} · Generation {{ failure.generation }}</p><p>Customer {{ failure.customer_strategy_id }} · Service {{ failure.service_strategy_id }}</p><p>Workflow stage：{{ failure.signature.workflow_stage }}</p><p>Policy rule：{{ failure.signature.policy_rule_id }}</p><p>Mistake：{{ failure.signature.mistake_type }}</p><p>Severity：{{ failure.severity }}</p></div>
+<div class="card span-6"><h2>独立验证与复现</h2><p>来源 Episode：<a href="/runs/{{ run.run_id|urlencode }}/episodes/{{ failure.episode_id|urlencode }}">{{ failure.episode_id }}</a></p><p>复现 Episode：<a href="/runs/{{ run.run_id|urlencode }}/episodes/{{ failure.reproduction_episode_id|urlencode }}">{{ failure.reproduction_episode_id }}</a></p><p>审核引用：{{ failure.verification_ref }}</p><p>复现审核引用：{{ failure.reproduction_verification_ref }}</p><p>Policy 引用：{{ failure.policy_ref }}</p></div>
+<div class="card span-12"><h2>Evidence</h2>{% for item in failure.evidence %}<p>Turn {{ item.turn_index }} · {{ item.source }} · {{ item.summary }}</p>{% endfor %}</div></section>{% endif %}
+<details><summary>Show technical details</summary><pre>{{ failure|tojson(indent=2) }}</pre></details>
+{% endblock %}

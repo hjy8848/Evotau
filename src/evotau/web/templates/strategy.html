@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · Strategy{% endblock %}
+{% block content %}
+<div class="eyebrow">Strategy snapshot</div><h1>{{ 'Customer' if side == 'customer' else 'Service' }} 策略</h1>
+<p class="muted">ID <span class="mono">{{ strategy_id }}</span> · 来自 run 中保存的策略档案 / generation decision。</p>
+<section class="card">
+{% if side == 'customer' %}
+{% if view.available %}<p><strong>信息披露：</strong>{{ view.disclosure }}</p><p><strong>请求顺序：</strong>{{ view.request_order }}</p><p><strong>挑战方式：</strong>{{ view.challenge_style }}</p><p><strong>最多挑战：</strong>{{ view.challenge_budget }} 次</p>{% else %}<p class="muted">{{ view.summary }}</p>{% endif %}
+{% else %}{% if view.available and view.rules %}{% for rule in view.rules %}<article class="notice"><h3>{{ rule.policy_ref }}</h3><p><strong>触发条件：</strong>{{ rule.trigger }}</p><p><strong>要求执行：</strong>{{ rule.required_execution }}</p><p><strong>证据引用：</strong>{{ rule.evidence_refs|join(', ') }}</p></article>{% endfor %}{% elif view.available %}<p>当前没有额外 Service repair rule。</p>{% else %}<p>Service 策略定义不可用。</p>{% endif %}{% endif %}
+</section>
+<details><summary>Show technical details</summary><pre>{{ strategy|tojson(indent=2) }}</pre></details>
+{% endblock %}

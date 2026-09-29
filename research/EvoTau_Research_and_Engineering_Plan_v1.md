@@ -1,6 +1,6 @@
-Status: Plan-specified software layers are implemented through native Pilot execution and Formal preflight/inference tooling: pinned-runtime adapters, Customer–Service evolution/gates, eight Pilot conditions, run-level RQ1–RQ3 analysis, power/cost/calibration tools, and task-bound semantic review. Provider-backed experiments, completed human review/calibration records, pilot-informed design decisions, registration, and Formal study artifacts remain uncollected; historical updates below record scope and validation.
+Status: Plan-specified software layers are implemented through native Pilot execution, Formal preflight/inference tooling, and the optional local Experiment Console V1. Provider-backed experiments, completed human review/calibration records, pilot-informed design decisions, registration, and Formal study artifacts remain uncollected; historical updates below record scope and validation.
 Owner: hjy8848
-Last verified: 168 tests passed and four pinned-runtime tests were skipped because `EVOTAU_TAU2_DATA_DIR` is not available in this checkout; Ruff, `compileall`, and `git diff --check` passed. Earlier pinned-runtime verification used local deterministic completions, and the `evotau-task-review-template` entry point was installed and checked. No real provider request or human research judgment was generated.
+Last verified: 180 tests passed and four pinned-runtime tests were skipped because `EVOTAU_TAU2_DATA_DIR` is not available in this checkout; Ruff, `compileall`, and `git diff --check` passed. `pip install -e ".[web]"`, the `evotau-web` CLI help, loopback HTTP dashboard smoke, and non-loopback refusal were checked. Earlier pinned-runtime verification used local deterministic completions, and the `evotau-task-review-template` entry point was installed and checked. No real provider request or human research judgment was generated.
 Scope: Research and engineering plan for EvoTau's τ-bench Retail text MVP and later evaluation.
 
 This plan guides the decision to build EvoTau as a thin research layer and defines the Phase 0 integration proof before larger co-evolution experiments.
@@ -1706,3 +1706,59 @@ Phase 0 之后的实现顺序建议：
 - Added the preregistered `no_historical_replay` Pilot condition. Its normal repair gate omits the incumbent-passing historical replay pair, adjusts the preflighted episode budget and seed schedule, and records `historical_replay_included: false` in every gate report. The native runner rejects a custom transition that does not explicitly use the no-history configuration.
 - Native Pilot now accepts all eight Formal conditions from the plan. Synthetic tests cover the fixed-Service RQ1 arm, frozen-Customer/Service ablations, and successful no-history gate execution without any incumbent history; these are software fixtures, not research observations.
 - Validation: **168 passed, 4 skipped**. The four skips are the optional pinned-runtime tests because `EVOTAU_TAU2_DATA_DIR` was unavailable in this checkout. Ruff, `compileall`, and `git diff --check` passed. No real provider requests or human research judgments were generated. Task selection/review, provider-backed smoke and Pilot runs, the static portfolio's scientific review, 30-case double-review calibration, pilot-informed power/design decisions, registration, and Formal study artifacts remain outstanding.
+
+## EvoTau Experiment Console
+
+**定位**
+
+The EvoTau Experiment Console is an optional operator and visualization layer. It contains no evolutionary semantics. All experimental decisions remain delegated to the same EvoTau Core used by CLI runs.
+
+```text
+                   EvoTau Core
+                       ↑
+              ┌────────┴────────┐
+              │                 │
+             CLI         Experiment Console
+```
+
+Console V1 is a local, loopback-only FastAPI application with server-rendered Jinja pages and a read-only SSE observation feed. It invokes the existing Phase 0, Phase 3, and Pilot CLI modules after presenting the manifest and launch-input fingerprints for review. It does not construct an alternate orchestrator or implement any study decision.
+
+The Console is responsible for explicit experiment launch, run status, conversation and tool-call inspection, Customer/Service strategy visualization, generation decisions, failure inspection, repair/gate visualization, provider/token/cost observability, saved cross-play visualization, artifact navigation, and task-review status display. It does not perform mutation, selection, attribution, repair acceptance, evaluator decisions, budget accounting, or study-analysis calculations. The browser can request a pause only by writing a Console control signal; Phase 3 and Pilot check it before dispatching a new episode. An active episode and its tool writes are allowed to finish.
+
+Research integrity rules for the Console are:
+
+- `events.jsonl` is an append-only observability artifact derived from existing committed artifacts. It is not a research source of truth, and event-log errors are isolated from EvoTau's runner decisions.
+- Formal evidence remains the immutable manifests, trajectories, `EpisodeRecord`/`FailureRecord`, checkpoints, archives, gate reports, result indexes, and saved cross-play artifacts already produced by Core.
+- The Console never edits a frozen manifest, changes E/V/H assignments, changes a provider budget, or writes an automatic task-review judgment.
+- Until a completed Pilot root result index and every seed-block hash are verified, H-panel trajectories, task IDs, raw manifest fields, failure entries, and H-based cross-play matrices remain sealed in the UI.
+- Provider use is never enabled by the Console. A start request is accepted only when the frozen manifest already enables a real provider and freezes role models; the user must review a preview and explicitly confirm the experiment ID. Launch inputs are fingerprinted again at start. Opening the dashboard issues no provider request.
+- Unknown token usage and absent frozen price schedules remain unavailable; the Console does not infer role-level callback costs or download prices.
+
+Implementation and research execution order:
+
+```text
+Core mechanism software
+↓
+Experiment Console V1
+↓
+Offline/mock Console validation
+↓
+Provider-backed Phase 0
+↓
+Tiny provider-backed Phase 3
+↓
+Cost/signal review
+↓
+Pilot
+↓
+Formal
+```
+
+Console is for observability and operator comprehension. It is not a new research contribution or a new EvoTau algorithm component. The V1 code is under `src/evotau/web/`; install the optional UI dependencies with `pip install -e ".[web]"` and launch `evotau-web` at `http://127.0.0.1:8000`. The checked-in configs keep provider use OFF; a real run still requires a separately reviewed frozen configuration, pinned τ-bench data, and, for Phase 3/Pilot, a reviewed provider plugin and compatible completed Phase 0 parent.
+
+**Experiment Console implementation update（2026-09-29）**
+
+- Added read-only adapters for Phase 0/Phase 3/Pilot manifests, indexed episode artifacts, checkpoints, SQLite failure/strategy archives, native τ-bench messages/tool calls/results, budgets, task review status, and saved `CrossPlayMatrix` artifacts. Artifact hashes and path containment are checked before display; unsupported or inconsistent files fail closed. Before Pilot completion, H task IDs and trajectories are hidden, including in raw-manifest views.
+- Added a local dashboard, explicit manifest preview and Start Run flow, run/generation/budget views, conversation/strategy/failure/gate pages, cross-play heatmap, task-review status, and a resumable `events.jsonl`/SSE feed derived from committed files. Events are not consumed by Core decisions and failures in the observation log only disable that view.
+- Phase 3 and Pilot accept an optional Console stop-file checked only after completed-episode cache recovery and before the next native episode dispatch. Exit code 75 represents a safe pause; the default CLI behavior and scientific protocol are unchanged.
+- Added offline fixtures for pages, message/tool rendering, credential redaction, H sealing and indexed release, malformed/missing artifacts, event append/resume/error isolation, launch fingerprinting, provider-OFF rejection, duplicate-start prevention, metric direction, and safe pause boundaries. Full validation: **180 passed, 4 skipped** because pinned τ-bench data was not configured; Ruff, `compileall`, and `git diff --check` pass. The optional install, CLI help, loopback GET, and non-loopback refusal were checked. No provider request or human judgment was generated; the Console implementation created no provider-backed research evidence.

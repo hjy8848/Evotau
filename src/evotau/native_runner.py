@@ -74,6 +74,10 @@ class NativeEpisodeRunError(RuntimeError):
     """A native run failed; provider or credential details are kept out of records."""
 
 
+class StopBeforeEpisodeDispatch(RuntimeError):
+    """Console pause requested at a safe boundary before a new episode starts."""
+
+
 class TauBenchEpisodeRunner:
     """Run native τ-bench text episodes for `TwoGenerationSmoke`.
 
@@ -93,6 +97,7 @@ class TauBenchEpisodeRunner:
         audit_provider: AuditProvider | None = None,
         service_token_counter: Callable[[str], int] | None = None,
         output_directory: str | Path | None = None,
+        stop_before_next_episode_file: str | Path | None = None,
     ) -> None:
         if not manifest.real_provider_enabled:
             raise RuntimeError("native Phase 3 runs require explicit real_provider_enabled opt-in")
@@ -133,6 +138,10 @@ class TauBenchEpisodeRunner:
             self.data_root / "tau2/domains/retail/policy.md"
         ).read_text(encoding="utf-8")
         self.output_directory = Path(output_directory or manifest.output_path)
+        self.stop_before_next_episode_file = (
+            None if stop_before_next_episode_file is None
+            else Path(stop_before_next_episode_file).expanduser().absolute()
+        )
         self.output_directory.mkdir(parents=True, exist_ok=True)
         self._completed_episode_cache: dict[
             str, tuple[EpisodeRecord, BudgetSnapshot, bool]
@@ -181,6 +190,14 @@ class TauBenchEpisodeRunner:
                 self.request_budget.absorb_usage(usage)
                 self._completed_episode_cache[episode_key_sha256] = (record, usage, False)
             return record
+        if self.stop_before_next_episode_file is not None:
+            signal = self.stop_before_next_episode_file
+            if signal.is_symlink():
+                raise RuntimeError("pause signal path cannot be a symlink")
+            if signal.exists():
+                raise StopBeforeEpisodeDispatch(
+                    "paused safely before dispatching the next native episode"
+                )
         if self.request_budget.snapshot().remaining <= 0:
             raise RuntimeError("native episode refused before dispatch: request budget is exhausted")
 
@@ -419,6 +436,7 @@ def run_native_phase3(
     service_transition: Callable[..., Any] | None = None,
     service_proposal_provider: Callable[..., Any] | None = None,
     service_repair_audit_provider: Callable[..., Any] | None = None,
+    stop_before_next_episode_file: str | Path | None = None,
 ) -> tuple[tuple[Any, ...], BudgetSnapshot]:
     """Run the frozen two-generation controller on native τ-bench episodes.
 
@@ -503,6 +521,7 @@ def run_native_phase3(
         request_budget=budget,
         audit_provider=audit_provider,
         service_token_counter=service_token_counter,
+        stop_before_next_episode_file=stop_before_next_episode_file,
     )
     archive = FailureArchive(Path(manifest.output_path) / "archive.sqlite")
     controller = TwoGenerationSmoke(
@@ -541,6 +560,7 @@ def run_native_pilot(
     config_path: str | Path,
     data_dir: str | Path,
     callback_factory: Callable[[Mapping[str, Any], PilotManifest, int], Mapping[str, Any]],
+    stop_before_next_episode_file: str | Path | None = None,
 ) -> dict[str, Any]:
     """Execute one frozen Pilot condition over its independent seed blocks.
 
@@ -765,6 +785,7 @@ def run_native_pilot(
             manifest=manifest, config=config, data_dir=data_root,
             request_budget=budget, audit_provider=callbacks["audit_provider"],
             service_token_counter=service_token_counter, output_directory=seed_dir,
+            stop_before_next_episode_file=stop_before_next_episode_file,
         )
         controller = None
         commits = ()

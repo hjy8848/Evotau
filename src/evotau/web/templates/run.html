@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · {{ run.experiment_id }}{% endblock %}
+{% block content %}
+<div class="eyebrow">{{ run.phase }}</div><h1>{{ run.experiment_id }}</h1>
+<div class="toolbar"><div><span class="status {% if run.status == 'complete' %}success{% elif run.status == 'failed' %}danger{% elif run.status == 'running' %}warning{% else %}muted-status{% endif %}">{{ {'complete':'已完成','running':'运行中','paused':'已安全暂停','failed':'失败','incomplete':'未完成 / 可恢复','not_started':'尚未开始'}.get(run.status, run.status) }}</span>
+  <span class="pill">Provider {{ 'ON' if run.real_provider_enabled else 'OFF' }}</span><span class="pill">τ-bench {{ run.upstream_commit or 'Unavailable' }}</span></div>
+  <div>{% if pause_available %}<form method="post" action="/runs/{{ run.run_id|urlencode }}/pause"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button secondary" type="submit">Pause after current episode</button></form>{% elif run.status == 'running' %}<span class="pill sealed">Phase 0 单场 run 会安全完成</span>{% endif %}</div></div>
+{% if run.status == 'running' and not run.phase.startswith('0-') %}<div class="notice">如果当前 episode 正在执行，它会先完成；暂停信号只会在下一次 episode 派发前生效。</div>{% endif %}
+{% if run.heldout_sealed %}<div class="notice warning-box">Heldout panel sealed · {{ run.heldout_task_count }} 个任务尚未开放；trajectory 不会通过 Console 展示。</div>{% endif %}
+{% if run.event_warning %}<div class="notice warning-box">{{ run.event_warning }}</div>{% endif %}
+
+<section class="grid">
+  <div class="card span-3"><div class="metric">{{ run.current_generation if run.current_generation is not none else run.generation_commits|length }}</div><div class="metric-label">当前 generation / 已提交代数</div></div>
+  <div class="card span-3"><div class="metric">{{ run.episodes|length }} / {{ run.episode_limit if run.episode_limit is not none else 'Unavailable' }}</div><div class="metric-label">Episodes 已用 / 上限</div></div>
+  <div class="card span-3"><div class="metric">{{ run.budget.attempt_label }}</div><div class="metric-label">Provider attempts 已用 / 上限</div></div>
+  <div class="card span-3"><div class="metric">{{ run.budget.total_tokens if run.budget.total_tokens is not none else 'Unavailable' }}</div><div class="metric-label">Total tokens</div></div>
+</section>
+
+<section class="grid" style="margin-top:16px">
+  <div class="card span-4"><h2>当前 Episode</h2>{% if run.current_episode %}<p><span class="status warning">{{ run.current_episode.label }}</span></p><p class="mono">Attempt {{ run.current_episode.attempt_id }}</p>{% else %}<p class="muted">Unavailable · Core 当前没有可安全识别的活动 episode。</p>{% endif %}</div>
+  <div class="card span-4"><h2>当前 Customer</h2>{% if run.current_customer_id %}<p class="mono">{{ run.current_customer_id }}</p><p>{{ run.current_customer_view.summary }}</p>{% else %}<p class="muted">策略快照尚未提交或记录。</p>{% endif %}</div>
+  <div class="card span-4"><h2>当前 Service</h2>{% if run.current_service_id %}<p class="mono">{{ run.current_service_id }}</p>{% if run.current_service_view.available and run.current_service_view.rules %}{% for rule in run.current_service_view.rules %}<p>{{ rule.policy_ref }} · {{ rule.required_execution }}</p>{% endfor %}{% elif run.current_service_view.available %}<p>没有额外 repair rule。</p>{% else %}<p>策略快照不可用。</p>{% endif %}{% else %}<p class="muted">策略快照尚未提交或记录。</p>{% endif %}</div>
+</section>
+
+<section class="grid" style="margin-top:16px">
+ <div class="card span-8">
+   <div class="toolbar"><div><div class="eyebrow">Episodes</div><h2>对话与结果</h2></div><a class="button secondary" href="/runs/{{ run.run_id|urlencode }}/cross-play">Cross-play</a></div>
+   {% if run.episodes %}<div style="overflow:auto"><table><thead><tr><th>Episode</th><th>Task</th><th>Customer / Service</th><th>结果</th><th>策略执行</th></tr></thead><tbody>
+   {% for episode in run.episodes %}<tr><td><a href="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}">{{ episode.episode_id }}</a><div class="small muted">{{ episode.panel_name or 'panel 未标记' }}</div></td><td>{{ episode.task_id }} · seed {{ episode.seed if episode.seed is not none else 'Unavailable' }}</td><td><span class="mono">{{ episode.customer_strategy_id or 'Unavailable' }}</span><br><span class="mono">{{ episode.service_strategy_id or 'Unavailable' }}</span></td><td>{% if episode.task_success is sameas true %}<span class="status success">任务成功</span>{% elif episode.task_success is sameas false %}<span class="status danger">任务未成功</span>{% else %}<span class="status muted-status">Unavailable</span>{% endif %}<div class="small">{{ '已验证 Service 失败' if episode.verified_failure else '任务结果不等同于已归因失败' }}</div></td><td>{% if episode.strategy_applicable is sameas true %}有机会；{% if episode.customer_strategy_adherent is sameas true %}按策略执行{% elif episode.customer_strategy_adherent is sameas false %}未按策略执行{% else %}adherence 不可用{% endif %}{% elif episode.strategy_applicable is sameas false %}本场不适用{% else %}不可用{% endif %}</td></tr>{% endfor %}
+   </tbody></table></div>{% else %}<p class="muted">Episode artifact 尚未落盘。</p>{% endif %}
+ </div>
+ <aside class="card span-4">
+   <div class="eyebrow">Budget and telemetry</div><h2>API / 成本</h2>
+   <p>Provider attempts：<strong>{{ run.budget.attempt_label }}</strong></p>
+   <p>Prompt / completion tokens：<strong>{{ run.budget.token_label }}</strong></p>
+   <p>Total tokens：<strong>{{ run.budget.total_tokens if run.budget.total_tokens is not none else 'Unavailable' }}</strong></p>
+   <p class="small muted">{{ run.budget.cost_label }}</p>
+   <p class="small muted">回调角色调用未在 Core 中分别记账；按角色拆分不可用，不作猜测。</p>
+   {% if run.budget.model_usage %}<table><thead><tr><th>模型 ID</th><th>Attempts</th><th>Prompt / completion</th></tr></thead><tbody>{% for item in run.budget.model_usage %}<tr><td class="mono">{{ item.model_id }}</td><td>{{ item.attempts }}</td><td>{{ item.prompt_tokens if not item.usage_unavailable else 'Unavailable' }} / {{ item.completion_tokens if not item.usage_unavailable else 'Unavailable' }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+   <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
+   <h3>人工任务审查</h3><p><strong>{{ run.task_review.label }}</strong></p><p class="small muted">{{ run.task_review.detail }}</p>
+ </aside>
+</section>
+
+<section class="card" style="margin-top:16px"><div class="eyebrow">Generation decisions</div><h2>Customer / Service 演变记录</h2>
+{% if run.generation_views %}{% for generation in run.generation_views %}<details open><summary>Generation {{ generation.generation }} · {{ generation.selection_label }}</summary>
+  <p class="small muted">{{ generation.note or '' }} · Customer {{ generation.customer_id }} · Service {{ generation.service_id }}</p>
+  {% if generation.selection %}<p>选择依据：{{ generation.selection.reason }} · {{ '已演变' if generation.selection.evolved else 'Customer 保持不变' }}</p>{% endif %}
+  {% if generation.customer_evaluations %}<table><thead><tr><th>Candidate strategy</th><th>面板</th><th>Verified failure fitness</th><th>审计覆盖</th></tr></thead><tbody>{% for evaluation in generation.customer_evaluations %}<tr><td class="mono">{{ evaluation.strategy_id }}</td><td>{{ evaluation.panel_name }}</td><td>{{ evaluation.fitness }}</td><td>{{ evaluation.failure_audit_refs|length }} 条</td></tr>{% endfor %}</tbody></table>{% endif %}
+  {% for proposal in generation.proposals %}<p class="small">候选 <span class="mono">{{ proposal.strategy_id }}</span> · 改变字段：{{ proposal.changed_fields|join(', ') }} · 支持失败：{{ proposal.supporting_failure_ids|length }}</p>{% endfor %}
+  {% if generation.gate %}<div class="notice {% if generation.gate_view.tone == 'success' %}{% elif generation.gate_view.tone == 'danger' %}danger-box{% else %}warning-box{% endif %}"><strong>{{ generation.gate_view.label }}</strong> · {{ generation.gate_view.detail }}{% if generation.gate.historical_replay_included is sameas false %}<p>Historical replay disabled by registered ablation.</p>{% endif %}</div>
+    <table><thead><tr><th>Gate check</th><th>Outcome</th><th>Reason</th></tr></thead><tbody>{% for unit in generation.gate.unit_results %}<tr><td>{{ unit[0] }}</td><td>{{ '通过' if unit[1] else '未通过' }}</td><td>{{ unit[2] }}</td></tr>{% endfor %}</tbody></table>
+    {% if generation.gate.proposal %}<h3>Repair proposal</h3><p>目标 verified failure：{{ generation.gate.target_failure_id }}</p><p>{{ generation.gate.proposal.verification_hypothesis }}</p><p>{{ generation.gate.proposal.rule.policy_ref }} · {{ generation.gate.proposal.rule.trigger }} · {{ generation.gate.proposal.rule.required_execution }}</p>{% endif %}
+  {% endif %}
+  <details><summary>Show technical details</summary><pre>{{ generation.decision_record|tojson(indent=2) }}</pre></details>
+</details>{% endfor %}{% else %}<p class="muted">Checkpoint 尚无已提交 generation。</p>{% endif %}
+</section>
+
+<section class="grid" style="margin-top:16px">
+ <div class="card span-6"><div class="eyebrow">Attribution</div><h2>Verified failures</h2>{% if run.verified_failures %}{% for failure in run.verified_failures %}<p><a href="/runs/{{ run.run_id|urlencode }}/failures/{{ failure.failure_id|urlencode }}">{{ failure.signature.mistake_type }}</a> · Task {{ failure.task_id }} · generation {{ failure.generation }}</p>{% endfor %}{% else %}<p class="muted">暂无独立验证并复现的 Service failure。</p>{% endif %}
+ {% if run.provisional_failures %}<h3>尚未验证的失败候选</h3>{% for episode in run.provisional_failures %}<p><a href="/runs/{{ run.run_id|urlencode }}/failures/candidate-{{ episode.episode_id|urlencode }}">{{ episode.failure_category or '策略违规候选' }}</a> · 尚未验证，不计入 fitness</p>{% endfor %}{% endif %}</div>
+ <div class="card span-6"><div class="eyebrow">Console event stream</div><h2>近期观察事件</h2><div id="events" class="event-list">{% for event in run.events[-15:]|reverse %}<div class="event"><span class="mono">{{ event.event_type }}</span> · {{ event.episode_id or 'run' }}</div>{% endfor %}</div><p class="small muted">事件仅从已写入 artifact 派生，不作为研究证据。</p></div>
+</section>
+<details style="margin-top:16px"><summary>Show technical details</summary><pre>{{ run.raw_artifacts|tojson(indent=2) }}</pre></details>
+<script>
+(() => { const feed = new EventSource('/runs/{{ run.run_id|urlencode }}/events'); const box = document.getElementById('events');
+  feed.onmessage = (message) => { try { const e = JSON.parse(message.data); const row = document.createElement('div'); row.className = 'event'; row.textContent = e.event_type + ' · ' + (e.episode_id || 'run'); box.prepend(row); } catch (_) {} };
+})();
+</script>
+{% endblock %}

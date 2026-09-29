@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · Run Preview{% endblock %}
+{% block content %}
+<div class="eyebrow">Explicit launch review</div><h1>启动前安全预览</h1>
+<p class="muted">此预览只读取配置与代码指纹，不创建 manifest、不修改配置，也没有发出 provider 请求。</p>
+<div class="grid">
+  <section class="card span-8">
+    <h2>{{ preview.experiment_id }}</h2>
+    <table><tbody>
+      <tr><th>Phase</th><td>{{ preview.phase }}</td></tr>
+      <tr><th>Tasks</th><td>{% for task in preview.task_labels %}<span class="pill {% if 'sealed' in task %}sealed{% endif %}">{{ task }}</span>{% endfor %}</td></tr>
+      <tr><th>Seeds</th><td>{{ preview.seeds|join(', ') }}</td></tr>
+      <tr><th>Generations / Customer candidates</th><td>{{ preview.generations }} / {{ preview.customer_candidates }}</td></tr>
+      <tr><th>Max episodes</th><td>{{ preview.max_episodes }}</td></tr>
+      <tr><th>Request budget cap</th><td>{{ preview.request_budget_cap }}</td></tr>
+      <tr><th>Provider retries</th><td>{{ preview.provider_retries }}</td></tr>
+      <tr><th>Models</th><td>{% for role, model in preview.models %}<span class="pill">{{ role }}: {{ model }}</span>{% endfor %}</td></tr>
+      <tr><th>Real provider</th><td><span class="status {% if preview.real_provider_enabled %}danger{% else %}muted-status{% endif %}">{{ 'ON' if preview.real_provider_enabled else 'OFF' }}</span></td></tr>
+      <tr><th>Output path</th><td class="mono">{{ preview.output_path }}</td></tr>
+      <tr><th>τ-bench data path</th><td class="mono">{{ preview.tau2_data_path }}</td></tr>
+      <tr><th>Provider plugin</th><td class="mono">{{ preview.provider_plugin }}</td></tr>
+      {% if preview.phase0_result_path != '未设置' %}<tr><th>Phase 0 parent</th><td class="mono">{{ preview.phase0_result_path }}</td></tr>{% endif %}
+      <tr><th>Manifest hash</th><td class="mono">{{ preview.manifest_sha256 }}</td></tr>
+      <tr><th>Launch inputs fingerprint</th><td class="mono">{{ preview.launch_sha256 }}</td></tr>
+    </tbody></table>
+    {% if preview.real_provider_enabled %}
+      <div class="notice danger-box">点击 Start Run 会调用现有 EvoTau CLI runner；该 frozen manifest 已明确启用真实 provider，可能产生 API 费用。</div>
+    {% else %}
+      <div class="notice warning-box">该 frozen manifest 的真实 provider 为 OFF。Console 不会自动打开开关；Core runner 将拒绝真实运行。</div>
+    {% endif %}
+  </section>
+  <aside class="card span-4">
+    <h2>确认执行</h2>
+    <p class="small muted">配置、输入路径和源码指纹会在启动前重新校验。网页不会改写任何 frozen 字段。</p>
+    <form method="post" action="/start">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="phase" value="{{ preview.phase }}">
+      <input type="hidden" name="config_path" value="{{ config_path }}">
+      <input type="hidden" name="confirmed_manifest_sha256" value="{{ preview.manifest_sha256 }}">
+      <input type="hidden" name="confirmed_launch_sha256" value="{{ preview.launch_sha256 }}">
+      <input type="hidden" name="tau2_data_dir" value="{{ tau2_data_dir }}">
+      <input type="hidden" name="phase0_result_path" value="{{ phase0_result_path }}">
+      <input type="hidden" name="provider_plugin" value="{{ provider_plugin }}">
+      <label>请再次输入实验 ID</label><input name="confirm_experiment_id" value="" placeholder="{{ preview.experiment_id }}" autocomplete="off" required>
+      <div class="form-actions"><button type="submit" {% if not preview.real_provider_enabled %}disabled{% endif %}>Start Run</button></div>
+      {% if not preview.real_provider_enabled %}<p class="small muted">真实 Provider 为 OFF，启动按钮已禁用。要运行实验，必须先在受审配置中预先冻结 provider 开关和模型；Console 不会修改它们。</p>{% endif %}
+    </form>
+    <p class="small muted" style="margin-top:12px">当前配置：{{ config_path }}</p>
+  </aside>
+</div>
+{% endblock %}

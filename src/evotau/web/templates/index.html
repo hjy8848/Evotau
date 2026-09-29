@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · Dashboard{% endblock %}
+{% block content %}
+<div class="eyebrow">Research operator dashboard</div>
+<h1>实验状态</h1>
+<p class="muted">Console 默认只读，不会在打开页面时启动 run，也不会自动启用 provider。</p>
+<div class="notice">τ-bench commit 和任务来源从各 run 的 frozen manifest 读取。Web 与 CLI 共享 EvoTau Core；每次启动前都要先看预览并明确点击 Start Run。</div>
+
+<section class="grid" aria-label="实验入口">
+  <div class="card span-4">
+    <div class="eyebrow">Phase 0</div><h2>单场真实集成测试</h2>
+    <p class="small muted">先验证固定任务和运行时接线。Provider 必须已在 frozen manifest 中明确开启。</p>
+    <form method="post" action="/preview">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="phase" value="0-integration-proof">
+      <label>冻结配置路径</label><input name="config_path" value="{{ config_phase0 }}" required>
+      <label>τ-bench data 目录</label><input name="tau2_data_dir" value="{{ tau2_data_dir }}" placeholder="固定版本仓库中的 data/">
+      <div class="form-actions"><button type="submit">预览 Phase 0</button></div>
+    </form>
+  </div>
+  <div class="card span-4">
+    <div class="eyebrow">Phase 3</div><h2>两代机制 Smoke</h2>
+    <p class="small muted">需要匹配的完整 Phase 0 parent、独立审计回调与 Service repair 回调。</p>
+    <form method="post" action="/preview">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="phase" value="3-two-generation-smoke">
+      <label>冻结配置路径</label><input name="config_path" value="{{ config_phase3 }}" required>
+      <label>Phase 0 结果 JSON</label><input name="phase0_result_path" placeholder="experiments/runs/.../phase0-result.json">
+      <label>Provider plugin（module:factory）</label><input name="provider_plugin" placeholder="reviewed_plugin:build_callbacks">
+      <label>τ-bench data 目录</label><input name="tau2_data_dir" value="{{ tau2_data_dir }}" placeholder="固定版本仓库中的 data/">
+      <div class="form-actions"><button type="submit">预览 Phase 3</button></div>
+    </form>
+  </div>
+  <div class="card span-4">
+    <div class="eyebrow">Pilot</div><h2>Pilot 仅显示入口</h2>
+    <div class="notice warning-box">建议先完成人工任务审查、Phase 0 和 Phase 3 smoke，再使用已冻结的 Pilot 配置。Console 不会替你挑任务或批准审查。</div>
+    <form method="post" action="/preview">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="phase" value="4-pilot">
+      <label>Pilot frozen config 路径</label><input name="config_path" value="{{ config_pilot }}" placeholder="尚未提供 Pilot 配置">
+      <label>Provider plugin（module:factory）</label><input name="provider_plugin" placeholder="reviewed_plugin:build_callbacks">
+      <label>τ-bench data 目录</label><input name="tau2_data_dir" value="{{ tau2_data_dir }}" placeholder="固定版本仓库中的 data/">
+      <div class="form-actions"><button type="submit" class="button secondary">检查 Pilot 配置</button></div>
+    </form>
+  </div>
+</section>
+
+<section class="card" style="margin-top:18px">
+  <div class="toolbar"><div><div class="eyebrow">Existing artifacts</div><h2>本地 runs</h2></div><span class="pill">Provider 状态始终来自 frozen manifest</span></div>
+  {% if runs %}
+  <div style="overflow:auto"><table><thead><tr><th>实验</th><th>阶段</th><th>状态</th><th>Provider</th><th>Episodes</th><th>预算</th><th>Manifest</th></tr></thead><tbody>
+    {% for item in runs %}
+    <tr><td><a href="/runs/{{ item.run_id|urlencode }}">{{ item.experiment_id }}</a></td><td>{{ item.phase }}</td>
+      <td><span class="status {% if item.status == 'complete' %}success{% elif item.status == 'running' %}warning{% else %}muted-status{% endif %}">{{ {'complete':'已完成','running':'运行中','paused':'已暂停','failed':'失败','incomplete':'未完成','not_started':'尚未开始'}.get(item.status, item.status) }}</span></td>
+      <td>{{ 'ON' if item.real_provider_enabled else 'OFF' }}</td><td>{{ item.episode_count }}</td>
+      <td>{{ item.provider_attempts if item.provider_attempts is not none else 'Unavailable' }} / {{ item.provider_attempt_cap if item.provider_attempt_cap is not none else 'Unavailable' }}</td>
+      <td class="mono">{{ item.manifest_sha256[:12] }}</td></tr>
+    {% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="muted">尚无 run manifest。运行不会自动开始；请先从 Phase 0 或 Phase 3 入口生成安全预览。</p>{% endif %}
+</section>
+{% endblock %}

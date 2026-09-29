@@ -16,6 +16,7 @@ from evotau.checkpoint import manifest_fingerprint
 from evotau.manifest import ExperimentManifest, MechanismManifest, sha256_json
 from evotau.native_runner import (
     IndependentEpisodeAudit,
+    StopBeforeEpisodeDispatch,
     TauBenchEpisodeRunner,
     _provider_provenance_document,
     _validate_phase0_parent,
@@ -191,6 +192,31 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
     )
     assert resumed_record == record
     assert resumed_budget.snapshot().attempts == 2
+
+
+def test_console_pause_signal_stops_before_new_episode_without_incomplete_artifact(
+    tmp_path: Path, monkeypatch,
+):
+    runner, budget, _provider = configured_runner(tmp_path, monkeypatch)
+    signal = tmp_path / "pause-before-next"
+    signal.write_text("pause", encoding="utf-8")
+    runner.stop_before_next_episode_file = signal
+    with pytest.raises(StopBeforeEpisodeDispatch):
+        runner(
+            task_id="73", seed=42, customer=CustomerStrategy(),
+            service=ServiceStrategy(), panel_name="discovery",
+        )
+    episode_root = runner.output_directory / "episodes"
+    assert not episode_root.exists()
+    assert budget.snapshot().attempts == 0
+
+    signal.unlink()
+    record = runner(
+        task_id="73", seed=42, customer=CustomerStrategy(),
+        service=ServiceStrategy(), panel_name="discovery",
+    )
+    assert record.episode_id == "native-simulation-73"
+    assert budget.snapshot().attempts == 1
 
 
 def test_native_runner_without_independent_audit_is_uncertain_and_not_fit_eligible(

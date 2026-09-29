@@ -17,7 +17,11 @@ from typing import Any
 import yaml
 
 from .manifest import MechanismManifest, PilotManifest, sha256_json
-from .native_runner import _validate_phase0_parent, run_native_phase3
+from .native_runner import (
+    StopBeforeEpisodeDispatch,
+    _validate_phase0_parent,
+    run_native_phase3,
+)
 from .phase0 import load_config
 from .phase0_run import _load_pinned_tasks
 
@@ -172,6 +176,7 @@ def run_from_config(
     phase0_result_path: str | Path,
     tau2_data_dir: str | Path | None,
     provider_plugin: str,
+    stop_before_next_episode_file: str | Path | None = None,
 ) -> tuple[tuple[Any, ...], Any, MechanismManifest]:
     """Validate all frozen inputs before loading callbacks or dispatching episodes."""
 
@@ -201,6 +206,7 @@ def run_from_config(
         data_dir=data_dir,
         phase0_result_path=phase0_result_path,
         provider_provenance=provider_bundle.provenance,
+        stop_before_next_episode_file=stop_before_next_episode_file,
         **provider_bundle.callbacks,
     )
     return commits, budget, manifest
@@ -222,6 +228,10 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Python module:factory returning independent audit and Service callbacks",
     )
+    parser.add_argument(
+        "--stop-before-next-episode-file", type=Path,
+        help="optional Console control file checked only before native episode dispatch",
+    )
     return parser
 
 
@@ -233,7 +243,11 @@ def main(argv: list[str] | None = None) -> int:
             phase0_result_path=args.phase0_result,
             tau2_data_dir=args.tau2_data_dir,
             provider_plugin=args.provider_plugin,
+            stop_before_next_episode_file=args.stop_before_next_episode_file,
         )
+    except StopBeforeEpisodeDispatch:
+        print("Run paused safely before the next episode dispatch.")
+        return 75
     except (OSError, ValueError, RuntimeError, KeyError, yaml.YAMLError) as exc:
         print(f"Phase 3 run failed: {exc}", file=sys.stderr)
         return 2

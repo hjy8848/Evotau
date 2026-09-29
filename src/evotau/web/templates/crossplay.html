@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · Cross-play{% endblock %}
+{% block content %}
+<div class="eyebrow">Saved CrossPlayMatrix</div><h1>Customer × Service cross-play</h1>
+<p class="muted">Console 只读取并校验已有 CrossPlayMatrix；不会在网页中重算 cross-play。</p>
+{% if matrices %}<form method="get" class="toolbar"><label>Artifact<select name="cell" onchange="this.form.submit()">{% for item in matrices %}<option value="{{ item.name }}" {% if selected.name == item.name %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></label>
+<label>Metric<select name="metric" onchange="this.form.submit()">{% for key, label in {'verified_failure_rate':'经过验证的客服错误率','native_success_rate':'原生任务成功率','policy_violation_rate':'策略违规率','recurrent_verified_failure_rate':'已修复错误的复发率'}.items() %}<option value="{{ key }}" {% if metric == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label></form>
+<div class="card"><p><strong>{{ metric_label }}</strong> · 点击行查看这个 Customer/Service 对应的已有 episodes。</p>
+<div style="overflow:auto"><table><thead><tr><th>Customer \ Service</th>{% for service in selected.matrix.service_strategy_ids %}<th class="mono">{{ service }}</th>{% endfor %}</tr></thead><tbody>
+{% for customer in selected.matrix.customer_strategy_ids %}<tr><th class="mono">{{ customer }}</th>{% for service in selected.matrix.service_strategy_ids %}{% set item = (cells|selectattr('customer_strategy_id','equalto',customer)|selectattr('service_strategy_id','equalto',service)|first) %}<td class="heat-{{ item.style }}"><strong>{% if item.metric_value is not none %}{{ '%.1f'|format(item.metric_value * 100) }}%{% else %}Unavailable{% endif %}</strong><div class="small">{{ item.verified_failure_episodes }} verified / {{ item.attempted_episodes }} tried</div><details><summary>Cell details</summary><p>Valid episodes：{{ item.valid_episodes }}</p><p>Unique signatures：{{ item.unique_signatures }}</p><p>Native success：{{ item.native_success_rate if item.native_success_rate is not none else 'Unavailable' }}</p><p>Policy violations：{{ item.policy_violation_episodes }}</p><p>{% for episode in run.episodes if episode.customer_strategy_id == customer and episode.service_strategy_id == service %}<a href="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}">{{ episode.episode_id }}</a> {% else %}Episode records unavailable{% endfor %}</p></details></td>{% endfor %}</tr>{% endfor %}
+</tbody></table></div></div>
+{% else %}<div class="card"><p class="muted">当前 run 没有已保存且通过结构校验的 cross-play matrix。</p></div>{% endif %}
+{% endblock %}

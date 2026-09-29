@@ -86,3 +86,20 @@ For a draft Pilot partition, `evotau-task-review-template --config pilot-draft.y
 ## Project boundaries
 
 The research plan is maintained at research/EvoTau_Research_and_Engineering_Plan_v1.md. EvoTau does not modify task truth, tool semantics, or evaluator behavior.
+
+## Experiment Console
+
+The optional local Console reads EvoTau manifests, episode records, τ-bench trajectories, checkpoints, archives, gates, and cross-play artifacts. It calls the same Phase 0 / Phase 3 / Pilot CLI runners as command-line users; it does not implement evolution, attribution, selection, repair acceptance, or evaluation in the web layer. Its event journal is an observational convenience, not a source of research evidence.
+
+Install the optional web stack and start it from the repository root:
+
+```bash
+python -m pip install -e ".[web]"
+evotau-web
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The server binds to loopback only. Startup is read-only and never launches a run. A run can start only after an explicit manifest preview and confirmation; the Console never turns on `real_provider_enabled` or edits a frozen manifest. The checked-in Phase 0 and Phase 3 configs are provider-disabled, so they are preview-only until a researcher prepares and reviews a separate frozen config. Provider-backed work also needs pinned τ-bench data and, for Phase 3/Pilot, a reviewed provider plugin. Real experiments still require the existing CLI/Core safety checks.
+
+The dashboard links each run to a human-readable episode conversation, tool calls/results, Customer and Service strategy snapshots, generation decisions, verified versus provisional failures, repair gate outcomes, budgets, task-review status, and any saved `CrossPlayMatrix`. Missing token usage or price schedules are shown as unavailable. Heldout episodes remain hidden until the run has a complete result index. During a multi-episode run, “Pause after current episode” writes a Console control signal that the native runner checks only before dispatching a new episode; the active episode is allowed to finish and existing checkpoint/cache recovery is used on resume. Phase 0 contains one episode and is allowed to finish normally.
+
+To inspect a different local run directory, use `evotau-web --runs-dir PATH`; `--tau2-data-dir PATH` supplies the pinned τ-bench `data/` directory to the launch preview and runner. This is a local research tool, not a cloud service, and its UI does not change the frozen study design.

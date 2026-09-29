@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import PilotManifest
-from .native_runner import run_native_pilot
+from .native_runner import StopBeforeEpisodeDispatch, run_native_pilot
 from .phase0 import load_config
 from .phase3_run import load_provider_bundle
 
@@ -19,6 +19,7 @@ def run_from_config(
     *,
     tau2_data_dir: str | Path,
     provider_plugin: str,
+    stop_before_next_episode_file: str | Path | None = None,
 ) -> dict[str, Any]:
     config = load_config(config_path)
     manifest = PilotManifest.from_mapping(config)
@@ -36,6 +37,7 @@ def run_from_config(
         config_path=config_path,
         data_dir=tau2_data_dir,
         callback_factory=callback_factory,
+        stop_before_next_episode_file=stop_before_next_episode_file,
     )
 
 
@@ -49,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--provider-plugin", required=True,
         help="module:factory returning per-seed callbacks required by the frozen Pilot condition",
+    )
+    parser.add_argument(
+        "--stop-before-next-episode-file", type=Path,
+        help="optional Console control file checked only before native episode dispatch",
     )
     return parser
 
@@ -67,7 +73,11 @@ def main(argv: list[str] | None = None) -> int:
             args.config,
             tau2_data_dir=data_dir,
             provider_plugin=args.provider_plugin,
+            stop_before_next_episode_file=args.stop_before_next_episode_file,
         )
+    except StopBeforeEpisodeDispatch:
+        print("Pilot paused safely before the next episode dispatch.")
+        return 75
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         print(f"Pilot run failed: {exc}", file=sys.stderr)
         return 2
