@@ -173,6 +173,7 @@ def run_customer_round(
     request_budget: RequestBudget | None = None,
     proposal_provider: OperatorSelector | None = None,
     proposal_mode: str = "failure_conditioned",
+    allow_strategy_revisit: bool = False,
 ) -> CustomerRound:
     """Evaluate a shared panel, then replay audited signals before scoring failures."""
     if (not task_ids or not seeds or len(set(task_ids)) != len(task_ids)
@@ -197,21 +198,24 @@ def run_customer_round(
     )
     if proposal_mode not in {"failure_conditioned", "random_mutation"}:
         raise ValueError("Customer proposal mode must be failure_conditioned or random_mutation")
+    if type(allow_strategy_revisit) is not bool:
+        raise TypeError("allow_strategy_revisit must be boolean")
+    seen_for_proposal = () if allow_strategy_revisit else already_seen
     if proposal_mode == "random_mutation":
         if proposal_provider is not None:
             raise ValueError("random-mutation control cannot use a failure-aware proposal provider")
         candidates = propose_random_mutation_candidates(
-            incumbent, count, seed=proposal_seed, already_seen=already_seen,
+            incumbent, count, seed=proposal_seed, already_seen=seen_for_proposal,
         )
     elif proposal_provider is None:
         candidates = propose_customer_candidates(
             incumbent, count, seed=proposal_seed, recent_failures=prior_failures,
-            already_seen=already_seen,
+            already_seen=seen_for_proposal,
         )
     elif request_budget is None:
         candidates = propose_customer_candidates_with_selector(
             incumbent, count, generation=generation, seed=proposal_seed,
-            recent_failures=prior_failures, already_seen=tuple(already_seen),
+            recent_failures=prior_failures, already_seen=tuple(seen_for_proposal),
             evolution_task_ids=task_ids, operator_selector=proposal_provider,
         )
     else:
@@ -220,7 +224,7 @@ def run_customer_round(
         with request_budget.instrument_tau_llm_utils(llm_utils):
             candidates = propose_customer_candidates_with_selector(
                 incumbent, count, generation=generation, seed=proposal_seed,
-                recent_failures=prior_failures, already_seen=tuple(already_seen),
+                recent_failures=prior_failures, already_seen=tuple(seen_for_proposal),
                 evolution_task_ids=task_ids, operator_selector=proposal_provider,
             )
     evaluations = [evaluate_customer_panel(
@@ -539,6 +543,7 @@ class TwoGenerationSmoke:
             customer_proposal_provider: OperatorSelector | None = None,
             customer_proposal_mode: str = "failure_conditioned",
             allow_frozen_service: bool = False,
+            allow_strategy_revisit: bool = False,
             candidates_per_generation: int = 2) -> tuple[GenerationCommit, ...]:
         """Execute two Customer-first generations on E with a fresh confirmation seed.
 
@@ -555,6 +560,8 @@ class TwoGenerationSmoke:
             raise ValueError("Customer proposal mode must be failure_conditioned or random_mutation")
         if type(allow_frozen_service) is not bool:
             raise TypeError("allow_frozen_service must be boolean")
+        if type(allow_strategy_revisit) is not bool:
+            raise TypeError("allow_strategy_revisit must be boolean")
         if isinstance(self.manifest, MechanismManifest):
             if sha256_json(customer.to_dict()) != self.manifest.customer_strategy_sha256:
                 raise ValueError("initial Customer strategy does not match the frozen manifest")
@@ -573,6 +580,8 @@ class TwoGenerationSmoke:
                 raise ValueError("Pilot condition and Customer proposal mode differ")
             if allow_frozen_service != (self.manifest.condition == "random_mutation"):
                 raise ValueError("only the random-mutation Pilot control freezes Service without repair")
+            if self.manifest.condition == "static_customer" and allow_strategy_revisit:
+                raise ValueError("static_customer Pilot does not use adaptive proposal revisits")
         commits: list[GenerationCommit] = []
         start_generation = 0
         if self._last_customer is None:
@@ -658,6 +667,7 @@ class TwoGenerationSmoke:
                 request_budget=self.request_budget,
                 proposal_provider=customer_proposal_provider,
                 proposal_mode=customer_proposal_mode,
+                allow_strategy_revisit=allow_strategy_revisit,
             )
             old_customer = customer
             if round_result.selection.evolved:

@@ -21,6 +21,7 @@ from evotau.records import (
     service_strategy_id,
 )
 from evotau.strategies import CustomerStrategy, ServiceStrategy
+from evotau.study_analysis import load_rq1_document
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -160,6 +161,7 @@ def test_random_pilot_freezes_service_after_audited_failures(tmp_path):
     commits = controller.run(
         CustomerStrategy(), service, failure_verifier=lambda item: f"audit:{item.episode_id}",
         customer_proposal_mode="random_mutation", allow_frozen_service=True,
+        allow_strategy_revisit=True,
     )
 
     assert [commit.service_id for commit in commits] == [service_strategy_id(service)] * 3
@@ -231,13 +233,30 @@ def test_native_pilot_never_loads_provider_callbacks_while_provider_is_disabled(
     assert not calls
 
 
-@pytest.mark.parametrize("condition", ["adaptive_coevolution", "random_mutation"])
+@pytest.mark.parametrize(
+    "condition", ["adaptive_coevolution", "random_mutation", "static_customer"],
+)
 def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
     tmp_path, monkeypatch, condition,
 ):
     config, data_root = _pilot_fixture(tmp_path)
     experiment = config["experiment"]
     experiment["condition"] = condition
+    if condition == "static_customer":
+        experiment["static_customer_portfolio"] = {
+            "schema_version": 1,
+            "portfolio_id": "test-static-pilot-v1",
+            "strategies": [
+                CustomerStrategy().to_dict(),
+                CustomerStrategy(disclosure="related_on_request").to_dict(),
+                CustomerStrategy(request_order="reverse_independent").to_dict(),
+                CustomerStrategy(disclosure="related_on_request", request_order="reverse_independent").to_dict(),
+                CustomerStrategy(challenge_style="ask_reason", challenge_budget=1).to_dict(),
+                CustomerStrategy(disclosure="related_on_request", challenge_style="ask_reason", challenge_budget=1).to_dict(),
+                CustomerStrategy(challenge_style="rephrase_request", challenge_budget=2).to_dict(),
+                CustomerStrategy(disclosure="related_on_request", request_order="reverse_independent", challenge_style="rephrase_request", challenge_budget=2).to_dict(),
+            ],
+        }
     experiment["real_provider_enabled"] = True
     experiment["models"] = {
         "agent": "mock-agent", "customer": "mock-customer",
@@ -263,6 +282,13 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
         def __call__(self, *, task_id, seed, customer, service, panel_name):
             self._counter += 1
             calls.append((task_id, seed, panel_name))
+            static_failure = condition == "static_customer" and (
+                panel_name == "discovery" or panel_name.startswith("pilot-static-reproduction-")
+            )
+            failure_stage, failure_policy, failure_type = (
+                "identity_verification", "retail.policy:identity_verification",
+                "missing_identity_verification",
+            )
             record = EpisodeRecord(
                 episode_id=f"pilot-{self._counter}-{task_id}-{seed}",
                 task_id=task_id, seed=seed,
@@ -271,7 +297,14 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
                 status=EpisodeStatus.COMPLETE, task_success=True, native_reward=1.0,
                 customer_valid=True, strategy_applicable=customer is not None,
                 customer_strategy_adherent=True if customer is not None else None,
-                policy_violation=False, invalid_repeated_write_calls=0,
+                policy_violation=static_failure,
+                invalid_repeated_write_calls=0,
+                policy_rule_id=failure_policy if static_failure else None,
+                mistake_type=failure_type if static_failure else None,
+                workflow_stage=failure_stage if static_failure else None,
+                evidence=(EvidenceRef(0, "assistant", "policy-linked event"),)
+                if static_failure else (),
+                audit_ref=f"review-{self._counter}" if static_failure else None,
             )
             episode_dir = self.output_directory / "episodes" / f"episode-{self._counter:03d}"
             episode_dir.mkdir(parents=True)
@@ -293,7 +326,7 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
 
     def callback_factory(_config, _manifest, seed_base):
         callback_seed_bases.append(seed_base)
-        if condition == "random_mutation":
+        if condition in {"random_mutation", "static_customer"}:
             return {"audit_provider": lambda *_args: None}
         return {
             "audit_provider": lambda *_args: None,
@@ -307,6 +340,12 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
     assert result["status"] == "complete"
     assert result["condition"] == condition
     assert result["evolution_seeds"] == [11, 17, 23]
+    assert len(result["rq1_study_runs"]) == 3
+    study_run = load_rq1_document({"schema_version": 2, "runs": result["rq1_study_runs"]})
+    assert [item.condition for item in study_run] == [
+        {"adaptive_coevolution": "adaptive_customer", "random_mutation": "random_mutation",
+         "static_customer": "static_customer"}[condition]
+    ] * 3
     assert callback_seed_bases == [100_000, 200_000, 300_000]
     observed_episode_seed_blocks = []
     for index, item in enumerate(result["seed_blocks"]):
@@ -317,13 +356,36 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
         assert actual_seeds and all(expected_seed_base <= value < expected_seed_base + 100_000
                                    for value in actual_seeds)
         observed_episode_seed_blocks.append(actual_seeds)
-        assert [len(commit["decision_record"]["customer"]["proposals"])
-                for commit in seed_result["generation_commits"]] == [2, 1, 0]
-        expected_mode = "random_mutation" if condition == "random_mutation" else "failure_conditioned"
-        assert all(
-            commit["decision_record"]["customer"]["proposal_mode"] == expected_mode
-            for commit in seed_result["generation_commits"]
-        )
+        if condition == "static_customer":
+            schedule_path = Path(item["result_path"]).parent / "static-customer-schedule.json"
+            schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
+            assert schedule["sha256"] == item["static_customer_schedule_sha256"]
+            assert len(schedule["evolution"]) == 36
+            assert len(schedule["validation"]) == 2
+            assert len(schedule["heldout"]) == 2
+            assert seed_result["generation_commits"] == []
+            expected_count = 36 + 36 + 2 + 2
+            assert len(seed_result["rq1_study_run"]["episodes"]) == 36
+            assert len(seed_result["rq1_study_run"]["reproduction_episodes"]) == 36
+            assert len(seed_result["rq1_study_run"]["verified_failures"]) == 36
+        else:
+            assert [len(commit["decision_record"]["customer"]["proposals"])
+                    for commit in seed_result["generation_commits"]] == [2, 2, 2]
+            expected_mode = "random_mutation" if condition == "random_mutation" else "failure_conditioned"
+            assert all(
+                commit["decision_record"]["customer"]["proposal_mode"] == expected_mode
+                for commit in seed_result["generation_commits"]
+            )
+            assert len(seed_result["rq1_study_run"]["episodes"]) == 36
+            expected_count = (
+                sum(
+                    (1 + len(commit["decision_record"]["customer"]["proposals"]))
+                    * len(config["experiment"]["task_selection"]["evolution"])
+                    for commit in seed_result["generation_commits"]
+                )
+                + len(config["experiment"]["task_selection"]["validation"])
+                + len(config["experiment"]["task_selection"]["heldout"])
+            )
         if condition == "random_mutation":
             assert len({commit["service_id"] for commit in seed_result["generation_commits"]}) == 1
             assert all(
@@ -332,15 +394,6 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
                 for commit in seed_result["generation_commits"]
                 for proposal in commit["decision_record"]["customer"]["proposals"]
             )
-        expected_count = (
-            sum(
-                (1 + len(commit["decision_record"]["customer"]["proposals"]))
-                * len(config["experiment"]["task_selection"]["evolution"])
-                for commit in seed_result["generation_commits"]
-            )
-            + len(config["experiment"]["task_selection"]["validation"])
-            + len(config["experiment"]["task_selection"]["heldout"])
-        )
         assert item["episode_count"] == expected_count == len(seed_result["episodes"])
     assert all(
         not (left & right)

@@ -653,6 +653,8 @@ class PilotManifest:
     evaluation_type: str = "all"
     split_name: str = "train"
     heldout_split_name: str = "test"
+    static_customer_portfolio_json: str | None = None
+    static_customer_portfolio_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _validate_code_provenance(self.evotau_git_commit, self.evotau_source_sha256)
@@ -695,6 +697,14 @@ class PilotManifest:
             raise ValueError("Pilot max_steps must be 64")
         if type(self.max_episodes) is not int or self.max_episodes <= 0:
             raise ValueError("Pilot max_episodes must be a positive per-seed cap")
+        minimum_scheduled_episodes = (
+            len(self.evolution_task_ids) * self.generations * (1 + self.customer_candidates)
+            + len(self.validation_task_ids) + len(self.heldout_task_ids)
+        )
+        if self.max_episodes < minimum_scheduled_episodes:
+            raise ValueError(
+                "Pilot episode cap cannot fit its frozen discovery schedule and final V/H panels"
+            )
         if type(self.request_budget_cap) is not int or self.request_budget_cap <= 0:
             raise ValueError("Pilot request_budget_cap must be a positive per-seed cap")
         if self.provider_retries != 0 or self.max_concurrency != 1:
@@ -721,6 +731,23 @@ class PilotManifest:
         ):
             if not re.fullmatch(r"[0-9a-f]{64}", digest):
                 raise ValueError(f"Pilot {name} strategy hash must be a SHA-256 hex digest")
+        if self.condition == "static_customer":
+            if self.static_customer_portfolio_json is None or self.static_customer_portfolio_sha256 is None:
+                raise ValueError("static_customer Pilot requires a frozen Customer portfolio")
+            try:
+                portfolio_document = json.loads(self.static_customer_portfolio_json)
+                from .baselines import StaticCustomerPortfolio
+
+                portfolio = StaticCustomerPortfolio.from_dict(portfolio_document)
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValueError(f"invalid static Customer portfolio: {exc}") from exc
+            if (json.dumps(portfolio.to_dict(), sort_keys=True, separators=(",", ":"))
+                    != self.static_customer_portfolio_json
+                    or portfolio.sha256 != self.static_customer_portfolio_sha256):
+                raise ValueError("static Customer portfolio canonical payload or digest differs")
+        elif (self.static_customer_portfolio_json is not None
+              or self.static_customer_portfolio_sha256 is not None):
+            raise ValueError("static Customer portfolio is only valid for static_customer Pilot")
         _relative_path(self.output_path, "output_path")
         _relative_path(self.checkpoint_path, "checkpoint_path")
 
@@ -742,6 +769,21 @@ class PilotManifest:
         models = experiment.get("models", {})
         customer = experiment.get("customer_strategy")
         service = experiment.get("service_strategy") or {"rules": []}
+        static_portfolio_json = None
+        static_portfolio_sha256 = None
+        if experiment.get("condition") == "static_customer":
+            raw_portfolio = experiment.get("static_customer_portfolio")
+            if not isinstance(raw_portfolio, dict):
+                raise ValueError("static_customer Pilot requires experiment.static_customer_portfolio")
+            from .baselines import StaticCustomerPortfolio
+
+            static_portfolio = StaticCustomerPortfolio.from_dict(raw_portfolio)
+            static_portfolio_json = json.dumps(
+                static_portfolio.to_dict(), sort_keys=True, separators=(",", ":"),
+            )
+            static_portfolio_sha256 = static_portfolio.sha256
+        elif "static_customer_portfolio" in experiment:
+            raise ValueError("static_customer_portfolio is only valid for static_customer Pilot")
         return cls(
             experiment_id=str(experiment["id"]),
             condition=str(experiment["condition"]),
@@ -781,10 +823,12 @@ class PilotManifest:
             output_path=_relative_path(str(experiment["output_path"]), "output_path"),
             checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
             heldout_split_name=str(selection["heldout_split"]),
+            static_customer_portfolio_json=static_portfolio_json,
+            static_customer_portfolio_sha256=static_portfolio_sha256,
         )
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "experiment_id": self.experiment_id,
             "phase": "4-pilot",
             "condition": self.condition,
@@ -835,6 +879,10 @@ class PilotManifest:
             },
             "paths": {"output": self.output_path, "checkpoint": self.checkpoint_path},
         }
+        if self.static_customer_portfolio_json is not None:
+            payload["static_customer_portfolio"] = json.loads(self.static_customer_portfolio_json)
+            payload["static_customer_portfolio_sha256"] = self.static_customer_portfolio_sha256
+        return payload
 
     @property
     def sha256(self) -> str:

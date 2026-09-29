@@ -130,6 +130,20 @@ class StaticCustomerPortfolio:
             assignments=assignments,
         )
 
+    def panel_schedule(
+        self,
+        *,
+        task_ids: tuple[str, ...],
+        seeds: tuple[int, ...],
+        repeats_per_pair: int,
+    ) -> StaticCustomerPanelSchedule:
+        """Freeze balanced static assignments for repeated matched-panel slots."""
+
+        return StaticCustomerPanelSchedule.create(
+            portfolio=self, task_ids=task_ids, seeds=seeds,
+            repeats_per_pair=repeats_per_pair,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StaticCustomerSchedule:
@@ -243,6 +257,127 @@ class StaticCustomerSchedule:
             )
         except (TypeError, ValueError) as exc:
             raise ValueError(f"invalid static Customer schedule: {exc}") from exc
+
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self.to_dict())
+
+
+@dataclass(frozen=True, slots=True)
+class StaticCustomerPanelSchedule:
+    """Balanced portfolio assignment for repeated task/seed evaluation slots."""
+
+    portfolio_id: str
+    portfolio_sha256: str
+    strategy_ids: tuple[str, ...]
+    task_ids: tuple[str, ...]
+    seeds: tuple[int, ...]
+    repeats_per_pair: int
+    assignments: tuple[tuple[str, int, int, str], ...]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        portfolio: StaticCustomerPortfolio,
+        task_ids: tuple[str, ...],
+        seeds: tuple[int, ...],
+        repeats_per_pair: int,
+    ) -> StaticCustomerPanelSchedule:
+        if type(repeats_per_pair) is not int or repeats_per_pair <= 0:
+            raise ValueError("static panel schedule repeats_per_pair must be positive")
+        if (not task_ids or any(not isinstance(item, str) or not item.strip() for item in task_ids)
+                or len(set(task_ids)) != len(task_ids)):
+            raise ValueError("static panel schedule requires unique ordered task IDs")
+        if (not seeds or any(type(seed) is not int or seed < 0 for seed in seeds)
+                or len(set(seeds)) != len(seeds)):
+            raise ValueError("static panel schedule requires unique non-negative seeds")
+        slots = tuple(
+            (task_id, seed, repeat)
+            for task_id in task_ids for seed in seeds
+            for repeat in range(repeats_per_pair)
+        )
+        if len(slots) < len(portfolio.strategy_ids):
+            raise ValueError("static panel schedule must use every frozen portfolio strategy")
+        assignments = tuple(
+            (*slot, portfolio.strategy_ids[index % len(portfolio.strategy_ids)])
+            for index, slot in enumerate(slots)
+        )
+        return cls(
+            portfolio.portfolio_id, portfolio.sha256, portfolio.strategy_ids,
+            task_ids, seeds, repeats_per_pair, assignments,
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.portfolio_id, str) or not self.portfolio_id.strip():
+            raise ValueError("static panel schedule requires a unique frozen portfolio")
+        if (not isinstance(self.portfolio_sha256, str) or len(self.portfolio_sha256) != 64
+                or any(char not in "0123456789abcdef" for char in self.portfolio_sha256)):
+            raise ValueError("static panel schedule portfolio hash must be a lowercase SHA-256")
+        if (not self.strategy_ids
+                or any(not isinstance(item, str) for item in self.strategy_ids)
+                or len(self.strategy_ids) != len(set(self.strategy_ids))
+                or any(len(item) != 16 or any(char not in "0123456789abcdef" for char in item)
+                       for item in self.strategy_ids)):
+            raise ValueError("static panel schedule requires unique strategy IDs")
+        if (not self.task_ids
+                or any(not isinstance(item, str) for item in self.task_ids)
+                or len(set(self.task_ids)) != len(self.task_ids)
+                or any(not item.strip() for item in self.task_ids)):
+            raise ValueError("static panel schedule requires unique tasks and seeds")
+        if (not self.seeds or any(type(seed) is not int or seed < 0 for seed in self.seeds)
+                or len(set(self.seeds)) != len(self.seeds)):
+            raise ValueError("static panel schedule requires unique tasks and seeds")
+        if type(self.repeats_per_pair) is not int or self.repeats_per_pair <= 0:
+            raise ValueError("static panel schedule repeats_per_pair must be positive")
+        expected_slots = tuple(
+            (task_id, seed, repeat)
+            for task_id in self.task_ids for seed in self.seeds
+            for repeat in range(self.repeats_per_pair)
+        )
+        if len(expected_slots) < len(self.strategy_ids):
+            raise ValueError("static panel schedule omits a frozen portfolio strategy")
+        if any(not isinstance(item, tuple) or len(item) != 4 for item in self.assignments):
+            raise ValueError("static panel assignments must be task/seed/repeat/strategy tuples")
+        actual_slots = tuple((task, seed, repeat) for task, seed, repeat, _ in self.assignments)
+        expected = tuple(
+            (*slot, self.strategy_ids[index % len(self.strategy_ids)])
+            for index, slot in enumerate(expected_slots)
+        )
+        if actual_slots != expected_slots or self.assignments != expected:
+            raise ValueError("static panel assignments differ from their balanced frozen rotation")
+
+    def strategy_for(self, task_id: str, seed: int, repeat: int) -> str:
+        for task, episode_seed, slot, strategy_id in self.assignments:
+            if (task, episode_seed, slot) == (task_id, seed, repeat):
+                return strategy_id
+        raise KeyError(f"static schedule has no slot for {(task_id, seed, repeat)!r}")
+
+    def validate_portfolio(self, portfolio: StaticCustomerPortfolio) -> None:
+        if (portfolio.portfolio_id != self.portfolio_id
+                or portfolio.sha256 != self.portfolio_sha256
+                or portfolio.strategy_ids != self.strategy_ids):
+            raise ValueError("static panel schedule differs from its frozen portfolio")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "portfolio_id": self.portfolio_id,
+            "portfolio_sha256": self.portfolio_sha256,
+            "strategy_ids": list(self.strategy_ids),
+            "task_ids": list(self.task_ids),
+            "seeds": list(self.seeds),
+            "repeats_per_pair": self.repeats_per_pair,
+            "assignments": [
+                {
+                    "task_id": task,
+                    "seed": seed,
+                    "repeat": repeat,
+                    "strategy_id": strategy_id,
+                }
+                for task, seed, repeat, strategy_id in self.assignments
+            ],
+        }
 
     @property
     def sha256(self) -> str:

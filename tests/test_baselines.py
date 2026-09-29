@@ -84,6 +84,21 @@ def test_static_schedule_is_bound_to_exact_order_and_rejects_tampering(portfolio
         StaticCustomerSchedule.from_dict(payload)
 
 
+def test_static_panel_schedule_assigns_balanced_strategies_to_repeated_matched_slots(portfolio):
+    schedule = portfolio.panel_schedule(
+        task_ids=("E1", "E2"), seeds=(11, 22, 33), repeats_per_pair=3,
+    )
+    schedule.validate_portfolio(portfolio)
+    assert len(schedule.assignments) == 18
+    assert {item[3] for item in schedule.assignments} == set(portfolio.strategy_ids)
+    assert schedule.strategy_for("E2", 22, 1) == next(
+        strategy for task, seed, repeat, strategy in schedule.assignments
+        if (task, seed, repeat) == ("E2", 22, 1)
+    )
+    with pytest.raises(ValueError, match="repeats_per_pair"):
+        portfolio.panel_schedule(task_ids=("E1",), seeds=(11,), repeats_per_pair=0)
+
+
 def test_random_mutation_baseline_has_deterministic_unconditioned_proposals():
     first = propose_random_mutation_candidates(CustomerStrategy(), 2, seed=421)
     second = propose_random_mutation_candidates(CustomerStrategy(), 2, seed=421)
