@@ -23,6 +23,7 @@ from evotau.records import (
 )
 from evotau.strategies import CustomerStrategy, ServiceStrategy
 from evotau.study_analysis import load_rq1_document
+from evotau.task_review import main as task_review_template_main
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -247,6 +248,52 @@ def test_pilot_manifest_requires_approved_task_and_pairwise_review(tmp_path):
     config["experiment"]["task_semantic_review"]["pairwise_reviews"].pop()
     with pytest.raises(ValueError, match="assess every selected task pair"):
         PilotManifest.from_mapping(config)
+
+
+def test_task_review_template_is_pinned_unapproved_and_completable(tmp_path, capsys):
+    config, data_root = _pilot_fixture(tmp_path)
+    del config["experiment"]["task_semantic_review"]
+    config_path = tmp_path / "pilot-draft.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    template_path = tmp_path / "task-review.json"
+
+    assert task_review_template_main([
+        "--config", str(config_path), "--tau2-data-dir", str(data_root),
+        "--output", str(template_path),
+    ]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "unapproved_template_written"
+    review = json.loads(template_path.read_text(encoding="utf-8"))
+    assert len(review["task_reviews"]) == 8
+    assert len(review["pairwise_reviews"]) == 28
+    assert all(not row["satisfiable"] for row in review["task_reviews"])
+    assert all(not row["distinct_scenario"] for row in review["pairwise_reviews"])
+
+    review.update({
+        "review_id": "synthetic-test-review",
+        "reviewer_id": "synthetic-test-fixture",
+        "reviewed_at": "2026-09-29T00:00:00Z",
+    })
+    for row in review["task_reviews"]:
+        row.update({
+            "no_deception_required": True,
+            "policy_tool_compatible": True,
+            "satisfiable": True,
+            "rationale": "Synthetic fixture only; no research judgment.",
+        })
+    for row in review["pairwise_reviews"]:
+        row.update({
+            "distinct_scenario": True,
+            "rationale": "Synthetic fixture only; distinct fixture IDs.",
+        })
+    config["experiment"]["task_semantic_review"] = review
+    assert validate_pilot_config(config, data_dir=data_root)["task_semantic_review"]["status"] == (
+        "pinned_task_hashes_verified"
+    )
+
+    assert task_review_template_main([
+        "--config", str(config_path), "--tau2-data-dir", str(data_root),
+        "--output", str(template_path),
+    ]) == 2
 
 
 def test_pilot_preflight_checks_pinned_files_entity_leakage_and_write_once(tmp_path):

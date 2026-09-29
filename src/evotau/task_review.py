@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 import re
+import sys
 from datetime import UTC, datetime
 from itertools import combinations
+from pathlib import Path
 from typing import Any
 
 TASK_REVIEW_FIELDS = {
@@ -37,19 +41,7 @@ def validate_task_semantic_review(
     if not isinstance(value["pairwise_reviews"], list):
         raise TypeError("pairwise_reviews must be a JSON array")
 
-    if not isinstance(expected_panels, (list, tuple)):
-        raise TypeError("expected task panels must be an ordered array")
-    normalized_expected_panels = []
-    for item in expected_panels:
-        if not isinstance(item, (list, tuple)) or len(item) != 2:
-            raise ValueError("expected task panels must contain task/panel pairs")
-        task_id, panel = item
-        if not isinstance(task_id, str) or not task_id.strip():
-            raise ValueError("expected task panels must contain unique non-empty Pilot task IDs")
-        if not isinstance(panel, str) or panel not in {"evolution", "validation", "heldout"}:
-            raise ValueError("expected task panels contain an unknown panel name")
-        normalized_expected_panels.append((task_id, panel))
-    expected_panels = tuple(normalized_expected_panels)
+    expected_panels = _normalize_expected_panels(expected_panels)
     expected_task_ids = tuple(task_id for task_id, _panel in expected_panels)
     if not expected_task_ids or len(set(expected_task_ids)) != len(expected_task_ids):
         raise ValueError("expected task panels must contain unique non-empty Pilot task IDs")
@@ -126,6 +118,60 @@ def validate_task_semantic_review(
     return normalized, digest
 
 
+def build_task_semantic_review_template(
+    tasks: list[dict[str, Any]],
+    *,
+    expected_panels: tuple[tuple[str, str], ...],
+) -> dict[str, Any]:
+    """Build an explicitly unapproved review form for a frozen E/V/H selection."""
+
+    expected_panels = _normalize_expected_panels(expected_panels)
+    task_map: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        if not isinstance(task, dict):
+            raise TypeError("pinned task data must contain task objects")
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("pinned task data contains a missing or invalid task ID")
+        if task_id in task_map:
+            raise ValueError("pinned task data contains duplicate task IDs")
+        task_map[task_id] = task
+    missing = [task_id for task_id, _panel in expected_panels if task_id not in task_map]
+    if missing:
+        raise ValueError(f"pinned task data is missing selected tasks: {', '.join(missing)}")
+
+    from .manifest import sha256_json
+
+    task_ids = tuple(task_id for task_id, _panel in expected_panels)
+    return {
+        "schema_version": 1,
+        "review_id": "REPLACE_WITH_REVIEW_ID",
+        "reviewer_id": "REPLACE_WITH_REVIEWER_ID",
+        "reviewed_at": "REPLACE_WITH_UTC_TIMESTAMP",
+        "task_reviews": [
+            {
+                "task_id": task_id,
+                "panel": panel,
+                "task_sha256": sha256_json(task_map[task_id]),
+                "no_deception_required": False,
+                "policy_tool_compatible": False,
+                "satisfiable": False,
+                "rationale": "",
+            }
+            for task_id, panel in expected_panels
+        ],
+        "pairwise_reviews": [
+            {
+                "left_task_id": left,
+                "right_task_id": right,
+                "distinct_scenario": False,
+                "rationale": "",
+            }
+            for left, right in combinations(task_ids, 2)
+        ],
+    }
+
+
 def verify_reviewed_task_hashes(
     review: dict[str, Any],
     tasks: list[dict[str, Any]],
@@ -159,6 +205,27 @@ def verify_reviewed_task_hashes(
             raise ValueError(f"task semantic review is not bound to pinned task {task_id}")
 
 
+def _normalize_expected_panels(
+    expected_panels: Any,
+) -> tuple[tuple[str, str], ...]:
+    if not isinstance(expected_panels, (list, tuple)):
+        raise TypeError("expected task panels must be an ordered array")
+    normalized = []
+    for item in expected_panels:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ValueError("expected task panels must contain task/panel pairs")
+        task_id, panel = item
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("expected task panels must contain unique non-empty Pilot task IDs")
+        if not isinstance(panel, str) or panel not in {"evolution", "validation", "heldout"}:
+            raise ValueError("expected task panels contain an unknown panel name")
+        normalized.append((task_id, panel))
+    task_ids = tuple(task_id for task_id, _panel in normalized)
+    if not task_ids or len(set(task_ids)) != len(task_ids):
+        raise ValueError("expected task panels must contain unique non-empty Pilot task IDs")
+    return tuple(normalized)
+
+
 def _nonempty_text(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"task review {label} must be non-empty text")
@@ -182,3 +249,85 @@ def _validate_utc_timestamp(value: Any) -> str:
     if parsed.tzinfo is None or parsed.utcoffset() != UTC.utcoffset(parsed):
         raise ValueError("task review reviewed_at must be an ISO-8601 UTC timestamp ending in Z")
     return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--tau2-data-dir", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        from .eligibility import validate_generalization_selection
+        from .manifest import verify_git_blob_sha1
+        from .phase0 import load_config
+
+        config = load_config(args.config)
+        experiment = config.get("experiment")
+        if not isinstance(experiment, dict) or experiment.get("phase") != "4-pilot":
+            raise ValueError("task review template requires phase='4-pilot'")
+        if experiment.get("domain") != "retail":
+            raise ValueError("task review template currently supports the frozen Retail domain only")
+        selection = experiment.get("task_selection")
+        if not isinstance(selection, dict):
+            raise TypeError("Pilot task_selection must be a mapping")
+        if selection.get("source_split") != "train" or selection.get("heldout_split") != "test":
+            raise ValueError("Pilot task_selection must declare train E/V and test H sources")
+        panels = ("evolution", "validation", "heldout")
+        if any(not isinstance(selection.get(panel), list) for panel in panels):
+            raise TypeError("Pilot E/V/H task selections must be JSON arrays")
+        expected_panels = tuple(
+            (task_id, panel)
+            for panel in panels
+            for task_id in selection[panel]
+        )
+        expected_panels = _normalize_expected_panels(expected_panels)
+
+        data_root = args.tau2_data_dir.expanduser().resolve()
+        task_path = data_root / "tau2/domains/retail/tasks.json"
+        split_path = data_root / "tau2/domains/retail/split_tasks.json"
+        source_blobs = experiment.get("source_blob_sha1")
+        if not isinstance(source_blobs, dict):
+            raise TypeError("Pilot source_blob_sha1 must be a mapping")
+        verify_git_blob_sha1(
+            task_path, source_blobs["data/tau2/domains/retail/tasks.json"],
+        )
+        verify_git_blob_sha1(
+            split_path, source_blobs["data/tau2/domains/retail/split_tasks.json"],
+        )
+        tasks = json.loads(task_path.read_text(encoding="utf-8"))
+        split = json.loads(split_path.read_text(encoding="utf-8"))
+        validate_generalization_selection(
+            tasks,
+            split,
+            evolution_task_ids=selection["evolution"],
+            validation_task_ids=selection["validation"],
+            heldout_task_ids=selection["heldout"],
+            excluded_task_ids=selection.get("excluded", ()),
+        )
+        template = build_task_semantic_review_template(
+            tasks, expected_panels=expected_panels,
+        )
+        target = args.output
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("x", encoding="utf-8", newline="\n") as handle:
+            json.dump(template, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        print(json.dumps({
+            "status": "unapproved_template_written",
+            "output": str(target),
+            "task_count": len(template["task_reviews"]),
+            "pairwise_review_count": len(template["pairwise_reviews"]),
+        }))
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        print(f"Task review template generation failed: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
