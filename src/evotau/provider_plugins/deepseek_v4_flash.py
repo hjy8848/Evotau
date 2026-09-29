@@ -133,16 +133,17 @@ def build_callbacks(
             "evidence",
         }
         _require_keys(result, required, "episode audit")
-        evidence = _parse_evidence(result["evidence"])
-        message_count = len(getattr(simulation, "messages", ()) or ())
-        if any(item.turn_index >= message_count for item in evidence):
-            raise ValueError(
-                "episode audit evidence points beyond the native trajectory"
-            )
         violation = _strict_bool(result["policy_violation"], "policy_violation")
-        policy_ref = _optional_str(result["policy_rule_id"], "policy_rule_id")
-        mistake_type = _optional_str(result["mistake_type"], "mistake_type")
-        workflow_stage = _optional_str(result["workflow_stage"], "workflow_stage")
+        if violation:
+            evidence = _parse_evidence(result["evidence"])
+            policy_ref = _optional_str(result["policy_rule_id"], "policy_rule_id")
+            mistake_type = _optional_str(result["mistake_type"], "mistake_type")
+            workflow_stage = _optional_str(result["workflow_stage"], "workflow_stage")
+        else:
+            # Non-violation responses sometimes include explanatory pointers or
+            # tentative labels. They cannot enter the frozen failure archive.
+            evidence = ()
+            policy_ref = mistake_type = workflow_stage = None
         if violation:
             if not all((policy_ref, mistake_type, workflow_stage, evidence)):
                 raise ValueError(
@@ -159,10 +160,11 @@ def build_callbacks(
                 raise ValueError(
                     "episode audit returned a policy violation outside the frozen taxonomy"
                 )
-        elif any((policy_ref, mistake_type, workflow_stage, evidence)):
-            raise ValueError(
-                "non-violation audit must not retain failure labels or evidence"
-            )
+            message_count = len(getattr(simulation, "messages", ()) or ())
+            if any(item.turn_index >= message_count for item in evidence):
+                raise ValueError(
+                    "episode audit evidence points beyond the native trajectory"
+                )
         strategy_applicable = _strict_bool(
             result["strategy_applicable"], "strategy_applicable"
         )
@@ -351,6 +353,11 @@ def _generate_json(
     content = getattr(response, "content", None)
     if not isinstance(content, str):
         raise TypeError(f"{call_name} returned no textual JSON content")
+    content = content.strip()
+    if content.startswith("```") and content.endswith("```"):
+        content = content[3:-3].strip()
+        if content.startswith("json"):
+            content = content[4:].lstrip()
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError as exc:
@@ -451,9 +458,9 @@ def _parse_evidence(value: Any) -> tuple[EvidenceRef, ...]:
 
 
 def _require_keys(value: Mapping[str, Any], expected: set[str], label: str) -> None:
-    if set(value) != expected:
-        missing, extra = sorted(expected - set(value)), sorted(set(value) - expected)
-        raise ValueError(f"{label} JSON keys differ (missing={missing}, extra={extra})")
+    missing = sorted(expected - set(value))
+    if missing:
+        raise ValueError(f"{label} JSON object is missing required keys: {missing}")
 
 
 def _strict_bool(value: Any, label: str) -> bool:

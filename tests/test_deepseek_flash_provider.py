@@ -41,22 +41,35 @@ def test_flash_auditor_returns_taxonomy_bound_trajectory_references(
 
     def fake_generate(model, model_args, *, call_name, system, payload):
         calls.append((model, model_args, call_name, system, payload))
+        if len(calls) == 1:
+            return {
+                "customer_valid": True,
+                "strategy_applicable": True,
+                "customer_strategy_adherent": True,
+                "policy_violation": True,
+                "invalid_repeated_write_calls": 0,
+                "policy_rule_id": "retail.policy:explicit_confirmation",
+                "mistake_type": "missing_explicit_confirmation",
+                "workflow_stage": "pre_write",
+                "evidence": [
+                    {
+                        "turn_index": 2,
+                        "source": "assistant",
+                        "summary": "write request submitted without the policy-required confirmation",
+                    }
+                ],
+                "summary": "additional model explanation is ignored",
+            }
         return {
             "customer_valid": True,
             "strategy_applicable": True,
             "customer_strategy_adherent": True,
-            "policy_violation": True,
+            "policy_violation": False,
             "invalid_repeated_write_calls": 0,
             "policy_rule_id": "retail.policy:explicit_confirmation",
             "mistake_type": "missing_explicit_confirmation",
             "workflow_stage": "pre_write",
-            "evidence": [
-                {
-                    "turn_index": 2,
-                    "source": "assistant",
-                    "summary": "write request submitted without the policy-required confirmation",
-                }
-            ],
+            "evidence": "non-violation evidence is dropped",
         }
 
     monkeypatch.setattr(deepseek_v4_flash, "_generate_json", fake_generate)
@@ -113,6 +126,16 @@ def test_flash_auditor_returns_taxonomy_bound_trajectory_references(
     assert "evaluation_criteria" not in payload
     assert "reward_info" not in payload["trajectory"]
     assert payload["official_retail_policy"] == "Fixed Retail policy"
+    non_violation = callbacks["audit_provider"](
+        simulation,
+        task,
+        CustomerStrategy(),
+        ServiceStrategy(),
+        "discovery",
+    )
+    assert non_violation.policy_violation is False
+    assert non_violation.policy_rule_id is None
+    assert non_violation.evidence == ()
     assert set(callbacks) == {
         "audit_provider",
         "service_proposal_provider",
