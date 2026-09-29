@@ -19,7 +19,8 @@ from evotau.strategies import CustomerStrategy, ServiceRule, ServiceStrategy
 
 
 def make_episode(*, episode_id: str, task: str, seed: int, customer: CustomerStrategy | None,
-                 service: ServiceStrategy, failure: bool) -> EpisodeRecord:
+                 service: ServiceStrategy, failure: bool,
+                 protocol_mode: bool | None = None) -> EpisodeRecord:
     policy = "retail.policy:explicit_confirmation"
     return EpisodeRecord(
         episode_id=episode_id,
@@ -40,6 +41,7 @@ def make_episode(*, episode_id: str, task: str, seed: int, customer: CustomerStr
         evidence=(EvidenceRef(2, "tool", "write was attempted before explicit confirmation"),)
         if failure else (),
         tool_calls=3 if failure else 2,
+        enforce_communication_protocol=protocol_mode,
     )
 
 
@@ -55,7 +57,8 @@ def verified_failure(item: EpisodeRecord, generation: int = 0) -> FailureRecord:
 def matrix(*, task: str, seeds: tuple[int, ...], service: ServiceStrategy,
            attack: CustomerStrategy, failures: set[tuple[str, int]],
            verified_failures: tuple[FailureRecord, ...] = (),
-           repaired_signature_keys: tuple[str, ...] = ()):
+           repaired_signature_keys: tuple[str, ...] = (),
+           protocol_mode: bool | None = None):
     customers = (None, attack)
     episodes = tuple(
         make_episode(
@@ -65,6 +68,7 @@ def matrix(*, task: str, seeds: tuple[int, ...], service: ServiceStrategy,
             customer=customer,
             service=service,
             failure=customer is not None and (task, seed) in failures,
+            protocol_mode=protocol_mode,
         )
         for customer in customers for seed in seeds
     )
@@ -283,6 +287,20 @@ def test_rq2_requires_matching_frozen_panels_and_true_native_clean_control():
         analyze_service_repair_crossplay(
             baseline, changed_panel, panel_scope="heldout", gate_reports=(), target_failures=(),
             request_budget_cap=100, provider_attempts=90,
+        )
+
+    upstream_baseline = matrix(
+        task="task", seeds=(1, 2), service=old_service, attack=attack, failures=set(),
+        protocol_mode=False,
+    )
+    strict_candidate = matrix(
+        task="task", seeds=(1, 2), service=new_service, attack=attack, failures=set(),
+        protocol_mode=True,
+    )
+    with pytest.raises(ValueError, match="different communication-protocol modes"):
+        analyze_service_repair_crossplay(
+            upstream_baseline, strict_candidate, panel_scope="heldout", gate_reports=(),
+            target_failures=(), request_budget_cap=100, provider_attempts=90,
         )
 
     clean_id = customer_strategy_id(None)

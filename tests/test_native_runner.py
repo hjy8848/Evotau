@@ -44,6 +44,8 @@ class FakeSimulation:
             "reward_info": {"reward": 0.0},
             "messages": [
                 {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "Looking up your account.",
+                 "tool_calls": [{"id": "lookup"}]},
                 {"role": "tool", "content": "lookup"},
                 {"role": "multi_tool", "tool_messages": [{}, {}]},
             ],
@@ -72,6 +74,7 @@ def configured_runner(tmp_path: Path, monkeypatch, *, audit_provider=None):
     def fake_builder(**kwargs):
         assert kwargs["agent_model_args"] == {"temperature": 0.0}
         assert kwargs["customer_model_args"] == {"temperature": 0.0}
+        assert kwargs["enforce_communication_protocol"] is manifest.enforce_communication_protocol
         return SimpleNamespace(
             agent=SimpleNamespace(system_prompt="native policy"),
             user=SimpleNamespace(system_prompt="native guidelines"),
@@ -159,6 +162,8 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
     assert record.has_attributable_failure_candidate
     assert record.audit_ref == "human-audit:review-17"
     assert record.tool_calls == 3
+    assert record.enforce_communication_protocol is False
+    assert record.mixed_text_tool_call_messages == 1
     assert record.invalid_repeated_write_calls == 0
     assert record.raw_review["native_review"] == {"agent_errors": []}
     assert audit_attempts == [True]
@@ -173,6 +178,8 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
     stored_record = json.loads((run_directory / "episode-record.json").read_text(encoding="utf-8"))
     assert trajectory["id"] == record.episode_id
     assert telemetry["budget_delta"]["attempts"] == 2
+    assert telemetry["communication_protocol_observation"]["enforcement_enabled"] is False
+    assert telemetry["communication_protocol_observation"]["mixed_text_tool_call_message_count"] == 1
     assert telemetry["independent_audit"]["verifier_ref"] == record.audit_ref
     assert telemetry["independent_audit"]["invalid_repeated_write_calls"] == 0
     assert stored_record["trajectory_ref"] == record.trajectory_ref
@@ -261,6 +268,7 @@ def test_native_runner_can_execute_clean_user_without_strategy_overlay(tmp_path:
 def test_native_runner_requires_explicit_provider_opt_in(tmp_path: Path, monkeypatch):
     config = load_config(ROOT / "configs/phase3-mechanism.yaml")
     manifest = MechanismManifest.from_mapping(config)
+    assert manifest.enforce_communication_protocol is False
     with pytest.raises(RuntimeError, match="explicit real_provider_enabled opt-in"):
         TauBenchEpisodeRunner(
             manifest=manifest,
@@ -347,6 +355,12 @@ def test_native_phase3_requires_phase0_artifact_and_binds_its_budget(tmp_path: P
     assert phase0_budget.prompt_tokens == 101
     assert context["phase0_simulation_id"] == "phase0-sim"
     assert len(context["phase0_result_sha256"]) == 64
+
+    phase3_config["experiment"]["enforce_communication_protocol"] = True
+    strict_phase3_manifest = MechanismManifest.from_mapping(phase3_config)
+    with pytest.raises(ValueError, match="communication-protocol enforcement differs"):
+        _validate_phase0_parent(result_path, strict_phase3_manifest)
+    phase3_config["experiment"]["enforce_communication_protocol"] = False
 
     phase3_config["experiment"]["model_args"]["reviewer"]["temperature"] = 0.5
     changed_phase3_manifest = MechanismManifest.from_mapping(phase3_config)

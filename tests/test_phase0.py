@@ -15,6 +15,7 @@ from evotau.budget import (
     ProviderBudgetExceeded,
     RequestBudget,
 )
+from evotau.communication import observe_communication_protocol
 from evotau.eligibility import (
     TaskEligibilityError,
     validate_generalization_selection,
@@ -239,6 +240,41 @@ def test_manifest_freezes_all_model_roles_and_sampling_arguments() -> None:
     del changed["experiment"]["models"]["evaluator"]
     with pytest.raises(ValueError, match="models must contain exactly"):
         ExperimentManifest.from_mapping(changed)
+
+
+def test_communication_protocol_mode_is_frozen_and_defaults_to_upstream_semantics() -> None:
+    config = __import__("yaml").safe_load((ROOT / "configs/mvp.yaml").read_text(encoding="utf-8"))
+    manifest = ExperimentManifest.from_mapping(config)
+    assert manifest.enforce_communication_protocol is False
+    assert manifest.to_payload()["enforce_communication_protocol"] is False
+
+    changed = __import__("copy").deepcopy(config)
+    changed["experiment"]["enforce_communication_protocol"] = True
+    strict = ExperimentManifest.from_mapping(changed)
+    assert strict.enforce_communication_protocol is True
+    assert strict.sha256 != manifest.sha256
+    changed["experiment"]["enforce_communication_protocol"] = 1
+    with pytest.raises(ValueError, match="must be a boolean"):
+        ExperimentManifest.from_mapping(changed)
+
+
+def test_protocol_observation_counts_mixed_messages_without_mutating_trajectory() -> None:
+    messages = [
+        {"role": "assistant", "content": "Looking it up.", "tool_calls": [{"id": "a"}]},
+        {"role": "assistant", "content": "  ", "tool_calls": [{"id": "b"}]},
+        {"role": "assistant", "content": "Done."},
+        {"role": "assistant", "content": "Call tool", "tool_calls": [{"id": "c"}],
+         "turn_idx": 7},
+    ]
+    before = __import__("copy").deepcopy(messages)
+    observation = observe_communication_protocol(messages, enforcement_enabled=False)
+    assert observation == {
+        "enforcement_enabled": False,
+        "mixed_text_tool_call_message_count": 2,
+        "mixed_text_tool_call_messages_by_role": {"assistant": 2},
+        "mixed_text_tool_call_turn_indices": [0, 7],
+    }
+    assert messages == before
 
 
 def test_manifest_freezes_openai_compatible_route_and_thinking_mode() -> None:
@@ -500,6 +536,8 @@ def test_phase0_run_record_is_immutable_and_contains_budget_and_native_result(
     assert set(result["rendered_prompt_sha256"]) == {"agent", "customer"}
     assert result["provider_budget"]["attempts"] == 1
     assert result["provider_budget"]["usage_unavailable"] == 1
+    assert result["communication_protocol_observation"]["enforcement_enabled"] is False
+    assert result["communication_protocol_observation"]["mixed_text_tool_call_message_count"] == 0
     assert (Path(experiment["output_path"]) / "manifest.json").exists()
     assert json.loads(
         (Path(experiment["output_path"]) / "native-simulation.json").read_text(encoding="utf-8")
@@ -781,6 +819,15 @@ def test_pinned_tau_runtime_builds_adapters_without_provider_calls(monkeypatch) 
         service_strategy=service_strategy,
         service_token_counter=lambda text: len(text.split()),
     )
+    assert orchestrator.validate_communication is False
+    strict_orchestrator = build_phase0_orchestrator(
+        task=task,
+        agent_model="offline-inspection-only",
+        customer_model="offline-inspection-only",
+        seed=42,
+        enforce_communication_protocol=True,
+    )
+    assert strict_orchestrator.validate_communication is True
 
     agent = orchestrator.agent
     user = orchestrator.user

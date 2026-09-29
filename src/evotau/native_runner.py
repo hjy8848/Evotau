@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from .budget import BudgetSnapshot, ModelUsageSnapshot, RequestBudget
 from .checkpoint import load_checkpoint, manifest_fingerprint
+from .communication import observe_communication_protocol
 from .customer_evolver import LLMCustomerEvolver, OperatorSelector
 from .manifest import MechanismManifest, PilotManifest, sha256_json, write_manifest_once
 from .phase0_run import _load_pinned_tasks, _write_json_once
@@ -249,6 +250,7 @@ class TauBenchEpisodeRunner:
                 customer_strategy=customer,
                 service_strategy=service,
                 service_token_counter=self.service_token_counter,
+                enforce_communication_protocol=self.manifest.enforce_communication_protocol,
             )
             on_orchestrator(orchestrator)
             simulation = run_with_budget(
@@ -289,6 +291,10 @@ class TauBenchEpisodeRunner:
 
             if simulation_payload is None:
                 raise RuntimeError("native τ-bench did not provide a serialized simulation")
+            protocol_observation = observe_communication_protocol(
+                simulation_payload.get("messages") or (),
+                enforcement_enabled=self.manifest.enforce_communication_protocol,
+            )
             episode_id = str(simulation_payload.get("id") or attempt_id)
             record = EpisodeRecord(
                 episode_id=episode_id,
@@ -314,6 +320,10 @@ class TauBenchEpisodeRunner:
                 trajectory_ref=simulation_path.relative_to(self.output_directory).as_posix(),
                 audit_ref=None if audit_result is None else audit_result.verifier_ref,
                 tool_calls=_count_tool_calls(simulation_payload.get("messages") or ()),
+                enforce_communication_protocol=self.manifest.enforce_communication_protocol,
+                mixed_text_tool_call_messages=(
+                    protocol_observation["mixed_text_tool_call_message_count"]
+                ),
                 raw_review={
                     "native_review": simulation_payload.get("review"),
                     "auth_classification": simulation_payload.get("auth_classification"),
@@ -333,6 +343,7 @@ class TauBenchEpisodeRunner:
                 "budget_before": before.to_dict(),
                 "budget_after": after.to_dict(),
                 "budget_delta": _snapshot_delta(before, after),
+                "communication_protocol_observation": protocol_observation,
                 "independent_audit": None if audit_result is None else _audit_dict(audit_result),
             })
             _write_json_once(record_path, record.to_dict())
@@ -349,6 +360,12 @@ class TauBenchEpisodeRunner:
                 "panel_name": panel_name,
                 "failure_type": type(exc).__name__,
                 "native_simulation_saved": simulation_path.exists(),
+                "communication_protocol_observation": (
+                    None if simulation_payload is None else observe_communication_protocol(
+                        simulation_payload.get("messages") or (),
+                        enforcement_enabled=self.manifest.enforce_communication_protocol,
+                    )
+                ),
                 "rendered_prompt_sha256": prompt_hashes,
                 "budget_before": before.to_dict(),
                 "budget_after": after.to_dict(),
@@ -1068,6 +1085,13 @@ def _validate_phase0_parent(
         raise ValueError("Phase 0 and Phase 3 upstream τ-bench commits differ")
     if phase0_document.get("domain") != manifest.domain or phase0_document.get("communication_mode") != manifest.communication_mode:
         raise ValueError("Phase 0 and Phase 3 domain/runtime protocols differ")
+    phase0_protocol_mode = phase0_document.get("enforce_communication_protocol")
+    if type(phase0_protocol_mode) is not bool:
+        raise ValueError(
+            "Phase 0 parent does not record communication-protocol enforcement; regenerate it"
+        )
+    if phase0_protocol_mode != manifest.enforce_communication_protocol:
+        raise ValueError("Phase 0 and Phase 3 communication-protocol enforcement differs")
     if phase0_document.get("evaluation_type") != manifest.evaluation_type:
         raise ValueError("Phase 0 and Phase 3 evaluation modes differ")
     if (phase0_document.get("real_provider_enabled") is not True

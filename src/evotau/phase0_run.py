@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from .budget import RequestBudget
+from .communication import observe_communication_protocol
 from .eligibility import validate_generalization_selection, validate_smoke_selection
 from .manifest import ExperimentManifest, verify_git_blob_sha1, write_manifest_once
 from .phase0 import load_config
@@ -195,6 +196,7 @@ def execute_phase0(
     budget = RequestBudget(manifest.request_budget_cap)
     runner = episode_runner or run_phase0_episode
     simulation_saved = False
+    simulation_payload: dict[str, Any] | None = None
     prompt_hashes: dict[str, str] = {}
 
     def record_prompt_hashes(orchestrator: Any) -> None:
@@ -206,7 +208,7 @@ def execute_phase0(
         ).hexdigest()
 
     def persist_native_simulation(simulation: Any) -> None:
-        nonlocal simulation_saved
+        nonlocal simulation_saved, simulation_payload
         simulation_payload = simulation.model_dump(mode="json")
         _write_json_once(simulation_path, simulation_payload)
         simulation_saved = True
@@ -236,6 +238,10 @@ def execute_phase0(
             "native_reward": reward_info.get("reward"),
             "termination_reason": simulation_payload.get("termination_reason"),
             "simulation_file": simulation_path.name,
+            "communication_protocol_observation": observe_communication_protocol(
+                simulation_payload.get("messages") or (),
+                enforcement_enabled=manifest.enforce_communication_protocol,
+            ),
             "review": simulation_payload.get("review"),
             "auth_classification": simulation_payload.get("auth_classification"),
             "strategy": {
@@ -256,6 +262,12 @@ def execute_phase0(
             "rendered_prompt_sha256": prompt_hashes,
             "native_simulation_saved": simulation_saved,
             "simulation_file": simulation_path.name if simulation_saved else None,
+            "communication_protocol_observation": (
+                None if simulation_payload is None else observe_communication_protocol(
+                    simulation_payload.get("messages") or (),
+                    enforcement_enabled=manifest.enforce_communication_protocol,
+                )
+            ),
             "provider_budget": budget.snapshot().to_dict(),
         }
         _write_json_once(result_path, failure_record)

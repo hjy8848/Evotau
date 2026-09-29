@@ -61,6 +61,13 @@ def sha256_json(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def _communication_protocol_enforcement(experiment: Mapping[str, Any]) -> bool:
+    value = experiment.get("enforce_communication_protocol", False)
+    if type(value) is not bool:
+        raise ValueError("enforce_communication_protocol must be a boolean")
+    return value
+
+
 DEFAULT_CUSTOMER_STRATEGY_HASH = sha256_json({
     "disclosure": "minimal_on_request", "request_order": "scenario_order",
     "challenge_style": "none", "challenge_budget": 0,
@@ -286,6 +293,7 @@ class ExperimentManifest:
     evotau_source_sha256: str
     domain: str
     communication_mode: str
+    enforce_communication_protocol: bool
     evaluation_type: str
     split_name: str
     evolution_task_ids: tuple[str, ...]
@@ -319,6 +327,8 @@ class ExperimentManifest:
             raise ValueError("upstream package version does not match the pinned commit")
         if self.domain != "retail" or self.communication_mode != "half_duplex_text":
             raise ValueError("Phase 0 is fixed to tau-bench Retail half-duplex text mode")
+        if type(self.enforce_communication_protocol) is not bool:
+            raise ValueError("enforce_communication_protocol must be a boolean")
         if self.evaluation_type != "all":
             raise ValueError("Phase 0 must explicitly use EvaluationType.ALL")
         if self.split_name != "train":
@@ -387,6 +397,7 @@ class ExperimentManifest:
             evotau_source_sha256=code.source_sha256,
             domain=str(experiment["domain"]),
             communication_mode=str(experiment["communication_mode"]),
+            enforce_communication_protocol=_communication_protocol_enforcement(experiment),
             evaluation_type=str(experiment["evaluation_type"]),
             split_name=str(selection["source_split"]),
             evolution_task_ids=tuple(str(x) for x in selection["evolution"]),
@@ -435,6 +446,7 @@ class ExperimentManifest:
             },
             "domain": self.domain,
             "communication_mode": self.communication_mode,
+            "enforce_communication_protocol": self.enforce_communication_protocol,
             "evaluation_type": self.evaluation_type,
             "task_selection": {
                 "source_split": self.split_name,
@@ -503,6 +515,7 @@ class MechanismManifest:
     generations: int = 2
     domain: str = "retail"
     communication_mode: str = "half_duplex_text"
+    enforce_communication_protocol: bool = False
     evaluation_type: str = "all"
     split_name: str = "train"
     excluded_task_ids: tuple[str, ...] = ()
@@ -519,6 +532,8 @@ class MechanismManifest:
             raise ValueError("mechanism smoke must use the audited tau-bench pin")
         if self.domain != "retail" or self.communication_mode != "half_duplex_text" or self.evaluation_type != "all":
             raise ValueError("mechanism smoke is fixed to Retail half-duplex text with evaluation_type=all")
+        if type(self.enforce_communication_protocol) is not bool:
+            raise ValueError("enforce_communication_protocol must be a boolean")
         if self.split_name != "train":
             raise ValueError("E and V tasks must come from the official train split")
         if not self.evolution_task_id or not self.validation_task_id or self.evolution_task_id == self.validation_task_id:
@@ -597,6 +612,7 @@ class MechanismManifest:
             generations=int(experiment.get("generations", 2)),
             domain=str(experiment["domain"]),
             communication_mode=str(experiment["communication_mode"]),
+            enforce_communication_protocol=_communication_protocol_enforcement(experiment),
             evaluation_type=str(experiment["evaluation_type"]),
             split_name=str(selection["source_split"]),
             excluded_task_ids=tuple(str(task_id) for task_id in selection.get("excluded", ())),
@@ -620,6 +636,7 @@ class MechanismManifest:
                        "working_tree_clean": self.evotau_working_tree_clean,
                        "source_sha256": self.evotau_source_sha256},
             "domain": self.domain, "communication_mode": self.communication_mode,
+            "enforce_communication_protocol": self.enforce_communication_protocol,
             "evaluation_type": self.evaluation_type, "split_name": self.split_name,
             "evolution_task_id": self.evolution_task_id, "validation_task_id": self.validation_task_id,
             "excluded_task_ids": list(self.excluded_task_ids),
@@ -689,6 +706,7 @@ class PilotManifest:
     checkpoint_path: str
     domain: str = "retail"
     communication_mode: str = "half_duplex_text"
+    enforce_communication_protocol: bool = False
     evaluation_type: str = "all"
     split_name: str = "train"
     heldout_split_name: str = "test"
@@ -715,6 +733,8 @@ class PilotManifest:
             "retail", "half_duplex_text", "all",
         ):
             raise ValueError("Pilot is fixed to Retail half-duplex text with evaluation_type=all")
+        if type(self.enforce_communication_protocol) is not bool:
+            raise ValueError("enforce_communication_protocol must be a boolean")
         if self.split_name != "train" or self.heldout_split_name != "test":
             raise ValueError("Pilot E/V/H must use official train/train/test splits")
         if not 4 <= len(self.evolution_task_ids) <= 6:
@@ -911,6 +931,7 @@ class PilotManifest:
             static_customer_portfolio_sha256=static_portfolio_sha256,
             task_semantic_review_json=task_review_json,
             task_semantic_review_sha256=task_review_sha256,
+            enforce_communication_protocol=_communication_protocol_enforcement(experiment),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -928,6 +949,7 @@ class PilotManifest:
                 "source_sha256": self.evotau_source_sha256,
             },
             "domain": self.domain, "communication_mode": self.communication_mode,
+            "enforce_communication_protocol": self.enforce_communication_protocol,
             "evaluation_type": self.evaluation_type,
             "task_selection": {
                 "source_split": self.split_name,

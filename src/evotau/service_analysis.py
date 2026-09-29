@@ -96,10 +96,14 @@ class ServiceRepairAnalysis:
     repaired_signature_keys: tuple[str, ...]
     customer_effects: tuple[CustomerRepairEffect, ...]
     interpretation: str
+    enforce_communication_protocol: bool | None = None
 
     def __post_init__(self) -> None:
         if self.panel_scope not in SERVICE_PANEL_SCOPES:
             raise ValueError("RQ2 panel has an unknown scope")
+        if (self.enforce_communication_protocol is not None
+                and type(self.enforce_communication_protocol) is not bool):
+            raise TypeError("RQ2 communication protocol mode must be bool or None")
         if (not self.task_ids or any(not isinstance(item, str) or not item for item in self.task_ids)
                 or len(set(self.task_ids)) != len(self.task_ids)):
             raise ValueError("RQ2 panel task IDs must be non-empty, unique strings")
@@ -175,7 +179,9 @@ class ServiceRepairAnalysis:
     @classmethod
     def from_dict(cls, value: Any) -> ServiceRepairAnalysis:
         expected = {item.name for item in fields(cls)}
-        if not isinstance(value, dict) or set(value) != expected:
+        if (not isinstance(value, dict)
+                or not (expected - {"enforce_communication_protocol"}) <= set(value)
+                or set(value) - expected):
             raise ValueError("RQ2 panel analysis has missing or unknown fields")
         sequence_fields = (
             "task_ids", "seeds", "gate_report_sha256", "target_failure_sha256",
@@ -190,6 +196,7 @@ class ServiceRepairAnalysis:
                 raise ValueError("RQ2 customer effect has missing or unknown fields")
             effects.append(CustomerRepairEffect(**effect))
         parsed = dict(value)
+        parsed.setdefault("enforce_communication_protocol", None)
         for name in sequence_fields[:-1]:
             parsed[name] = tuple(parsed[name])
         parsed["customer_effects"] = tuple(effects)
@@ -227,6 +234,8 @@ def analyze_service_repair_crossplay(
         raise ValueError("incumbent and candidate matrices must use the same task/seed panel")
     if incumbent.customer_strategy_ids != candidate.customer_strategy_ids:
         raise ValueError("incumbent and candidate matrices must use the same frozen Customer panel")
+    if incumbent.enforce_communication_protocol != candidate.enforce_communication_protocol:
+        raise ValueError("incumbent and candidate matrices use different communication-protocol modes")
     if len(incumbent.service_strategy_ids) != 1 or len(candidate.service_strategy_ids) != 1:
         raise ValueError("RQ2 repair analysis compares exactly one incumbent and one candidate Service")
     old_service_id = incumbent.service_strategy_ids[0]
@@ -424,6 +433,7 @@ def analyze_service_repair_crossplay(
         repaired_signature_keys=repaired_keys,
         customer_effects=effects,
         interpretation=interpretation,
+        enforce_communication_protocol=incumbent.enforce_communication_protocol,
     )
 
 
@@ -541,6 +551,9 @@ class ServiceRobustnessRun:
         }
         if len(service_pairs) != 1:
             raise ValueError("all RQ2 panels in a run must compare the same Service checkpoint pair")
+        protocol_modes = {panel.enforce_communication_protocol for panel in self.panels}
+        if len(protocol_modes) != 1:
+            raise ValueError("all RQ2 panels in a run must use one communication-protocol mode")
 
     @property
     def panels_by_scope(self) -> dict[str, ServiceRepairAnalysis]:
@@ -689,6 +702,9 @@ def analyze_rq2_service_robustness(
         raise ValueError("bootstrap_seed must be a non-negative integer")
     if not runs:
         raise ValueError("RQ2 analysis requires independent evolution runs")
+    protocol_modes = {panel.enforce_communication_protocol for run in runs for panel in run.panels}
+    if len(protocol_modes) > 1:
+        raise ValueError("RQ2 runs cannot mix communication-protocol modes")
 
     run_ids: set[str] = set()
     by_condition: dict[str, dict[int, ServiceRobustnessRun]] = {

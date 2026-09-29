@@ -105,9 +105,12 @@ def build_phase0_orchestrator(
     customer_strategy: CustomerStrategy | None = None,
     service_strategy: ServiceStrategy | None = None,
     service_token_counter: Callable[[str], int] | None = None,
+    enforce_communication_protocol: bool = False,
 ) -> Any:
     """Construct native Retail text components directly, without changing the runner."""
 
+    if type(enforce_communication_protocol) is not bool:
+        raise TypeError("enforce_communication_protocol must be boolean")
     verify_tau2_installation()
     from tau2.agent.llm_agent import LLMAgent
     from tau2.orchestrator.orchestrator import Orchestrator
@@ -151,7 +154,7 @@ def build_phase0_orchestrator(
         seed=seed,
         solo_mode=False,
         simulation_id=f"evotau-phase0-{uuid4()}",
-        validate_communication=True,
+        validate_communication=enforce_communication_protocol,
     )
 
 
@@ -302,6 +305,7 @@ def run_phase0_episode(
         customer_strategy=customer_strategy,
         service_strategy=service_strategy,
         service_token_counter=service_token_counter,
+        enforce_communication_protocol=manifest.enforce_communication_protocol,
     )
     if on_orchestrator is not None:
         on_orchestrator(orchestrator)

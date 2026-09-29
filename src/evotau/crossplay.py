@@ -14,6 +14,7 @@ from .records import (
     EpisodeStatus,
     FailureRecord,
     customer_strategy_id,
+    ensure_same_communication_protocol,
     service_strategy_id,
 )
 from .strategies import CustomerStrategy, ServiceStrategy
@@ -60,8 +61,12 @@ class CrossPlayMatrix:
     seeds: tuple[int, ...]
     cells: tuple[CrossPlayCell, ...]
     repaired_signature_keys: tuple[str, ...] = ()
+    enforce_communication_protocol: bool | None = None
 
     def __post_init__(self) -> None:
+        if (self.enforce_communication_protocol is not None
+                and type(self.enforce_communication_protocol) is not bool):
+            raise TypeError("cross-play communication protocol mode must be bool or None")
         for name, values in (
             ("Customer strategy IDs", self.customer_strategy_ids),
             ("Service strategy IDs", self.service_strategy_ids),
@@ -125,6 +130,7 @@ class CrossPlayMatrix:
             "seeds": list(self.seeds),
             "cells": cells,
             "repaired_signature_keys": list(self.repaired_signature_keys),
+            "enforce_communication_protocol": self.enforce_communication_protocol,
         }
 
     @classmethod
@@ -135,7 +141,8 @@ class CrossPlayMatrix:
             "customer_strategy_ids", "service_strategy_ids", "task_ids", "seeds",
             "cells", "repaired_signature_keys",
         }
-        if not isinstance(value, dict) or set(value) != required:
+        allowed = required | {"enforce_communication_protocol"}
+        if not isinstance(value, dict) or not required <= set(value) or set(value) - allowed:
             raise ValueError("cross-play matrix has missing or unknown fields")
         array_fields = (
             "customer_strategy_ids", "service_strategy_ids", "task_ids", "seeds",
@@ -175,6 +182,7 @@ class CrossPlayMatrix:
                 seeds=tuple(value["seeds"]),
                 cells=tuple(cells),
                 repaired_signature_keys=tuple(value["repaired_signature_keys"]),
+                enforce_communication_protocol=value.get("enforce_communication_protocol"),
             )
         except (TypeError, ValueError) as exc:
             raise ValueError(f"invalid cross-play matrix: {exc}") from exc
@@ -213,6 +221,8 @@ def build_crossplay_matrix(
     if (len(set(repaired_keys)) != len(repaired_keys)
             or any(not re.fullmatch(r"[0-9a-f]{16}", item) for item in repaired_keys)):
         raise ValueError("repaired signature keys must be unique 16-character lowercase hashes")
+    ensure_same_communication_protocol(episodes)
+    communication_protocol_mode = episodes[0].enforce_communication_protocol if episodes else None
 
     pairs = {(customer_id, service_id) for customer_id in customer_ids for service_id in service_ids}
     expected_panel = {(task_id, seed) for task_id in tasks for seed in seed_values}
@@ -342,6 +352,7 @@ def build_crossplay_matrix(
             ))
     return CrossPlayMatrix(
         customer_ids, service_ids, tasks, seed_values, tuple(cells), repaired_keys,
+        communication_protocol_mode,
     )
 
 

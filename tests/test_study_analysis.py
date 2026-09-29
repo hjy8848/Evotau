@@ -204,6 +204,28 @@ def test_rq1_rejects_incomplete_condition_blocks_and_failure_evidence_mismatch()
         )
 
 
+def test_rq1_rejects_mixed_communication_protocol_modes_across_conditions():
+    def frozen_mode(item: StudyRun, mode: bool) -> StudyRun:
+        return replace(
+            item,
+            episodes=tuple(replace(episode, enforce_communication_protocol=mode)
+                           for episode in item.episodes),
+            reproduction_episodes=tuple(
+                replace(episode, enforce_communication_protocol=mode)
+                for episode in item.reproduction_episodes
+            ),
+        )
+
+    runs = [
+        frozen_mode(run(
+            block="protocol", evolution_seed=11, condition=condition, yield_count=1,
+        ), mode=condition != "adaptive_customer")
+        for condition in ("adaptive_customer", "static_customer", "random_mutation")
+    ]
+    with pytest.raises(ValueError, match="different or unknown communication-protocol modes"):
+        analyze_rq1_customer_advantage(runs, bootstrap_replicates=100)
+
+
 def test_rq1_json_cli_is_strict_hashes_input_and_never_overwrites_report(tmp_path):
     runs = complete_blocks((
         ("seed-block-11", 11, 2, 1, 0),

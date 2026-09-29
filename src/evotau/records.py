@@ -67,6 +67,16 @@ def is_mvp_failure_signature(signature: FailureSignature) -> bool:
     ) in MVP_FAILURE_TAXONOMY
 
 
+def ensure_same_communication_protocol(episodes: Any) -> None:
+    """Reject comparisons that combine strict and upstream-default episodes."""
+
+    modes = {episode.enforce_communication_protocol for episode in episodes}
+    if len(modes) > 1:
+        raise ValueError(
+            "cannot compare episodes with different or unknown communication-protocol modes"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class EpisodeRecord:
     """One executed or fixture episode and the native evidence attached to it."""
@@ -92,6 +102,8 @@ class EpisodeRecord:
     trajectory_ref: str | None = None
     audit_ref: str | None = None
     tool_calls: int = 0
+    enforce_communication_protocol: bool | None = None
+    mixed_text_tool_call_messages: int = 0
     raw_review: Mapping[str, Any] = field(default_factory=dict)
     notes: str = ""
 
@@ -102,6 +114,12 @@ class EpisodeRecord:
             raise ValueError("episode seed must be non-negative")
         if self.tool_calls < 0:
             raise ValueError("tool_calls must be non-negative")
+        if (self.enforce_communication_protocol is not None
+                and type(self.enforce_communication_protocol) is not bool):
+            raise TypeError("enforce_communication_protocol must be bool or None")
+        if (type(self.mixed_text_tool_call_messages) is not int
+                or self.mixed_text_tool_call_messages < 0):
+            raise ValueError("mixed_text_tool_call_messages must be a non-negative integer")
         if (self.invalid_repeated_write_calls is not None
                 and (type(self.invalid_repeated_write_calls) is not int
                      or self.invalid_repeated_write_calls < 0)):
@@ -292,6 +310,7 @@ class CandidateEvaluation:
     def __post_init__(self) -> None:
         if not self.strategy_id:
             raise ValueError("candidate evaluation requires a strategy ID")
+        ensure_same_communication_protocol((*self.episodes, *self.replication_episodes))
         episode_ids = [episode.episode_id for episode in self.episodes]
         if len(episode_ids) != len(set(episode_ids)):
             raise ValueError("candidate evaluation cannot contain duplicate episode IDs")

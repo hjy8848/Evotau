@@ -1,5 +1,5 @@
 {
-  "experiment_id": "evotau-phase0-retail-smoke",
+  "experiment_id": "evotau-phase0-inferai-qwen3-7-max-upstream-protocol-20260929",
   "phase": "0-integration-proof",
   "upstream": {
     "repository": "sierra-research/tau2-bench",
@@ -7,9 +7,9 @@
     "package_version": "1.0.1"
   },
   "evotau": {
-    "git_commit": "6d3bf8a71a9c67c3af55b9ab9181d9ea4ab247cb",
+    "git_commit": "81198874df1944c0b67e3118044208f4d2175d8f",
     "working_tree_clean": false,
-    "source_sha256": "eebe2a95a1cceb29b99e5cc9ce1d05dc13fe16593609c272c24f0c3b599c856e"
+    "source_sha256": "b9fe43b99593466ed5b93c8722e53496169f8060e04544cb5e9deb4f6344186f"
   },
   "domain": "retail",
   "communication_mode": "half_duplex_text",
@@ -32,48 +32,88 @@
   "seed": 42,
   "max_steps": 64,
   "max_episodes": 1,
-  "request_budget_cap": 70,
+  "request_budget_cap": 24,
   "provider_retries": 0,
   "max_concurrency": 1,
-  "real_provider_enabled": false,
+  "real_provider_enabled": true,
   "role_models": {
-    "agent": null,
-    "customer": null,
-    "reviewer": null,
-    "evaluator": null
+    "agent": "openai/qwen3.7-max",
+    "customer": "openai/qwen3.7-max",
+    "reviewer": "openai/qwen3.7-max",
+    "evaluator": "openai/qwen3.7-max"
   },
   "role_model_args": {
     "agent": {
-      "temperature": 0.0
+      "api_base": "https://inferaiapi.com/v1",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
     },
     "customer": {
-      "temperature": 0.0
+      "api_base": "https://inferaiapi.com/v1",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
     },
     "reviewer": {
-      "temperature": 0.0
+      "api_base": "https://inferaiapi.com/v1",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
     },
     "evaluator": {
-      "temperature": 0.0
+      "api_base": "https://inferaiapi.com/v1",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
     }
   },
   "runtime_arguments": {
     "agent_llm_args": {
-      "num_retries": 0,
-      "temperature": 0.0
+      "api_base": "https://inferaiapi.com/v1",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "num_retries": 0
     },
     "customer_llm_args": {
-      "num_retries": 0,
-      "temperature": 0.0
+      "api_base": "https://inferaiapi.com/v1",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "num_retries": 0
+    },
+    "reviewer_llm_args": {
+      "api_base": "https://inferaiapi.com/v1",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "evaluator_llm_args": {
+      "api_base": "https://inferaiapi.com/v1",
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
     },
     "provider_default_max_retries": 0,
     "cache_enabled": false,
-    "review_mode": "full",
-    "reviewer_llm_args": {
-      "temperature": 0.0
-    },
-    "evaluator_llm_args": {
-      "temperature": 0.0
-    }
+    "review_mode": "full"
   },
   "source_blob_sha1": {
     "data/tau2/domains/retail/db.json": "4d67b03b2d39ade5a7ab6facb2edd7ab3e013d48",
@@ -101,8 +141,8 @@
     "service": "da506c8a9c8a9f31aa00eaeef23d49764b9ace97158a1a0a7aa628e6d446b0fb"
   },
   "paths": {
-    "output": "experiments/runs/evotau-phase0-retail-smoke",
-    "checkpoint": "experiments/checkpoints/evotau-phase0-retail-smoke"
+    "output": "experiments/runs/evotau-phase0-inferai-qwen3-7-max-upstream-protocol-20260929",
+    "checkpoint": "experiments/checkpoints/evotau-phase0-inferai-qwen3-7-max-upstream-protocol-20260929"
   },
-  "manifest_sha256": "1864e3f6bc53b24e601a49068d89d90e152ac240c75983a691f312fa9d5ae3cc"
+  "manifest_sha256": "659f413701309c3d8fce888ace36e8cb19c9c121a7c708b9acc1dd3c29ad5284"
 }

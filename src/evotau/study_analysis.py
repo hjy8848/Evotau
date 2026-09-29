@@ -20,7 +20,12 @@ from statistics import mean
 from typing import Any
 
 from .manifest import sha256_json
-from .records import EpisodeRecord, EpisodeStatus, FailureRecord
+from .records import (
+    EpisodeRecord,
+    EpisodeStatus,
+    FailureRecord,
+    ensure_same_communication_protocol,
+)
 
 RQ1_CONDITIONS = ("adaptive_customer", "static_customer", "random_mutation")
 
@@ -64,6 +69,7 @@ class StudyRun:
             raise TypeError("study run reproduction_episodes must be EpisodeRecord values")
         if any(not isinstance(item, FailureRecord) for item in self.verified_failures):
             raise TypeError("study run failures must be verified FailureRecord values")
+        ensure_same_communication_protocol((*self.episodes, *self.reproduction_episodes))
 
         episode_ids = [episode.episode_id for episode in self.episodes]
         if len(episode_ids) != len(set(episode_ids)):
@@ -331,6 +337,11 @@ def analyze_rq1_customer_advantage(
         raise ValueError("bootstrap_seed must be a non-negative integer")
     if not runs:
         raise ValueError("RQ1 analysis requires run-level data")
+    ensure_same_communication_protocol(
+        episode
+        for run in runs
+        for episode in (*run.episodes, *run.reproduction_episodes)
+    )
 
     by_block: dict[str, dict[str, StudyRun]] = {}
     run_ids: set[str] = set()

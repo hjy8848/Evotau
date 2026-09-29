@@ -1,0 +1,9 @@
+# Phase 0 · InferAI Qwen 3.7 Max · upstream communication mode · 2026-09-29
+
+This is a single provider-backed smoke on τ-bench Retail task `73`, seed `42`, pinned τ-bench commit `b7ea9074c1cba482b30687fecdb5c8425fd6f619`. All four roles used `qwen3.7-max` through `https://inferaiapi.com/v1`, with thinking disabled, temperature `0`, a 512-token per-request output limit, retries disabled, and a 24-request budget cap. The frozen manifest sets `enforce_communication_protocol` to `false`, matching the pinned τ-bench default.
+
+The episode completed with native reward `1.0` and termination reason `user_stop`. The DB state check matched. The agent returned four order items and retained the espresso machine. Four assistant messages contained both non-empty text and a tool call (turns 4, 6, 8, and 14); τ-bench routed those messages to the environment and executed their tool calls. The run used 15 successful provider requests (57,910 prompt tokens and 1,328 completion tokens).
+
+The evaluator's exact reference-action diagnostic was `false`: the executed return had the same four item IDs as the reference action but in a different order. The DB check and overall native reward were still `1.0`; this artifact preserves that distinction for analysis. LiteLLM has no price mapping for this model, so billed cost is unknown. This is one smoke episode and has no independent human attribution audit; it is not a general model comparison or service-failure claim.
+
+`native-simulation.json` is the original τ-bench simulation serialization. `phase0-result.json`, `manifest.json`, and `config.yaml` preserve EvoTau's result, frozen protocol, and exact launch configuration. The trajectory contains no `reasoning_content`; the API key was injected from Keychain only into the runner process and is not included in these artifacts. `analysis-summary.json` provides the key fields in machine-readable form. `SHA256SUMS` covers every artifact in this directory except itself.
