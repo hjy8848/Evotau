@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "experiment_id": "evotau-phase0-inferai-qwen3-7-max-20260929",
+  "classification": "provider_integration_observation",
+  "research_evidence": false,
+  "comparison": {
+    "baseline_experiment_id": "evotau-phase0-inferai-deepseek-v4-flash-20260929",
+    "task_id": "73",
+    "seed": 42,
+    "prompt_hashes_match_baseline": true,
+    "model_id": "openai/qwen3.7-max",
+    "thinking_mode": "disabled for agent, customer, reviewer, and evaluator"
+  },
+  "outcome": {
+    "run_status": "complete",
+    "termination_reason": "agent_error",
+    "native_reward": 0.0,
+    "diagnosis": "On the first identity-lookup tool action, the agent emitted explanatory text and a find_user_id_by_email tool call in the same assistant message. The pinned tau-bench half-duplex validator rejects this format and the run terminated with agent_error before authentication completed.",
+    "review_note": "The native reviewer described the trajectory as early and reported no errors; this does not override the orchestration-level format failure.",
+    "interpretation": "Qwen3.7-Max reproduces the first-tool-call format error seen with V4 Flash and V4 Pro when thinking is disabled. Similar failures across models suggest checking the shared prompt/protocol integration, but these single episodes do not establish the cause or general model capability."
+  },
+  "provider_usage": {
+    "cap": 24,
+    "attempts": 6,
+    "successes": 6,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 14809,
+    "completion_tokens": 295,
+    "usage_responses": 6,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/qwen3.7-max",
+        "attempts": 6,
+        "successes": 6,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 14809,
+        "completion_tokens": 295,
+        "usage_responses": 6,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      }
+    ]
+  },
+  "billing": {
+    "native_reported_cost": 0.0,
+    "provider_billed_amount_verified": false,
+    "note": "LiteLLM reported that this model has no price mapping; the native cost field does not establish the amount billed by InferAI."
+  },
+  "archive_handling": {
+    "provider_reasoning_fields_removed": 0,
+    "visible_messages_tool_calls_usage_and_evaluation_retained": true
+  }
+}
