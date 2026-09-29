@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from .archive import FailureArchive
 from .attribution import confirm_failure_reproductions
+from .baselines import propose_random_mutation_candidates
 from .budget import BudgetSnapshot, ProviderBudgetExceeded, RequestBudget
 from .checkpoint import (
     EvolutionCheckpoint,
@@ -171,6 +172,7 @@ def run_customer_round(
     confirmation_seeds: tuple[int, ...] = (),
     request_budget: RequestBudget | None = None,
     proposal_provider: OperatorSelector | None = None,
+    proposal_mode: str = "failure_conditioned",
 ) -> CustomerRound:
     """Evaluate a shared panel, then replay audited signals before scoring failures."""
     if (not task_ids or not seeds or len(set(task_ids)) != len(task_ids)
@@ -193,7 +195,15 @@ def run_customer_round(
         failure_verifier=failure_verifier,
         request_budget=request_budget,
     )
-    if proposal_provider is None:
+    if proposal_mode not in {"failure_conditioned", "random_mutation"}:
+        raise ValueError("Customer proposal mode must be failure_conditioned or random_mutation")
+    if proposal_mode == "random_mutation":
+        if proposal_provider is not None:
+            raise ValueError("random-mutation control cannot use a failure-aware proposal provider")
+        candidates = propose_random_mutation_candidates(
+            incumbent, count, seed=proposal_seed, already_seen=already_seen,
+        )
+    elif proposal_provider is None:
         candidates = propose_customer_candidates(
             incumbent, count, seed=proposal_seed, recent_failures=prior_failures,
             already_seen=already_seen,
@@ -527,6 +537,8 @@ class TwoGenerationSmoke:
             failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
             service_transition: ServiceTransition | None = None,
             customer_proposal_provider: OperatorSelector | None = None,
+            customer_proposal_mode: str = "failure_conditioned",
+            allow_frozen_service: bool = False,
             candidates_per_generation: int = 2) -> tuple[GenerationCommit, ...]:
         """Execute two Customer-first generations on E with a fresh confirmation seed.
 
@@ -539,6 +551,10 @@ class TwoGenerationSmoke:
         """
         if candidates_per_generation != 2:
             raise ValueError("minimal smoke freezes K=2 Customer candidates per generation")
+        if customer_proposal_mode not in {"failure_conditioned", "random_mutation"}:
+            raise ValueError("Customer proposal mode must be failure_conditioned or random_mutation")
+        if type(allow_frozen_service) is not bool:
+            raise TypeError("allow_frozen_service must be boolean")
         if isinstance(self.manifest, MechanismManifest):
             if sha256_json(customer.to_dict()) != self.manifest.customer_strategy_sha256:
                 raise ValueError("initial Customer strategy does not match the frozen manifest")
@@ -549,6 +565,14 @@ class TwoGenerationSmoke:
                 raise ValueError("initial Customer strategy does not match the frozen Pilot manifest")
             if sha256_json(service.to_dict()) != self.manifest.service_strategy_sha256:
                 raise ValueError("initial Service strategy does not match the frozen Pilot manifest")
+            expected_mode = (
+                "random_mutation" if self.manifest.condition == "random_mutation"
+                else "failure_conditioned"
+            )
+            if customer_proposal_mode != expected_mode:
+                raise ValueError("Pilot condition and Customer proposal mode differ")
+            if allow_frozen_service != (self.manifest.condition == "random_mutation"):
+                raise ValueError("only the random-mutation Pilot control freezes Service without repair")
         commits: list[GenerationCommit] = []
         start_generation = 0
         if self._last_customer is None:
@@ -633,6 +657,7 @@ class TwoGenerationSmoke:
                 confirmation_seeds=(self.episode_seed_base + 10_000 + generation,),
                 request_budget=self.request_budget,
                 proposal_provider=customer_proposal_provider,
+                proposal_mode=customer_proposal_mode,
             )
             old_customer = customer
             if round_result.selection.evolved:
@@ -704,9 +729,12 @@ class TwoGenerationSmoke:
                 note = "no verified failure is available for a Service repair"
                 service_note = note
             elif failure_pool:
-                raise ValueError(
-                    "verified Service failures require an audited ServiceTransition before generation commit"
-                )
+                if not allow_frozen_service:
+                    raise ValueError(
+                        "verified Service failures require an audited ServiceTransition before generation commit"
+                    )
+                note = "verified failures are archived; frozen-Service control makes no repair"
+                service_note = note
             decision_record = _generation_decision_record(
                 generation=generation,
                 old_customer=old_customer,
@@ -715,6 +743,7 @@ class TwoGenerationSmoke:
                 new_service=service,
                 round_result=round_result,
                 failure_pool=tuple(failure_pool.values()),
+                customer_proposal_mode=customer_proposal_mode,
                 service_transition_ran=service_transition is not None and bool(failure_pool),
                 service_gate=gate,
                 service_note=service_note,
@@ -785,6 +814,7 @@ def _generation_decision_record(
     old_service: ServiceStrategy,
     new_service: ServiceStrategy,
     round_result: CustomerRound,
+    customer_proposal_mode: str,
     failure_pool: tuple[FailureRecord, ...],
     service_transition_ran: bool,
     service_gate: GateReport | None,
@@ -793,6 +823,7 @@ def _generation_decision_record(
     return {
         "generation": generation,
         "customer": {
+            "proposal_mode": customer_proposal_mode,
             "incumbent_before": old_customer.to_dict(),
             "incumbent_after": new_customer.to_dict(),
             "proposals": [

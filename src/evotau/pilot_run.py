@@ -48,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--provider-plugin", required=True,
-        help="module:factory returning per-seed independent audit and Service callbacks",
+        help="module:factory returning per-seed callbacks required by the frozen Pilot condition",
     )
     return parser
 

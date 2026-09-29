@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from evotau.archive import FailureArchive
 from evotau.budget import RequestBudget
 from evotau.lifecycle import TwoGenerationSmoke
 from evotau.manifest import PilotManifest, git_blob_sha1
@@ -15,6 +16,7 @@ from evotau.pilot_preflight import main, validate_pilot_config
 from evotau.records import (
     EpisodeRecord,
     EpisodeStatus,
+    EvidenceRef,
     customer_strategy_id,
     service_strategy_id,
 )
@@ -127,6 +129,50 @@ def test_typed_pilot_manifest_runs_one_independent_seed_checkpoint(tmp_path):
     assert len(calls) == 36
 
 
+def test_random_pilot_freezes_service_after_audited_failures(tmp_path):
+    config, _data_root = _pilot_fixture(tmp_path)
+    config["experiment"]["condition"] = "random_mutation"
+    manifest = PilotManifest.from_mapping(config)
+    archive = FailureArchive(tmp_path / "random-control.sqlite")
+    service = ServiceStrategy()
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        strategy_id = customer_strategy_id(customer)
+        return EpisodeRecord(
+            episode_id=f"{panel_name}:{task_id}:{seed}:{strategy_id}",
+            task_id=task_id, seed=seed, customer_strategy_id=strategy_id,
+            service_strategy_id=service_strategy_id(service), status=EpisodeStatus.COMPLETE,
+            task_success=False, customer_valid=True, strategy_applicable=True,
+            customer_strategy_adherent=True, policy_violation=True,
+            invalid_repeated_write_calls=0,
+            policy_rule_id="retail.policy:explicit_confirmation",
+            mistake_type="missing_explicit_confirmation", workflow_stage="pre_write",
+            evidence=(EvidenceRef(2, "tool", "write occurred without confirmation"),),
+        )
+
+    controller = TwoGenerationSmoke(
+        manifest=manifest, checkpoint_path=str(tmp_path / "random-control-checkpoint.json"),
+        runner=runner,
+        task_ids=(manifest.evolution_task_ids[0], manifest.validation_task_ids[0]),
+        evolution_task_ids=manifest.evolution_task_ids, seed=manifest.evolution_seeds[0],
+        request_budget=RequestBudget(manifest.request_budget_cap), failure_archive=archive,
+    )
+    commits = controller.run(
+        CustomerStrategy(), service, failure_verifier=lambda item: f"audit:{item.episode_id}",
+        customer_proposal_mode="random_mutation", allow_frozen_service=True,
+    )
+
+    assert [commit.service_id for commit in commits] == [service_strategy_id(service)] * 3
+    assert all(
+        commit.decision_record["customer"]["proposal_mode"] == "random_mutation"
+        and not commit.decision_record["service"]["transition_ran"]
+        and commit.decision_record["service"]["incumbent_before"]
+        == commit.decision_record["service"]["incumbent_after"]
+        for commit in commits
+    )
+    assert archive.recent()
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -185,11 +231,13 @@ def test_native_pilot_never_loads_provider_callbacks_while_provider_is_disabled(
     assert not calls
 
 
+@pytest.mark.parametrize("condition", ["adaptive_coevolution", "random_mutation"])
 def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, condition,
 ):
     config, data_root = _pilot_fixture(tmp_path)
     experiment = config["experiment"]
+    experiment["condition"] = condition
     experiment["real_provider_enabled"] = True
     experiment["models"] = {
         "agent": "mock-agent", "customer": "mock-customer",
@@ -245,6 +293,8 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
 
     def callback_factory(_config, _manifest, seed_base):
         callback_seed_bases.append(seed_base)
+        if condition == "random_mutation":
+            return {"audit_provider": lambda *_args: None}
         return {
             "audit_provider": lambda *_args: None,
             "customer_proposal_provider": selector,
@@ -255,6 +305,7 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
         config_path=config_path, data_dir=data_root, callback_factory=callback_factory,
     )
     assert result["status"] == "complete"
+    assert result["condition"] == condition
     assert result["evolution_seeds"] == [11, 17, 23]
     assert callback_seed_bases == [100_000, 200_000, 300_000]
     observed_episode_seed_blocks = []
@@ -268,6 +319,19 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
         observed_episode_seed_blocks.append(actual_seeds)
         assert [len(commit["decision_record"]["customer"]["proposals"])
                 for commit in seed_result["generation_commits"]] == [2, 1, 0]
+        expected_mode = "random_mutation" if condition == "random_mutation" else "failure_conditioned"
+        assert all(
+            commit["decision_record"]["customer"]["proposal_mode"] == expected_mode
+            for commit in seed_result["generation_commits"]
+        )
+        if condition == "random_mutation":
+            assert len({commit["service_id"] for commit in seed_result["generation_commits"]}) == 1
+            assert all(
+                proposal["rationale"] == "random_mutation"
+                and not proposal["supporting_failure_ids"]
+                for commit in seed_result["generation_commits"]
+                for proposal in commit["decision_record"]["customer"]["proposals"]
+            )
         expected_count = (
             sum(
                 (1 + len(commit["decision_record"]["customer"]["proposals"]))

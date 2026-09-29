@@ -558,10 +558,12 @@ def run_native_pilot(
     manifest = PilotManifest.from_mapping(config)
     if not manifest.real_provider_enabled:
         raise RuntimeError("native Pilot execution is disabled in the frozen manifest")
-    if manifest.condition not in {"adaptive_coevolution", "one_shot_repair"}:
+    if manifest.condition not in {
+        "adaptive_coevolution", "one_shot_repair", "random_mutation",
+    }:
         raise ValueError(
-            "native multi-generation Pilot supports adaptive_coevolution and one_shot_repair; "
-            "RQ1 static/random conditions use their separately frozen baseline schedules"
+            "native multi-generation Pilot supports adaptive_coevolution, one_shot_repair, "
+            "and random_mutation; static_customer requires its frozen portfolio schedule"
         )
     final_episode_count = len(manifest.validation_task_ids) + len(manifest.heldout_task_ids)
     if final_episode_count >= manifest.max_episodes:
@@ -611,18 +613,26 @@ def run_native_pilot(
             raise ValueError("Pilot callbacks must include audit_provider and use supported roles")
         if any(not callable(value) for value in callbacks.values()):
             raise TypeError("every Pilot provider callback must be callable")
-        has_transition = "service_transition" in callbacks
-        repair_keys = {"service_proposal_provider", "service_repair_audit_provider"}
-        has_repair_callbacks = repair_keys <= set(callbacks)
-        if bool(set(callbacks) & repair_keys) != has_repair_callbacks:
-            raise ValueError("Pilot repair proposal and audit callbacks must be supplied together")
-        if has_transition == has_repair_callbacks:
-            raise ValueError("Pilot callbacks require a ServiceTransition or both repair callbacks")
-        if "customer_proposal_provider" not in callbacks:
+        if manifest.condition == "random_mutation":
+            if set(callbacks) != {"audit_provider"}:
+                raise ValueError(
+                    "random_mutation control accepts only audit_provider; it freezes Service "
+                    "and cannot load a failure-aware Customer Evolver"
+                )
+        else:
+            has_transition = "service_transition" in callbacks
+            repair_keys = {"service_proposal_provider", "service_repair_audit_provider"}
+            has_repair_callbacks = repair_keys <= set(callbacks)
+            if bool(set(callbacks) & repair_keys) != has_repair_callbacks:
+                raise ValueError("Pilot repair proposal and audit callbacks must be supplied together")
+            if has_transition == has_repair_callbacks:
+                raise ValueError("Pilot callbacks require a ServiceTransition or both repair callbacks")
+        if (manifest.condition != "random_mutation"
+                and "customer_proposal_provider" not in callbacks):
             callbacks["customer_proposal_provider"] = LLMCustomerEvolver(
                 model=role_models["evolver"], model_args=role_model_args["evolver"],
             )
-        if not has_transition:
+        if manifest.condition != "random_mutation" and not has_transition:
             from .service_transition import GatedServiceTransition
 
             callbacks["service_transition"] = GatedServiceTransition(
@@ -657,11 +667,12 @@ def run_native_pilot(
             },
             "provider_provenance": _provider_provenance_document(
                 provider_provenance,
-                {
-                    "audit_provider": callbacks["audit_provider"],
-                    "customer_proposal_provider": callbacks["customer_proposal_provider"],
-                    "service_transition": callbacks["service_transition"],
-                },
+            {
+                key: callbacks[key]
+                for key in (
+                    "audit_provider", "customer_proposal_provider", "service_transition",
+                ) if key in callbacks
+            },
             ),
         }
         seed_dir = output_root / "seed-blocks" / f"seed-{seed}"
@@ -716,8 +727,13 @@ def run_native_pilot(
         controller.episode_attempts = 0
         commits = controller.run(
             customer, service,
-            service_transition=callbacks["service_transition"],
-            customer_proposal_provider=callbacks["customer_proposal_provider"],
+            service_transition=callbacks.get("service_transition"),
+            customer_proposal_provider=callbacks.get("customer_proposal_provider"),
+            customer_proposal_mode=(
+                "random_mutation" if manifest.condition == "random_mutation"
+                else "failure_conditioned"
+            ),
+            allow_frozen_service=manifest.condition == "random_mutation",
             candidates_per_generation=manifest.customer_candidates,
         )
         checkpoint_hash = manifest_fingerprint({
