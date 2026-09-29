@@ -1,0 +1,82 @@
+{
+  "episode_id": "evotau-phase0-42e02f33-2409-478e-acfa-91cc80c62ed0",
+  "task_id": "29",
+  "seed": 1,
+  "customer_strategy_id": "23d04c4aa8ef8c2f",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/8794c51c57224fcc930ee9268f5772dc/native-simulation.json",
+  "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+  "tool_calls": 10,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 3,
+  "raw_review": {
+    "native_review": {
+      "summary": "The agent successfully completed both requested exchanges: the skateboard was exchanged for the 28-inch bamboo plain variant at $208.60 (with the required price options listed), and the delivered garden hose was exchanged for the pending order's item 5206946487. The user was authenticated via name and zip code, all action details were listed, and explicit confirmation was obtained before the exchanges. The agent's only errors were procedural policy violations: it repeatedly made multiple tool calls at the same time and sent user-facing messages while making tool calls. These did not affect the final outcome.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent sent a message to the user and simultaneously made four tool calls in one turn. The policy states the agent should make at most one tool call at a time, and should not respond to the user while making a tool call.",
+          "correct_behavior": "The agent should have made a single tool call, waited for the response, and only then continued with the next call or replied to the user."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 13,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent sent a message to the user and made two tool calls simultaneously (get_product_details for the skateboard and the garden hose). The policy requires at most one tool call at a time, and no user response while making a tool call.",
+          "correct_behavior": "The agent should have made one get_product_details call at a time, waiting for each result before proceeding."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 20,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent sent a message to the user and made two exchange_delivered_order_items tool calls simultaneously. The policy requires at most one tool call at a time, and no user response while making a tool call.",
+          "correct_behavior": "The agent should have made one exchange call, waited for its response, and then made the second exchange call separately."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent requested authentication, the user provided name and zip code, and the agent successfully looked up the account via the find_user_id_by_name_zip tool and retrieved user details, confirming the identity and accessing account/order information.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

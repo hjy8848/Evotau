@@ -48,6 +48,66 @@ class GeneralizationTaskSelection:
     heldout_entity_keys: tuple[str, ...]
 
 
+def validate_activation_selection(
+    tasks: Sequence[Mapping[str, Any]],
+    split_data: Mapping[str, Sequence[str]],
+    *,
+    evolution_task_ids: Sequence[str],
+    validation_task_ids: Sequence[str],
+    excluded_task_ids: Sequence[str] = ("46", "47"),
+) -> GeneralizationTaskSelection:
+    """Validate a reviewed E/V activation panel while leaving H unopened."""
+
+    evolution = _task_id_tuple(evolution_task_ids, "evolution")
+    validation = _task_id_tuple(validation_task_ids, "validation")
+    if len(evolution) != 10:
+        raise TaskEligibilityError("activation smoke requires exactly ten E tasks")
+    if not validation:
+        raise TaskEligibilityError("activation smoke requires at least one reviewed V task")
+    if set(evolution) & set(validation):
+        raise TaskEligibilityError("activation E and V task IDs must be disjoint")
+
+    by_id = {str(task.get("id")): task for task in tasks}
+    if len(by_id) != len(tasks):
+        raise TaskEligibilityError("task data contains duplicate task IDs")
+    selected = evolution + validation
+    missing = set(selected) - by_id.keys()
+    if missing:
+        raise TaskEligibilityError(
+            f"selected activation task IDs are absent from the pinned task set: {sorted(missing)}"
+        )
+    train = {str(item) for item in split_data.get("train", ())}
+    test = {str(item) for item in split_data.get("test", ())}
+    if not set(selected) <= train or set(selected) & test:
+        raise TaskEligibilityError("activation E/V tasks must be official-train and disjoint from test")
+
+    excluded = {str(item) for item in excluded_task_ids}
+    entities: dict[str, set[str]] = {"evolution": set(), "validation": set()}
+    for panel, task_ids in (("evolution", evolution), ("validation", validation)):
+        for task_id in task_ids:
+            task = by_id[task_id]
+            _is_ex_ante_eligible(task, excluded)
+            keys = set(business_entity_keys(task))
+            if not keys:
+                raise TaskEligibilityError(
+                    f"could not derive stable business-entity keys for {panel} task {task_id}"
+                )
+            entities[panel].update(keys)
+    shared = entities["evolution"] & entities["validation"]
+    if shared:
+        raise TaskEligibilityError(
+            f"evolution and validation tasks share business entities: {sorted(shared)}"
+        )
+    return GeneralizationTaskSelection(
+        evolution_task_ids=evolution,
+        validation_task_ids=validation,
+        heldout_task_ids=(),
+        evolution_entity_keys=tuple(sorted(entities["evolution"])),
+        validation_entity_keys=tuple(sorted(entities["validation"])),
+        heldout_entity_keys=(),
+    )
+
+
 def _scenario_text(task: Mapping[str, Any]) -> str:
     scenario = task.get("user_scenario") or {}
     instructions = scenario.get("instructions") or {}

@@ -253,6 +253,7 @@ def run_with_budget(
     evaluator_model_args: dict[str, Any],
     on_simulation: Callable[[Any], None] | None = None,
     after_review: Callable[[Any, Any], None] | None = None,
+    retry_empty_responses: bool = False,
 ) -> Any:
     """Run, score, and review natively under one provider-request budget."""
 
@@ -270,7 +271,10 @@ def run_with_budget(
         evaluator_model_args=evaluator_model_args,
         reviewer_model=reviewer_model,
         reviewer_model_args=reviewer_model_args,
-    ), budget.instrument_tau_llm_utils(llm_utils):
+    ), budget.instrument_tau_llm_utils(
+        llm_utils,
+        retry_empty_responses=retry_empty_responses,
+    ):
         result = run_simulation(orchestrator, evaluation_type=EvaluationType.ALL)
         if on_simulation is not None:
             on_simulation(result)

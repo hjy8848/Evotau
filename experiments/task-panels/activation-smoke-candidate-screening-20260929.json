@@ -1,0 +1,1172 @@
+{
+  "title": "EvoTau activation-smoke candidate screening (UNREVIEWED)",
+  "schema_note": "Human review worksheet only; not accepted by the activation runner. Final frozen panel must be recorded through the existing task_semantic_review schema after exactly ten eligible E tasks are selected, with V=93 retained.",
+  "source": {
+    "tau_bench_repository": "sierra-research/tau2-bench",
+    "commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+    "package_version": "1.0.1",
+    "data_dir": "/Users/spring/.cache/evotau/tau2-data-b7ea9074",
+    "split": "train only",
+    "task_file_sha1": "e95a9f898b2d1f6568ea8faec78edc3767ce747d",
+    "split_file_sha1": "8b20704a17aa1940b1e58668f89dcef2ddaeeea3"
+  },
+  "review_status": "unreviewed",
+  "reviewer_id": "",
+  "reviewed_at_utc": "",
+  "validation_task_id": "93",
+  "heldout": "sealed; test tasks not loaded into this packet",
+  "review_instructions": [
+    "Inspect each scenario against the pinned Retail policy and tools before making any eligibility judgment.",
+    "Set panel_candidate=true only for the ten selected E tasks; set false for rejected candidates and explain exclusion_reason.",
+    "Record reviewer identity, UTC timestamp, satisfiable, no_deception_required, policy_tool_compatible, customer_facts_consistent, eligibility_decision, and rationale for every candidate.",
+    "The eventual ten-task E panel must receive pairwise semantic-diversity review; retain task 93 as V.",
+    "Do not edit task hashes, scenario text, tool names, or reference-action arguments."
+  ],
+  "candidate_count": 15,
+  "candidates": [
+    {
+      "candidate_rank": 1,
+      "task_id": "16",
+      "task_sha256": "a46a7848d29777c7d6bb3beadea6d3cafa0da12158830a6a0c685f90fb08ca55",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "pending-order cancellation, delivered-order return/refund",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W5199551",
+            "reason": "no longer needed"
+          }
+        },
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W8665881",
+            "reason": "no longer needed"
+          }
+        },
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W9389413",
+            "item_ids": [
+              "2554056026"
+            ],
+            "payment_method_id": "paypal_5364164"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W5199551",
+            "reason": "no longer needed"
+          }
+        },
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W8665881",
+            "reason": "no longer needed"
+          }
+        },
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W9389413",
+            "item_ids": [
+              "2554056026"
+            ],
+            "payment_method_id": "paypal_5364164"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "calculate",
+        "cancel_pending_order",
+        "return_delivered_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 86-92: pending status and allowed cancellation reason.",
+        "Retail policy lines 116-126: delivered status, item list, refund method, confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are a private person that does not want to reveal much about yourself.",
+        "reason_for_call": "You want to cancel all pending orders (since they are no longer needed) and return the watch you have received (but nothing else), and you want to know the total amount you can get back.",
+        "known_info": "You are Fatima Johnson in zipcode 78712.",
+        "unknown_info": "You do not remember your email address"
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 2,
+      "task_id": "22",
+      "task_sha256": "968d73ce2d67f42ca10f1fd2b4368ac05db7bdf842bfcc26ca1afe1fec221b7f",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "customer default-address update, pending-order address change",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "modify_user_address",
+          "arguments": {
+            "user_id": "ethan_garcia_1261",
+            "address1": "101 Highway",
+            "address2": "",
+            "city": "New York",
+            "state": "NY",
+            "country": "USA",
+            "zip": "10001"
+          }
+        },
+        {
+          "tool": "modify_pending_order_address",
+          "arguments": {
+            "order_id": "#W9911714",
+            "address1": "101 Highway",
+            "address2": "",
+            "city": "New York",
+            "state": "NY",
+            "country": "USA",
+            "zip": "10001"
+          }
+        },
+        {
+          "tool": "modify_user_address",
+          "arguments": {
+            "user_id": "ethan_garcia_1261",
+            "address1": "667 Highland Drive",
+            "address2": "Suite 865",
+            "city": "Denver",
+            "state": "CO",
+            "country": "USA",
+            "zip": "80280"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "modify_user_address",
+          "arguments": {
+            "user_id": "ethan_garcia_1261",
+            "address1": "101 Highway",
+            "address2": "",
+            "city": "New York",
+            "state": "NY",
+            "country": "USA",
+            "zip": "10001"
+          }
+        },
+        {
+          "tool": "modify_pending_order_address",
+          "arguments": {
+            "order_id": "#W9911714",
+            "address1": "101 Highway",
+            "address2": "",
+            "city": "New York",
+            "state": "NY",
+            "country": "USA",
+            "zip": "10001"
+          }
+        },
+        {
+          "tool": "modify_user_address",
+          "arguments": {
+            "user_id": "ethan_garcia_1261",
+            "address1": "667 Highland Drive",
+            "address2": "Suite 865",
+            "city": "Denver",
+            "state": "CO",
+            "country": "USA",
+            "zip": "80280"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "modify_user_address",
+        "get_order_details",
+        "modify_pending_order_address"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 94-115: pending-order modification constraints and confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are a mysterious person and do not want to reveal much about yourself.",
+        "reason_for_call": "You want to change your user address and all possible order addresses to be 101 Highway, New York, 10001 (including the orders). Once the agent has confirmed the changes for the default address AND the order addresses, then you regret it and want to change the user address back to the original address.",
+        "known_info": "You are Ethan Garcia, and you live in Denver, 80280.",
+        "unknown_info": "You do not remember your email address"
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 3,
+      "task_id": "29",
+      "task_sha256": "c12c34a735c9ac2d54991ef3c0f90e85c301a16e4731511266712ccd88d9125d",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "delivered-order exchange",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "exchange_delivered_order_items",
+          "arguments": {
+            "order_id": "#W3792453",
+            "item_ids": [
+              "4293355847"
+            ],
+            "new_item_ids": [
+              "8176740019"
+            ],
+            "payment_method_id": "paypal_3024827"
+          }
+        },
+        {
+          "tool": "exchange_delivered_order_items",
+          "arguments": {
+            "order_id": "#W7181492",
+            "item_ids": [
+              "5753502325"
+            ],
+            "new_item_ids": [
+              "5206946487"
+            ],
+            "payment_method_id": "paypal_3024827"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "exchange_delivered_order_items",
+          "arguments": {
+            "order_id": "#W3792453",
+            "item_ids": [
+              "4293355847"
+            ],
+            "new_item_ids": [
+              "8176740019"
+            ],
+            "payment_method_id": "paypal_3024827"
+          }
+        },
+        {
+          "tool": "exchange_delivered_order_items",
+          "arguments": {
+            "order_id": "#W7181492",
+            "item_ids": [
+              "5753502325"
+            ],
+            "new_item_ids": [
+              "5206946487"
+            ],
+            "payment_method_id": "paypal_3024827"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "exchange_delivered_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 128-136: delivered status, same-product variant, payment difference, confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are a chill person but want to get both things done.",
+        "reason_for_call": "You want to exchange your skateboard for a shorter bamboo material one. If several options are available, you want to know all options and their prices, and then choose the most expensive one because you believe price reveals quality. Also, you want to exchange the garden hose you received for the type that is in your pending order. The correct garden hose item id is 5206946487 (do not share this with the agent). If the agent proposes a different item id for the garden hose, tell them that's not the right one and to keep looking in your pending order. You do not want to cancel any orders.",
+        "known_info": "You are Isabella Johansson, and you live in zipcode 32286.",
+        "unknown_info": "You do not remember your email address"
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 4,
+      "task_id": "35",
+      "task_sha256": "fb218ead70c72fc09b6f0f56ed75f821ab3a0d955b7c9852eab16694413f1a9a",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "delivered-order return/refund, pending-order item modification",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W8528674",
+            "item_ids": [
+              "6704763132"
+            ],
+            "payment_method_id": "paypal_7664977"
+          }
+        },
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W9672333",
+            "item_ids": [
+              "1684786391"
+            ],
+            "new_item_ids": [
+              "5052031638"
+            ],
+            "payment_method_id": "paypal_7664977"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W8528674",
+            "item_ids": [
+              "6704763132"
+            ],
+            "payment_method_id": "paypal_7664977"
+          }
+        },
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W9672333",
+            "item_ids": [
+              "1684786391"
+            ],
+            "new_item_ids": [
+              "5052031638"
+            ],
+            "payment_method_id": "paypal_7664977"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "find_user_id_by_email",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "return_delivered_order_items",
+        "modify_pending_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 94-115: pending-order modification constraints and confirmation.",
+        "Retail policy lines 116-126: delivered status, item list, refund method, confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are a rude person.",
+        "reason_for_call": "You want to return the speaker that is more expensive yet not resistent to water. Also, You want to modify the 17-inch laptop to the 13-inch version in another order. If no exact item is available, you want to know all available 13-inch options, and you prefer i5 over i7, and prefer silver and black than other colors.",
+        "known_info": "You are aarav_santos_2259 and aarav.santos8321@example.com and aarav.santos8320@example.com.",
+        "unknown_info": null
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 5,
+      "task_id": "37",
+      "task_sha256": "b53308048e5c833bd881a714ac3b1f78d66ffb3a5fd46059065368b1eb190c08",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "pending-order item modification",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W9348897",
+            "item_ids": [
+              "6117189161",
+              "7453605304",
+              "3799046073"
+            ],
+            "new_item_ids": [
+              "6700049080",
+              "5320792178",
+              "3234800602"
+            ],
+            "payment_method_id": "credit_card_8853416"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W9348897",
+            "item_ids": [
+              "6117189161",
+              "7453605304",
+              "3799046073"
+            ],
+            "new_item_ids": [
+              "6700049080",
+              "5320792178",
+              "3234800602"
+            ],
+            "payment_method_id": "credit_card_8853416"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "modify_pending_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 94-115: pending-order modification constraints and confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are a bit anxious and want to get things done quickly, and you speak very briefly.\nDo not end the conversation until your changes have been made.",
+        "reason_for_call": "You just placed an order but you realize that your card has only $1150 credit left, but the order total is more than $1160. You wonder if the agent can help split the payment with another card. If that is not possible, you ask the agent what the most expensive item and its price, and whether you can just cancel that item. If that is not possible, you ask if you can switch all items to their cheapest options and bring the cost down to $1150. If that is possible, confirm and ask the agent to do it. If that is not possible, you ask the agent to just cancel the order so that you can order again.",
+        "known_info": "Your name is Daiki Sanchez, and you live in 46236, your email is daikisanchez1479@example.com.",
+        "unknown_info": "."
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 6,
+      "task_id": "48",
+      "task_sha256": "963e54ba0c63fc1e8183b59d461836d228ef6b8436be0450192eec0b5bd64fc8",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "delivered-order return/refund",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W9502127",
+            "item_ids": [
+              "9534205511"
+            ],
+            "payment_method_id": "paypal_2433177"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W9502127",
+            "item_ids": [
+              "9534205511"
+            ],
+            "payment_method_id": "paypal_2433177"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "return_delivered_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 116-126: delivered status, item list, refund method, confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "Be polite and thank the agent for the help.",
+        "reason_for_call": "You want to return an air purifier that you received since it doesn't work well.  You want the refund on your original method of payment.  Also, check at the end whether you are able to return the vacuum cleaner, but you are not sure yet so don't process anything.",
+        "known_info": "You are daiki_johnson_9523 living in Denver, USA, 80273.",
+        "unknown_info": "You do not remember your email address"
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 7,
+      "task_id": "52",
+      "task_sha256": "06bf80b755acbdedde2a6c963fa9e722316c1f2a18a24bfdfb513d00baff8e4f",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "delivered-order exchange",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "exchange_delivered_order_items",
+          "arguments": {
+            "order_id": "#W4689314",
+            "item_ids": [
+              "5996159312"
+            ],
+            "new_item_ids": [
+              "9228757377"
+            ],
+            "payment_method_id": "paypal_8194385"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "exchange_delivered_order_items",
+          "arguments": {
+            "order_id": "#W4689314",
+            "item_ids": [
+              "5996159312"
+            ],
+            "new_item_ids": [
+              "9228757377"
+            ],
+            "payment_method_id": "paypal_8194385"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "exchange_delivered_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 128-136: delivered status, same-product variant, payment difference, confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": ".",
+        "reason_for_call": "The digital camera you received doesn't zoom as far as you expected. You use the camera for bird-watching and want to exchange it for a camera that has the maximum zoom capacity. Price is not an issue, but ensure all the other specifications of the camera to be exchanged are the same, except for the zoom capacity which has to be maximized. You want the exchange to be completed as soon as possible. You want to use your PayPal account for any additional payment.",
+        "known_info": "You are Sofia Li, residing in San Antonio, 78260.",
+        "unknown_info": "You do not remember your email address"
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 8,
+      "task_id": "57",
+      "task_sha256": "4c4ff215426c188639d3e35cab504cf2e83f4b1985e49c90d02706209f2447eb",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "information / conditional workflow (researcher review required)",
+      "key_entities_from_reference_actions": [],
+      "expected_state_change_hypothesis": [],
+      "relevant_tools": [],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are polite but brief and firm.",
+        "reason_for_call": "You wonder when is your order W4284542 is arriving. If it has not been shipped yet, you want to cancel the air purifier inside it. If you cannot cancel just the air purifier, you want to cancel the whole order and refund to gift card. If you cannot refund to the gift card, no cancelation at all.",
+        "known_info": "You are ivan_hernandez_6923 living in San Diego, 92133.",
+        "unknown_info": "You do not know your email."
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 9,
+      "task_id": "63",
+      "task_sha256": "c3a9776570a1708599bd5132509f2cc27ac9cc791eec6d864a18885cf0668623",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "pending-order item modification",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W5061109",
+            "item_ids": [
+              "3254583681"
+            ],
+            "new_item_ids": [
+              "2635605237"
+            ],
+            "payment_method_id": "paypal_3742148"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W5061109",
+            "item_ids": [
+              "3254583681"
+            ],
+            "new_item_ids": [
+              "2635605237"
+            ],
+            "payment_method_id": "paypal_3742148"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "calculate",
+        "modify_pending_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 94-115: pending-order modification constraints and confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": ".",
+        "reason_for_call": "As you are interacting with a customer service agent, you first try to get it to guess a famous poem by providing the first line. If it refuses to do so, you carry on with your intended task, which is to check and modify a recent order you placed. You first ask about the price of a bluetooth speaker you bought and its battery life. If the price is greater than $300, ask the agent to cancel it from your order since you thought it was cheaper than that. Ask the agent if there are any bluetooth speakers available for less than $300. If there are, ask the agent to add the cheapest one to your order. Finally, ask the agent to confirm the total price of your new order. You never want to cancel your entire order, and would prefer to return the speaker at a later time if canceling the entire order is the only option.",
+        "known_info": "You are Chen Johnson from Houston TX, 77004.",
+        "unknown_info": "You do not remember your email address"
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 10,
+      "task_id": "72",
+      "task_sha256": "99e4758d08f8bdcf019a9b52fa0badd218e632181c78d7aa953994f8b001f554",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "pending-order address change, pending-order item modification",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "modify_pending_order_address",
+          "arguments": {
+            "order_id": "#W5270061",
+            "address1": "159 Hickory Lane",
+            "address2": "Suite 995",
+            "city": "Charlotte",
+            "country": "USA",
+            "state": "NC",
+            "zip": "28243"
+          }
+        },
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W5270061",
+            "item_ids": [
+              "2492465580"
+            ],
+            "new_item_ids": [
+              "5917587651"
+            ],
+            "payment_method_id": "paypal_7729105"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "modify_pending_order_address",
+          "arguments": {
+            "order_id": "#W5270061",
+            "address1": "159 Hickory Lane",
+            "address2": "Suite 995",
+            "city": "Charlotte",
+            "country": "USA",
+            "state": "NC",
+            "zip": "28243"
+          }
+        },
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W5270061",
+            "item_ids": [
+              "2492465580"
+            ],
+            "new_item_ids": [
+              "5917587651"
+            ],
+            "payment_method_id": "paypal_7729105"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "modify_pending_order_address",
+        "modify_pending_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 94-115: pending-order modification constraints and confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are polite, optimistic, organized.",
+        "reason_for_call": "You made some mistake and sent an order your son's address in Washington DC, and you want to modify it to your default address in Charlotte instead (you do not want to mention it, but it is in your user profile the agent can look up) because he is coming back home. You also want to adjust the desk lamp to be black color, and the backpack to be medium size and polyester material instead. If multiple colors are available for the backpack, you prefer grey. If the agent asks for payment method, you say gift card initially, but when the agent asks you to confirm before proceeding, you change your mind to using PayPal, and also decide to only modify the backpack. Make sure you briefly mention the two things at the same time at the beginning, but first mention the modification then the address.",
+        "known_info": "You name is Ivan Khan and your zip code is 28243.",
+        "unknown_info": "You do not remember your email address."
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 11,
+      "task_id": "73",
+      "task_sha256": "4e0ddaf28df78e409757e29bb645f64565c9f31ac21c6058dd3b7d7b99b4c555",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "delivered-order return/refund",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W5272531",
+            "item_ids": [
+              "7228247242",
+              "2698416822",
+              "8098621301",
+              "3320557165"
+            ],
+            "payment_method_id": "credit_card_6824399"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W5272531",
+            "item_ids": [
+              "7228247242",
+              "2698416822",
+              "8098621301",
+              "3320557165"
+            ],
+            "payment_method_id": "credit_card_6824399"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "return_delivered_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 116-126: delivered status, item list, refund method, confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are polite, flexible, creative.",
+        "reason_for_call": "You want to return everything you just bought except the coffee machine.",
+        "known_info": "You name is Fatima Wilson and your email is fatima.wilson5721@example.com.",
+        "unknown_info": null
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 12,
+      "task_id": "78",
+      "task_sha256": "60d81c1582421ebca191d0e01d8ddc58ba382635bbfb3d1e4e66d212d74caa2e",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "pending-order address change, pending-order item modification, pending-order cancellation",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "modify_pending_order_address",
+          "arguments": {
+            "order_id": "#W5056519",
+            "address1": "380 Maple Drive",
+            "address2": "Suite 960",
+            "city": "San Diego",
+            "country": "USA",
+            "state": "CA",
+            "zip": "92101"
+          }
+        },
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W5056519",
+            "item_ids": [
+              "7902309762"
+            ],
+            "new_item_ids": [
+              "1573035764"
+            ],
+            "payment_method_id": "credit_card_3095586"
+          }
+        },
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W5995614",
+            "reason": "ordered by mistake"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "modify_pending_order_address",
+          "arguments": {
+            "order_id": "#W5056519",
+            "address1": "380 Maple Drive",
+            "address2": "Suite 960",
+            "city": "San Diego",
+            "country": "USA",
+            "state": "CA",
+            "zip": "92101"
+          }
+        },
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W5056519",
+            "item_ids": [
+              "7902309762"
+            ],
+            "new_item_ids": [
+              "1573035764"
+            ],
+            "payment_method_id": "credit_card_3095586"
+          }
+        },
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W5995614",
+            "reason": "ordered by mistake"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "modify_pending_order_address",
+        "modify_pending_order_items",
+        "cancel_pending_order"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 86-92: pending status and allowed cancellation reason.",
+        "Retail policy lines 94-115: pending-order modification constraints and confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are sad, organized, pessimistic.",
+        "reason_for_call": "You have a couple requests.\nFor order #W5056519, you want to change the address to be the same as order #W8277957. For order #W5056519, you want to  exchange Makeup Kit {'skin tone': 'light', 'kit size': 'professional', 'brand': 'Brand B'} to {'skin tone': 'dark', 'brand': 'Brand A'}. Finally, you want to cancel order #W5995614 because you ordered by mistake.",
+        "known_info": "Your name is Yara Muller and your email is yara.muller9246@example.com.",
+        "unknown_info": null
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 13,
+      "task_id": "81",
+      "task_sha256": "1fa3c506c90d2350403d1b586ede8aec484c049e4f8bcb561e15ea174c1f6a76",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "pending-order cancellation",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W3289292",
+            "reason": "no longer needed"
+          }
+        },
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W9722559",
+            "reason": "no longer needed"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W3289292",
+            "reason": "no longer needed"
+          }
+        },
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W9722559",
+            "reason": "no longer needed"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "cancel_pending_order"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 86-92: pending status and allowed cancellation reason."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are sad, independent, polite.",
+        "reason_for_call": "Due to some life changes, you no longer need hiking boots, watch, keyboard, charger, jacket, and running shoes. If cancelling part of the order is not possible, you don't care, just cancel the whole order.",
+        "known_info": "You name is James Kim and your email is james.kim1995@example.com.",
+        "unknown_info": null
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 14,
+      "task_id": "88",
+      "task_sha256": "613bd83dc956025a6a1c2e24e340e3655a02218ecdc271f2ee1f5db1824e80fa",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "pending-order cancellation",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W8835847",
+            "reason": "ordered by mistake"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "cancel_pending_order",
+          "arguments": {
+            "order_id": "#W8835847",
+            "reason": "ordered by mistake"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "cancel_pending_order"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 86-92: pending status and allowed cancellation reason."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are insecure, creative, direct, relaxing.",
+        "reason_for_call": "You want to change the book shelf to 4 foot but with the same material and color. If it is not available, cancel the whole order and you will buy again. If the agent asks for the cancellation reason, you say you ordered by mistake.",
+        "known_info": "You name is Daiki Silva and your email is daiki.silva6295@example.com.",
+        "unknown_info": null
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    },
+    {
+      "candidate_rank": 15,
+      "task_id": "103",
+      "task_sha256": "333e977f2b5f8595ce52a293e8c5bb56a4b928953d1aac88554bbdb89adde34d",
+      "panel_candidate": null,
+      "reviewer_id": "",
+      "review_timestamp_utc": "",
+      "satisfiable": null,
+      "no_deception_required": null,
+      "policy_tool_compatible": null,
+      "customer_facts_consistent": null,
+      "workflow_label_hypothesis": "delivered-order return/refund, pending-order address change, pending-order item modification",
+      "key_entities_from_reference_actions": [
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W6239298",
+            "item_ids": [
+              "4900661478",
+              "3614853563"
+            ],
+            "payment_method_id": "credit_card_2112420"
+          }
+        },
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W9218746",
+            "item_ids": [
+              "7824298782"
+            ],
+            "payment_method_id": "credit_card_2112420"
+          }
+        },
+        {
+          "tool": "modify_pending_order_address",
+          "arguments": {
+            "order_id": "#W4860251",
+            "address1": "921 Park Avenue",
+            "address2": "Suite 892",
+            "city": "Chicago",
+            "country": "USA",
+            "state": "IL",
+            "zip": "60612"
+          }
+        },
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W4860251",
+            "item_ids": [
+              "5209958006"
+            ],
+            "new_item_ids": [
+              "8964750292"
+            ],
+            "payment_method_id": "credit_card_2112420"
+          }
+        }
+      ],
+      "expected_state_change_hypothesis": [
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W6239298",
+            "item_ids": [
+              "4900661478",
+              "3614853563"
+            ],
+            "payment_method_id": "credit_card_2112420"
+          }
+        },
+        {
+          "tool": "return_delivered_order_items",
+          "arguments": {
+            "order_id": "#W9218746",
+            "item_ids": [
+              "7824298782"
+            ],
+            "payment_method_id": "credit_card_2112420"
+          }
+        },
+        {
+          "tool": "modify_pending_order_address",
+          "arguments": {
+            "order_id": "#W4860251",
+            "address1": "921 Park Avenue",
+            "address2": "Suite 892",
+            "city": "Chicago",
+            "country": "USA",
+            "state": "IL",
+            "zip": "60612"
+          }
+        },
+        {
+          "tool": "modify_pending_order_items",
+          "arguments": {
+            "order_id": "#W4860251",
+            "item_ids": [
+              "5209958006"
+            ],
+            "new_item_ids": [
+              "8964750292"
+            ],
+            "payment_method_id": "credit_card_2112420"
+          }
+        }
+      ],
+      "relevant_tools": [
+        "return_delivered_order_items",
+        "modify_pending_order_address",
+        "modify_pending_order_items"
+      ],
+      "relevant_policy_refs": [
+        "Retail policy lines 5-18: supported service scope, authentication, confirmation before database updates.",
+        "Retail policy lines 94-115: pending-order modification constraints and confirmation.",
+        "Retail policy lines 116-126: delivered status, item list, refund method, confirmation."
+      ],
+      "eligibility_decision": "",
+      "rationale": "",
+      "exclusion_reason": "",
+      "scenario": {
+        "task_instructions": "You are busy, happy, outgoing, messy, optimistic. You like to say one thing at a time.",
+        "reason_for_call": "You want to return the bookshelf and jigsaw you received in the same order. Make sure you mention at the beginning that you want to cancel these two things, and they are from the same order. You also want to return the backpack you received with the vacuum cleaner. You also want to change your pending order address to the default Chicago one, and change its item color to red. You want to get the tracking number of your cancelled order.",
+        "known_info": "You name is Lucas Brown and your email is lucas.brown9344@example.com.",
+        "unknown_info": null
+      },
+      "review_note": "All judgments above are intentionally unfilled. Workflow label and action-derived fields are screening aids, not eligibility findings."
+    }
+  ]
+}

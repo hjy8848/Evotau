@@ -445,6 +445,44 @@ def test_request_budget_records_reported_tokens_and_cache_hits() -> None:
     assert restored == snapshot
 
 
+def test_activation_retry_empty_completion_accounts_every_request(monkeypatch) -> None:
+    from evotau import budget as budget_module
+
+    monkeypatch.setattr(budget_module, "sleep", lambda _seconds: None)
+    responses = [
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=None))],
+            usage={"prompt_tokens": 7, "completion_tokens": 2},
+            _hidden_params={},
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="hello", tool_calls=None))],
+            usage={"prompt_tokens": 7, "completion_tokens": 3},
+            _hidden_params={},
+        ),
+    ]
+    calls: list[str] = []
+
+    def provider(*, model: str):
+        calls.append(model)
+        return responses.pop(0)
+
+    module = SimpleNamespace(completion=provider, DEFAULT_MAX_RETRIES=4)
+    budget = RequestBudget(cap=None)
+    with budget.instrument_tau_llm_utils(module, retry_empty_responses=True):
+        result = module.completion(model="model-a")
+
+    assert result.choices[0].message.content == "hello"
+    assert calls == ["model-a", "model-a"]
+    snapshot = budget.snapshot()
+    assert snapshot.cap is None
+    assert snapshot.attempts == 2
+    assert snapshot.successes == 2
+    assert snapshot.prompt_tokens == 14
+    assert snapshot.completion_tokens == 5
+    assert snapshot.usage_responses == 2
+
+
 def test_nested_budget_instrumentation_counts_tau_and_direct_litellm_calls_once() -> None:
     calls = []
 

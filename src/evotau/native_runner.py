@@ -33,6 +33,7 @@ from .db_state_trace import (
 )
 from .episode_execution import StopBeforeEpisodeDispatch
 from .manifest import (
+    ActivationSmokeManifest,
     MechanismManifest,
     PilotManifest,
     role_model_args_for_runtime,
@@ -108,7 +109,7 @@ class TauBenchEpisodeRunner:
     def __init__(
         self,
         *,
-        manifest: MechanismManifest | PilotManifest,
+        manifest: MechanismManifest | PilotManifest | ActivationSmokeManifest,
         config: Mapping[str, Any],
         data_dir: str | Path,
         request_budget: RequestBudget,
@@ -133,11 +134,17 @@ class TauBenchEpisodeRunner:
         config_manifest = (
             PilotManifest.from_mapping(config)
             if isinstance(manifest, PilotManifest)
+            else ActivationSmokeManifest.from_mapping(
+                config,
+                task_review_document=json.loads(manifest.task_semantic_review_json),
+            )
+            if isinstance(manifest, ActivationSmokeManifest)
             else MechanismManifest.from_mapping(config)
         )
         if experiment.get("id") != manifest.experiment_id or config_manifest.sha256 != manifest.sha256:
             raise ValueError("run configuration does not match the frozen mechanism manifest")
         self.manifest = manifest
+        self.retry_empty_responses = isinstance(manifest, ActivationSmokeManifest)
         self.request_budget = request_budget
         self.audit_provider = audit_provider
         self.service_token_counter = service_token_counter
@@ -149,6 +156,8 @@ class TauBenchEpisodeRunner:
             task_ids=(
                 manifest.evolution_task_ids + manifest.validation_task_ids + manifest.heldout_task_ids
                 if isinstance(manifest, PilotManifest)
+                else manifest.evolution_task_ids + manifest.validation_task_ids
+                if isinstance(manifest, ActivationSmokeManifest)
                 else (manifest.evolution_task_id, manifest.validation_task_id)
             ),
         )
@@ -262,7 +271,8 @@ class TauBenchEpisodeRunner:
                 raise StopBeforeEpisodeDispatch(
                     "paused safely before dispatching the next native episode"
                 )
-        if (self.request_budget.snapshot().remaining <= 0
+        budget_remaining = self.request_budget.snapshot().remaining
+        if (budget_remaining is not None and budget_remaining <= 0
                 and not self.request_budget.has_current_episode_reservation()):
             raise RuntimeError("native episode refused before dispatch: request budget is exhausted")
 
@@ -317,6 +327,10 @@ class TauBenchEpisodeRunner:
                 enforce_communication_protocol=self.manifest.enforce_communication_protocol,
             )
             on_orchestrator(orchestrator)
+            budget_options = (
+                {"retry_empty_responses": True}
+                if self.retry_empty_responses else {}
+            )
             simulation = run_with_budget(
                 orchestrator,
                 self.request_budget,
@@ -326,6 +340,7 @@ class TauBenchEpisodeRunner:
                 evaluator_model_args=self.model_args["evaluator"],
                 on_simulation=on_simulation,
                 after_review=after_review,
+                **budget_options,
             )
             simulation_payload = simulation.model_dump(mode="json")
             if simulation_payload.get("task_id") is None or str(simulation_payload["task_id"]) != str(task_id):
@@ -651,6 +666,206 @@ def run_native_phase3(
         provider_budget=final_budget,
     )
     _write_or_verify_immutable_json(output_directory / "phase3-result.json", result)
+    return commits, final_budget
+
+
+def run_native_activation_smoke(
+    *,
+    config_path: str | Path,
+    data_dir: str | Path,
+    task_review_document: Mapping[str, Any],
+    audit_provider: AuditProvider,
+    customer_proposal_provider: OperatorSelector | None = None,
+    provider_provenance: Mapping[str, Any] | None = None,
+    service_transition: Callable[..., Any] | None = None,
+    service_proposal_provider: Callable[..., Any] | None = None,
+    service_repair_audit_provider: Callable[..., Any] | None = None,
+    stop_before_next_episode_file: str | Path | None = None,
+) -> tuple[tuple[Any, ...], BudgetSnapshot]:
+    """Run one reviewed ten-task generation with the existing gated repair path."""
+
+    from .archive import FailureArchive
+    from .lifecycle import TwoGenerationSmoke
+    from .manifest import ActivationSmokeManifest
+    from .phase0_run import _parse_strategies, load_config
+    from .service_transition import GatedServiceTransition
+
+    config_file = Path(config_path).expanduser().resolve()
+    config = load_config(config_file)
+    manifest = ActivationSmokeManifest.from_mapping(
+        config, task_review_document=task_review_document,
+    )
+    if not manifest.real_provider_enabled:
+        raise RuntimeError("activation smoke is disabled in the frozen manifest")
+    if audit_provider is None:
+        raise ValueError("activation smoke requires independent episode audit callbacks")
+    if service_transition is not None and (
+        service_proposal_provider is not None or service_repair_audit_provider is not None
+    ):
+        raise ValueError("provide either one complete ServiceTransition or both repair providers")
+
+    data_root = Path(data_dir).expanduser().resolve()
+    task_selection = config["experiment"]["task_selection"]
+    _load_pinned_tasks(
+        manifest,
+        data_dir=data_root,
+        task_selection=task_selection,
+        task_ids=manifest.evolution_task_ids + manifest.validation_task_ids,
+    )
+    customer, service = _parse_strategies(config["experiment"])
+    customer = customer or CustomerStrategy()
+    if sha256_json(customer.to_dict()) != manifest.customer_strategy_sha256:
+        raise ValueError("initial Customer strategy differs from the frozen activation manifest")
+    if sha256_json(service.to_dict()) != manifest.service_strategy_sha256:
+        raise ValueError("initial Service strategy differs from the frozen activation manifest")
+
+    models = dict(manifest.role_models)
+    from litellm import token_counter
+
+    service_token_counter = lambda text: token_counter(model=models["agent"], text=text)
+    if service_transition is None:
+        if service_proposal_provider is None or service_repair_audit_provider is None:
+            raise ValueError(
+                "activation smoke requires the Service proposal and independent repair-audit providers"
+            )
+        service_transition = GatedServiceTransition(
+            evolution_task_id=manifest.evolution_task_ids[0],
+            validation_task_id=manifest.validation_task_ids[0],
+            evolution_task_ids=manifest.evolution_task_ids,
+            validation_task_ids=manifest.validation_task_ids,
+            seed=manifest.seed,
+            initial_service=service,
+            proposal_provider=service_proposal_provider,
+            audit_provider=service_repair_audit_provider,
+            token_counter=service_token_counter,
+        )
+    if not isinstance(service_transition, GatedServiceTransition):
+        raise TypeError("activation smoke requires the existing GatedServiceTransition")
+    if (
+        service_transition.e_tasks != manifest.evolution_task_ids
+        or service_transition.v_tasks != manifest.validation_task_ids
+        or service_transition.seed != manifest.seed
+        or service_transition.initial_service != service
+    ):
+        raise ValueError("Service repair gate panels or initial strategy differ from the frozen activation")
+
+    callback_set: dict[str, Any] = {
+        "audit_provider": audit_provider,
+        "customer_proposal_provider": customer_proposal_provider,
+        "service_transition": service_transition,
+    }
+    run_context = {
+        "schema_version": 1,
+        "activation_manifest_sha256": manifest.sha256,
+        "task_review_sha256": manifest.task_semantic_review_sha256,
+        "task_panels": {
+            "E": list(manifest.evolution_task_ids),
+            "V": list(manifest.validation_task_ids),
+            "H": [],
+        },
+        "provider_provenance": _provider_provenance_document(
+            provider_provenance,
+            {key: value for key, value in callback_set.items() if value is not None},
+        ),
+        "provider_response_policy": "retry-empty-successful-completion-until-nonempty",
+        "phase0_parent": None,
+    }
+    budget = RequestBudget(manifest.request_budget_cap)
+    project_root = (
+        config_file.parent.parent
+        if config_file.parent.name == "configs"
+        else config_file.parent
+    )
+    output_directory = project_root / manifest.output_path
+    checkpoint_path = project_root / manifest.checkpoint_path
+    context_path = output_directory / "run-context.json"
+    if context_path.exists():
+        if json.loads(context_path.read_text(encoding="utf-8")) != run_context:
+            raise ValueError("existing activation run context differs from its frozen panel or providers")
+    elif checkpoint_path.exists():
+        raise FileNotFoundError("activation checkpoint exists without its immutable run-context.json")
+
+    runner = TauBenchEpisodeRunner(
+        manifest=manifest,
+        config=config,
+        data_dir=data_root,
+        request_budget=budget,
+        audit_provider=audit_provider,
+        service_token_counter=service_token_counter,
+        output_directory=output_directory,
+        stop_before_next_episode_file=stop_before_next_episode_file,
+    )
+    if not context_path.exists():
+        _write_json_once(context_path, run_context)
+    archive = FailureArchive(output_directory / "archive.sqlite")
+    # A generic mapping deliberately keeps this one-generation controller
+    # separate from MechanismManifest and PilotManifest's frozen designs.
+    controller = TwoGenerationSmoke(
+        manifest=manifest.to_payload(),
+        checkpoint_path=str(checkpoint_path),
+        runner=runner,
+        task_ids=(manifest.evolution_task_ids[0], manifest.validation_task_ids[0]),
+        evolution_task_ids=manifest.evolution_task_ids,
+        seed=manifest.seed,
+        request_budget=budget,
+        failure_archive=archive,
+        manifest_context=run_context,
+        generations=manifest.generations,
+        max_episodes=manifest.max_episodes,
+    )
+    # Unlike Phase 3, the activation has no separate Phase 0 provider episode.
+    controller.episode_attempts = 0
+    commits = controller.run(
+        customer,
+        service,
+        service_transition=service_transition,
+        customer_proposal_provider=customer_proposal_provider,
+        candidates_per_generation=manifest.customer_candidates,
+    )
+    if len(commits) != 1 or commits[0].generation != 0:
+        raise ValueError("activation smoke did not produce exactly its frozen single generation")
+
+    episode_records = [
+        EpisodeRecord.from_dict(json.loads(path.read_text(encoding="utf-8"))).to_dict()
+        for path in sorted((output_directory / "episodes").glob("*/episode-record.json"))
+    ]
+    if len(episode_records) != controller.episode_attempts:
+        raise ValueError("activation episode records do not reconcile with the frozen episode cap")
+    final_budget = budget.snapshot()
+    result = {
+        "schema_version": 1,
+        "status": "complete",
+        "experiment_id": manifest.experiment_id,
+        "phase": "3-multitask-service-repair-activation",
+        "manifest_sha256": manifest.sha256,
+        "run_context_sha256": hashlib.sha256(context_path.read_bytes()).hexdigest(),
+        "task_review_sha256": manifest.task_semantic_review_sha256,
+        "task_panels": {
+            "E": list(manifest.evolution_task_ids),
+            "V": list(manifest.validation_task_ids),
+            "H": [],
+        },
+        "generation_count": len(commits),
+        "generation_commits": [
+            {
+                "generation": item.generation,
+                "customer_id": item.customer_id,
+                "service_id": item.service_id,
+                "customer_evolved": item.customer_evolved,
+                "service_evolved": item.service_evolved,
+                "completed": item.completed,
+                "note": item.note,
+                "decision_record": item.decision_record,
+            }
+            for item in commits
+        ],
+        "episode_count": len(episode_records),
+        "episodes": episode_records,
+        "provider_budget": final_budget.to_dict(),
+        "auditor_calibration_status": "role-separated_but_not_yet_human-calibrated",
+        "heldout_status": "sealed; no H task is selected or scheduled",
+    }
+    _write_or_verify_immutable_json(output_directory / "activation-smoke-result.json", result)
     return commits, final_budget
 
 

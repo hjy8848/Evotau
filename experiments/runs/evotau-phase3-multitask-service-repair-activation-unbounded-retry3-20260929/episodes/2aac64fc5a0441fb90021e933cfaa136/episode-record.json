@@ -1,0 +1,54 @@
+{
+  "episode_id": "evotau-phase0-6863dfcd-915c-4db3-af77-d7d4ebcdcb09",
+  "task_id": "72",
+  "seed": 1,
+  "customer_strategy_id": "8f8ca9d91930bdac",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/2aac64fc5a0441fb90021e933cfaa136/native-simulation.json",
+  "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+  "tool_calls": 11,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 6,
+  "raw_review": {
+    "native_review": {
+      "summary": "",
+      "agent_error": false,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": false,
+      "errors": [
+        {
+          "source": "unknown",
+          "error_type": null,
+          "error_tags": [],
+          "severity": null,
+          "turn_idx": null,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "Failed to parse LLM response: Expecting ',' delimiter: line 26 column 6 (char 1434). Response: ```json\n{\n  \"errors\": [\n    {\n      \"source\": \"user\",\n      \"error_tags\": [\"guideline_violation\", \"inconsistent_behavior\"],\n      \"severity\": \"minor\",\n      \"turn_idx\": 1,\n      \"reasoning\": \"The user simulator spoke as if they were the customer service agent ('I'd be happy to help you with your order...'), which reverses the role the user was supposed to play. The simulation guidelines require the user to act as the customer contacting customer service.\",\n      \"correct_behavior\": \"The user should have introduced themselves as the customer (e.g., asking for help with an order they need to modify).\"\n    },\n    {\n      \"source\": \"agent\",\n      \"error_tags\": [\"guideline_violation\"],\n      \"severity\": \"minor\",\n      \"turn_idx\": 10,\n      \"reasoning\": \"The agent made four get_order_details tool calls simultaneously. The policy states the agent should make at most one tool call at a time.\",\n      \"correct_behavior\": \"The agent should have made the get_order_details calls one at a time (e.g., sequentially in separate turns).\"\n    },\n    {\n      \"source\": \"agent\",\n      \"error_tags\": [\"guideline_violation\"],\n      \"severity\": \"minor\",\n      \"turn_idx\": 17,\n      \"reasoning\": \"The agent made two get_product_details tool calls at the same time, violating the policy's one-tool-call-at-a-time rule.\",\n      \"correct_behavior\": \"The agent should have made one product lookup per turn, awaiting the result before the next call.\"\n    },\n    {\n      \"source\": \"agent\",\n      \"error_tags\": [\"hallucination\", \"inconsistent_behavior\"],\n      \"severity\": \"minor\",\n      \"turn_idx\": 26,\n      \"reasoning\": \"The agent stated the backpack price difference as +$6.84, but the correct difference is $10.84 (212.79 - 201.95). The agent itself had correctly listed +$10.84 for the backpack in turn 24, so this statement contradicts its earlier calculation and the underlying prices.\",\n      \"correct_behavior\": \"The agent should",
+          "correct_behavior": null
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent successfully authenticated the user by looking up their account using the provided name (Ivan Khan) and zip code (28243). The tool returned a matching user ID (ivan_khan_7475), and the agent confirmed the account details before proceeding with order changes.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

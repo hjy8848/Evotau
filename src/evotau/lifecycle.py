@@ -545,8 +545,8 @@ class TwoGenerationSmoke:
             else int(manifest.get("generations", 2))
         )
         self.generations = configured_generations if generations is None else generations
-        if type(self.generations) is not int or not 2 <= self.generations <= 8:
-            raise ValueError("controller supports a frozen generation count in the range 2..8")
+        if type(self.generations) is not int or not 1 <= self.generations <= 8:
+            raise ValueError("controller supports a frozen generation count in the range 1..8")
         if self.generations != configured_generations:
             raise ValueError("controller generation count must match the frozen manifest")
         if task_ids[0] not in evolution_task_ids:
@@ -608,8 +608,9 @@ class TwoGenerationSmoke:
         self._commit_records: list[dict] = []
         self._episode_history: dict[str, EpisodeRecord] = {}
         self._progress: dict | None = None
-        if (not isinstance(manifest, PilotManifest) and request_budget is not None
-                and request_budget.snapshot().cap > 1800):
+        budget_cap = None if request_budget is None else request_budget.snapshot().cap
+        if (not isinstance(manifest, PilotManifest) and budget_cap is not None
+                and budget_cap > 1800):
             raise ValueError("Phase 3 shared provider-attempt budget cannot exceed 1,800")
 
     def _run_episode(self, **kwargs) -> EpisodeRecord:
@@ -624,8 +625,10 @@ class TwoGenerationSmoke:
                 if self.episode_attempts >= self.max_episodes:
                     raise RuntimeError(f"episode cap {self.max_episodes} reached before dispatch")
                 self.episode_attempts += 1
-        if (not scheduled and self.request_budget is not None
-                and self.request_budget.snapshot().remaining <= 0):
+        remaining_requests = (
+            None if self.request_budget is None else self.request_budget.snapshot().remaining
+        )
+        if not scheduled and remaining_requests is not None and remaining_requests <= 0:
             with self._episode_state_lock:
                 self.episode_attempts -= 1
             raise ProviderBudgetExceeded("generation stopped before episode: shared request budget exhausted")

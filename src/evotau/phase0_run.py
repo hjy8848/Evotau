@@ -15,8 +15,17 @@ import yaml
 
 from .budget import RequestBudget
 from .communication import observe_communication_protocol
-from .eligibility import validate_generalization_selection, validate_smoke_selection
-from .manifest import ExperimentManifest, verify_git_blob_sha1, write_manifest_once
+from .eligibility import (
+    validate_activation_selection,
+    validate_generalization_selection,
+    validate_smoke_selection,
+)
+from .manifest import (
+    ActivationSmokeManifest,
+    ExperimentManifest,
+    verify_git_blob_sha1,
+    write_manifest_once,
+)
 from .phase0 import load_config
 from .strategies import CustomerStrategy, ServiceRule, ServiceStrategy
 from .tau_adapter import run_phase0_episode, verify_tau2_installation
@@ -115,6 +124,26 @@ def _load_pinned_tasks(
                 manifest.domain, task_split_name=heldout_split,
                 task_ids=list(heldout_requested),
             ))
+    elif isinstance(manifest, ActivationSmokeManifest):
+        panel = validate_activation_selection(
+            tasks_data,
+            split_data,
+            evolution_task_ids=manifest.evolution_task_ids,
+            validation_task_ids=manifest.validation_task_ids,
+            excluded_task_ids=manifest.excluded_task_ids,
+        )
+        review_document = json.loads(manifest.task_semantic_review_json)
+        from .task_review import verify_reviewed_task_hashes
+
+        verify_reviewed_task_hashes(review_document, tasks_data)
+        expected = panel.evolution_task_ids + panel.validation_task_ids
+        if set(task_ids) != set(expected):
+            raise ValueError("activation runner must load exactly its frozen E/V task panel")
+        selected = get_tasks(
+            manifest.domain,
+            task_split_name=manifest.split_name,
+            task_ids=list(task_ids),
+        )
     else:
         validate_smoke_selection(
             tasks_data,

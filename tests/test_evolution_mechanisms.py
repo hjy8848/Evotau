@@ -832,6 +832,28 @@ def test_request_budget_restores_cumulative_attempt_accounting():
         budget.restore_usage(BudgetSnapshot(cap=10, attempts=1, successes=1, failures=0, denied=0))
 
 
+def test_uncapped_request_budget_tracks_calls_without_a_hard_stop():
+    calls = []
+
+    def completion(**kwargs):
+        calls.append(kwargs)
+        return "ok"
+
+    module = SimpleNamespace(completion=completion, DEFAULT_MAX_RETRIES=0)
+    budget = RequestBudget(cap=None)
+    reservation = budget.reserve_episode_dispatch()
+    assert reservation is not None
+    with budget.use_episode_reservation(reservation), budget.instrument_tau_llm_utils(module):
+        for _ in range(12):
+            module.completion(model="model-a")
+
+    snapshot = budget.snapshot()
+    assert len(calls) == snapshot.attempts == snapshot.successes == 12
+    assert snapshot.cap is None
+    assert snapshot.remaining is None
+    assert snapshot.denied == 0
+
+
 def test_global_budget_absorbs_child_phase_usage_and_enforces_total_cap():
     total = RequestBudget(8)
     total.absorb_usage(BudgetSnapshot(

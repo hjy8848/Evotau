@@ -1,0 +1,82 @@
+{
+  "episode_id": "evotau-phase0-2fa76edd-b6d7-44b9-b255-b63a88649838",
+  "task_id": "22",
+  "seed": 1,
+  "customer_strategy_id": "5902e2e2f5aa008d",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/458ba057d4c145939d0115c06e7c7669/native-simulation.json",
+  "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+  "tool_calls": 8,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 3,
+  "raw_review": {
+    "native_review": {
+      "summary": "The agent correctly authenticated the user via name and zip, updated the default address and the pending order #W9911714 to the new address, and then reverted the default address to the original Denver address after the user changed their mind. The user followed the instructions and provided only the known information (name, zip, new address). No user errors were found. The agent committed minor policy violations by sending text messages alongside tool calls (turn 8) and by making multiple tool calls in a single turn (turns 12 and 18), but these did not affect the final outcome.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent sent a text response to the user ('Thank you, Ethan! I found your account. Let me pull up your details.') and made a tool call (get_user_details) in the same turn. The policy states that if the agent makes a tool call, it must not respond to the user at the same time.",
+          "correct_behavior": "The agent should have either only sent a text response without a tool call, or made the tool call without a user-facing message, waiting for the tool result before responding."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 12,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made three get_order_details tool calls simultaneously in a single turn while also sending a text message to the user. The policy requires at most one tool call at a time and prohibits responding to the user at the same time as a tool call.",
+          "correct_behavior": "The agent should have made the get_order_details calls sequentially, one tool call per turn, without combining them with a user-facing message."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 18,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made two database-modifying tool calls (modify_user_address and modify_pending_order_address) simultaneously in one turn and also addressed the user in the same message. This violates the at-most-one-tool-call-at-a-time rule and the rule against responding to the user while making tool calls.",
+          "correct_behavior": "The agent should have made the two modification calls one at a time, each in a separate turn, and should not have sent a user-facing message in the same turn as a tool call."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent attempted authentication by asking for the user's email, and when the user couldn't remember it, switched to name and zip code verification. The name/zip lookup successfully found the account (ethan_garcia_1261), and the agent proceeded to access user details and perform account actions, confirming the user was authenticated.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

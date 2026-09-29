@@ -1004,9 +1004,307 @@ class PilotManifest:
         return payload
 
 
+@dataclass(frozen=True, slots=True)
+class ActivationSmokeManifest:
+    """Independent one-generation, ten-task Service-repair activation protocol."""
+
+    experiment_id: str
+    upstream_repository: str
+    upstream_commit: str
+    upstream_package_version: str
+    evotau_git_commit: str | None
+    evotau_working_tree_clean: bool | None
+    evotau_source_sha256: str
+    evolution_task_ids: tuple[str, ...]
+    validation_task_ids: tuple[str, ...]
+    excluded_task_ids: tuple[str, ...]
+    seed: int
+    max_steps: int
+    max_episodes: int
+    request_budget_cap: int | None
+    provider_retries: int
+    max_concurrency: int
+    real_provider_enabled: bool
+    role_models: tuple[tuple[str, str | None], ...]
+    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...]
+    source_blob_sha1: tuple[tuple[str, str], ...]
+    customer_strategy_sha256: str
+    service_strategy_sha256: str
+    task_review_path: str
+    task_semantic_review_json: str
+    task_semantic_review_sha256: str
+    domain: str = "retail"
+    communication_mode: str = "half_duplex_text"
+    enforce_communication_protocol: bool = False
+    evaluation_type: str = "all"
+    split_name: str = "train"
+    generations: int = 1
+    customer_candidates: int = 2
+    condition: str = "adaptive_coevolution"
+    output_path: str = "experiments/runs/evotau-activation-smoke"
+    checkpoint_path: str = "experiments/checkpoints/evotau-activation-smoke"
+    unbounded_provider_budget: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_code_provenance(self.evotau_git_commit, self.evotau_source_sha256)
+        if not self.experiment_id.strip():
+            raise ValueError("activation smoke experiment ID must not be empty")
+        if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
+            TAU_BENCH_REPOSITORY, TAU_BENCH_COMMIT, TAU2_PACKAGE_VERSION,
+        ):
+            raise ValueError("activation smoke must use the audited tau-bench pin")
+        if (self.domain, self.communication_mode, self.evaluation_type, self.split_name) != (
+            "retail", "half_duplex_text", "all", "train",
+        ):
+            raise ValueError("activation smoke is fixed to Retail, half-duplex text, and train E/V")
+        if type(self.enforce_communication_protocol) is not bool or self.enforce_communication_protocol:
+            raise ValueError("activation smoke records communication protocol without enforcement")
+        if self.condition != "adaptive_coevolution":
+            raise ValueError("activation smoke freezes the existing adaptive co-evolution condition")
+        if len(self.evolution_task_ids) != 10 or len(set(self.evolution_task_ids)) != 10:
+            raise ValueError("activation smoke requires exactly ten unique E tasks")
+        if not self.validation_task_ids or len(set(self.validation_task_ids)) != len(self.validation_task_ids):
+            raise ValueError("activation smoke requires a non-empty unique validation panel")
+        all_ids = self.evolution_task_ids + self.validation_task_ids
+        if any(not item.strip() for item in all_ids) or len(set(all_ids)) != len(all_ids):
+            raise ValueError("activation E/V task IDs must be non-empty and disjoint")
+        if set(all_ids) & set(self.excluded_task_ids):
+            raise ValueError("activation E/V panels cannot contain explicitly excluded tasks")
+        if self.seed != 1 or self.generations != 1 or self.customer_candidates != 2:
+            raise ValueError("activation smoke freezes seed=1, generations=1, and K=2")
+        if self.max_steps != 64:
+            raise ValueError("activation smoke max_steps must be 64")
+        if type(self.max_episodes) is not int or not 30 <= self.max_episodes <= 100:
+            raise ValueError("activation smoke episode cap must cover 30 discovery episodes and be at most 100")
+        if type(self.unbounded_provider_budget) is not bool:
+            raise ValueError("unbounded provider budget flag must be boolean")
+        if self.unbounded_provider_budget:
+            if self.request_budget_cap is not None:
+                raise ValueError("unbounded provider budget must not declare a request cap")
+        elif type(self.request_budget_cap) is not int or not 1 <= self.request_budget_cap <= 1800:
+            raise ValueError("activation smoke request cap must be in the range 1..1800")
+        if self.provider_retries != 0 or type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 4:
+            raise ValueError("activation smoke requires retries=0 and concurrency in the range 1..4")
+        if type(self.real_provider_enabled) is not bool:
+            raise ValueError("activation real_provider_enabled must be boolean")
+        models = dict(self.role_models)
+        if tuple(name for name, _ in self.role_models) != MECHANISM_ROLE_NAMES:
+            raise ValueError(f"activation models must freeze exactly {sorted(MECHANISM_ROLE_NAMES)}")
+        if self.real_provider_enabled and any(not models[name] for name in MECHANISM_ROLE_NAMES):
+            raise ValueError("live activation smoke requires frozen model IDs for every role")
+        model_args_payload = _role_model_args_payload(self.role_model_args)
+        freeze_role_model_args(model_args_payload, roles=MECHANISM_ROLE_NAMES)
+        if self.unbounded_provider_budget and any(
+            "max_tokens" in values for values in model_args_payload.values()
+        ):
+            raise ValueError("unbounded provider configuration must omit max_tokens for every role")
+        blobs = dict(self.source_blob_sha1)
+        missing = REQUIRED_SOURCE_PATHS - set(blobs)
+        if missing:
+            raise ValueError(f"activation smoke is missing upstream source fingerprints: {sorted(missing)}")
+        if any(not re.fullmatch(r"[0-9a-f]{40}", digest) for digest in blobs.values()):
+            raise ValueError("activation source fingerprints must be lowercase Git blob SHA-1 values")
+        for name, digest in (
+            ("customer", self.customer_strategy_sha256),
+            ("service", self.service_strategy_sha256),
+        ):
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise ValueError(f"activation {name} strategy hash must be a SHA-256 hex digest")
+        _relative_path(self.task_review_path, "task_review_path")
+        _relative_path(self.output_path, "output_path")
+        _relative_path(self.checkpoint_path, "checkpoint_path")
+        try:
+            review = json.loads(self.task_semantic_review_json)
+            from .task_review import validate_task_semantic_review
+
+            normalized, digest = validate_task_semantic_review(
+                review,
+                expected_panels=(
+                    *((task_id, "evolution") for task_id in self.evolution_task_ids),
+                    *((task_id, "validation") for task_id in self.validation_task_ids),
+                ),
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ValueError(f"invalid activation human task review: {exc}") from exc
+        if canonical_json(normalized) != self.task_semantic_review_json or digest != self.task_semantic_review_sha256:
+            raise ValueError("activation human task review payload or digest differs")
+
+    @classmethod
+    def from_mapping(
+        cls,
+        raw: Mapping[str, Any],
+        *,
+        task_review_document: Mapping[str, Any],
+    ) -> ActivationSmokeManifest:
+        experiment = raw["experiment"]
+        selection = experiment["task_selection"]
+        upstream = experiment["upstream"]
+        if experiment.get("phase") != "3-multitask-service-repair-activation":
+            raise ValueError("ActivationSmokeManifest requires the multi-task activation phase")
+        if selection.get("source_split") != "train" or selection.get("heldout", ()):
+            raise ValueError("activation E/V panels must be train-only and keep H empty")
+        validation_ids = tuple(str(item) for item in selection.get("validation", ()))
+        if not validation_ids:
+            raise ValueError("activation config must retain an explicit reviewed validation panel")
+        if selection.get("evolution", ()):
+            raise ValueError("activation E tasks come only from the attached human-reviewed task panel")
+        if not isinstance(task_review_document, Mapping):
+            raise TypeError("activation requires the existing task-review schema as an input artifact")
+        review_rows = task_review_document.get("task_reviews")
+        if not isinstance(review_rows, list):
+            raise TypeError("activation task review must contain task_reviews")
+        evolution_ids = tuple(
+            str(row.get("task_id")) for row in review_rows
+            if isinstance(row, Mapping) and row.get("panel") == "evolution"
+        )
+        reviewed_validation = tuple(
+            str(row.get("task_id")) for row in review_rows
+            if isinstance(row, Mapping) and row.get("panel") == "validation"
+        )
+        if reviewed_validation != validation_ids:
+            raise ValueError("activation validation task IDs differ from the human-reviewed task panel")
+        from .task_review import validate_task_semantic_review
+
+        expected_panels = (
+            *((task_id, "evolution") for task_id in evolution_ids),
+            *((task_id, "validation") for task_id in validation_ids),
+        )
+        normalized_review, review_sha256 = validate_task_semantic_review(
+            dict(task_review_document), expected_panels=expected_panels,
+        )
+        models = experiment.get("models", {})
+        diagnostic_capture = raw.get("diagnostic_capture", {})
+        configured_unbounded = experiment.get("unbounded_provider_budget", False)
+        if type(configured_unbounded) is not bool:
+            raise ValueError("unbounded_provider_budget must be boolean")
+        unbounded_provider_budget = configured_unbounded or (
+            isinstance(diagnostic_capture, Mapping)
+            and diagnostic_capture.get("unbounded_request_budget") is True
+        )
+        request_budget_cap = experiment.get("request_budget_cap")
+        if request_budget_cap is None and not unbounded_provider_budget:
+            raise ValueError("an uncapped request budget requires explicit configuration")
+        if unbounded_provider_budget and request_budget_cap is not None:
+            raise ValueError("unbounded provider configuration must set request_budget_cap to null")
+        customer = experiment.get("customer_strategy")
+        service = experiment.get("service_strategy") or {"rules": []}
+        code = capture_code_provenance()
+        return cls(
+            experiment_id=str(experiment["id"]),
+            upstream_repository=str(upstream["repository"]),
+            upstream_commit=str(upstream["commit"]),
+            upstream_package_version=str(upstream["package_version"]),
+            evotau_git_commit=code.git_commit,
+            evotau_working_tree_clean=code.working_tree_clean,
+            evotau_source_sha256=code.source_sha256,
+            evolution_task_ids=evolution_ids,
+            validation_task_ids=validation_ids,
+            excluded_task_ids=tuple(str(item) for item in selection.get("excluded", ())),
+            seed=int(experiment["seed"]),
+            max_steps=int(experiment["max_steps"]),
+            max_episodes=int(experiment["max_episodes"]),
+            request_budget_cap=(
+                None if request_budget_cap is None else int(request_budget_cap)
+            ),
+            provider_retries=int(experiment["provider_retries"]),
+            max_concurrency=int(experiment["max_concurrency"]),
+            real_provider_enabled=experiment["real_provider_enabled"],
+            role_models=_freeze_role_models(models, roles=MECHANISM_ROLE_NAMES),
+            role_model_args=freeze_role_model_args(experiment.get("model_args"), roles=MECHANISM_ROLE_NAMES),
+            source_blob_sha1=tuple(sorted(
+                (str(path), str(digest).lower())
+                for path, digest in experiment["source_blob_sha1"].items()
+            )),
+            customer_strategy_sha256=(
+                DEFAULT_CUSTOMER_STRATEGY_HASH if customer is None else sha256_json(customer)
+            ),
+            service_strategy_sha256=sha256_json(service),
+            task_review_path=str(experiment["task_review_path"]),
+            task_semantic_review_json=canonical_json(normalized_review),
+            task_semantic_review_sha256=review_sha256,
+            domain=str(experiment["domain"]),
+            communication_mode=str(experiment["communication_mode"]),
+            enforce_communication_protocol=_communication_protocol_enforcement(experiment),
+            evaluation_type=str(experiment["evaluation_type"]),
+            split_name=str(selection["source_split"]),
+            generations=int(experiment["generations"]),
+            customer_candidates=int(experiment["customer_candidates"]),
+            condition=str(experiment["condition"]),
+            output_path=_relative_path(str(experiment["output_path"]), "output_path"),
+            checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
+            unbounded_provider_budget=unbounded_provider_budget,
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "experiment_id": self.experiment_id,
+            "phase": "3-multitask-service-repair-activation",
+            "condition": self.condition,
+            "upstream": {
+                "repository": self.upstream_repository,
+                "commit": self.upstream_commit,
+                "package_version": self.upstream_package_version,
+            },
+            "evotau": {
+                "git_commit": self.evotau_git_commit,
+                "working_tree_clean": self.evotau_working_tree_clean,
+                "source_sha256": self.evotau_source_sha256,
+            },
+            "domain": self.domain,
+            "communication_mode": self.communication_mode,
+            "enforce_communication_protocol": self.enforce_communication_protocol,
+            "evaluation_type": self.evaluation_type,
+            "task_selection": {
+                "source_split": self.split_name,
+                "evolution": list(self.evolution_task_ids),
+                "validation": list(self.validation_task_ids),
+                "heldout": [],
+                "excluded": list(self.excluded_task_ids),
+            },
+            "seed": self.seed,
+            "evolution_seeds": [self.seed],
+            "generations": self.generations,
+            "customer_candidates": self.customer_candidates,
+            "max_steps": self.max_steps,
+            "max_episodes": self.max_episodes,
+            "request_budget_cap": self.request_budget_cap,
+            "unbounded_provider_budget": self.unbounded_provider_budget,
+            "provider_retries": self.provider_retries,
+            "max_concurrency": self.max_concurrency,
+            "real_provider_enabled": self.real_provider_enabled,
+            "role_models": dict(self.role_models),
+            "role_model_args": _role_model_args_payload(self.role_model_args),
+            "runtime_arguments": _role_runtime_arguments(self.role_model_args),
+            "source_blob_sha1": dict(self.source_blob_sha1),
+            "failure_taxonomy": [
+                {"workflow_stage": stage, "policy_rule_id": rule_id, "mistake_type": mistake}
+                for stage, rule_id, mistake in MVP_FAILURE_TAXONOMY
+            ],
+            "failure_taxonomy_sha256": sha256_json(MVP_FAILURE_TAXONOMY),
+            "strategy_sha256": {
+                "customer": self.customer_strategy_sha256,
+                "service": self.service_strategy_sha256,
+            },
+            "task_review_path": self.task_review_path,
+            "task_semantic_review": json.loads(self.task_semantic_review_json),
+            "task_semantic_review_sha256": self.task_semantic_review_sha256,
+            "auditor_calibration_status": "role-separated_but_not_yet_human-calibrated",
+            "paths": {"output": self.output_path, "checkpoint": self.checkpoint_path},
+        }
+
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self.to_payload())
+
+    def to_document(self) -> dict[str, Any]:
+        payload = self.to_payload()
+        payload["manifest_sha256"] = self.sha256
+        return payload
+
+
 def write_manifest_once(
     path: str | Path,
-    manifest: ExperimentManifest | MechanismManifest | PilotManifest,
+    manifest: ExperimentManifest | MechanismManifest | PilotManifest | ActivationSmokeManifest,
 ) -> Path:
     """Write an immutable JSON manifest; never replace an existing artifact."""
 

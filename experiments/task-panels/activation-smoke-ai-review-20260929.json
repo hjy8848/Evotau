@@ -1,0 +1,693 @@
+{
+  "schema_version": 1,
+  "record_type": "activation_smoke_ai_pre_review",
+  "status": "recommendation_complete_researcher_confirmation_pending",
+  "reviewer": {
+    "reviewer_id": "Codex AI pre-review (not researcher sign-off)",
+    "reviewed_at_utc": "2026-09-29T14:04:15Z",
+    "role": "assistant screening recommendation"
+  },
+  "source": {
+    "repository": "sierra-research/tau2-bench",
+    "commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+    "package_version": "1.0.1",
+    "task_file_sha1": "e95a9f898b2d1f6568ea8faec78edc3767ce747d",
+    "split_file_sha1": "8b20704a17aa1940b1e58668f89dcef2ddaeeea3",
+    "train_task_count": 74,
+    "test_task_count": 40,
+    "test_tasks_loaded": false
+  },
+  "review_method": {
+    "evidence": [
+      "pinned task scenario and evaluation criteria",
+      "Retail policy and tool implementation",
+      "each reference action sequence replayed against an isolated copy of pinned db.json; no providers used"
+    ],
+    "user_guideline": "Never make up or hallucinate information not provided in scenario instructions; treat unavailable facts as unknown.",
+    "reviewer_limit": "This is an AI pre-review. It is not represented as researcher approval and cannot be consumed by the activation runner."
+  },
+  "recommended_panel": {
+    "E": [
+      "16",
+      "22",
+      "29",
+      "35",
+      "37",
+      "52",
+      "72",
+      "73",
+      "78",
+      "88"
+    ],
+    "V": [
+      "93"
+    ],
+    "H": [],
+    "selection_rationale": "Broad coverage of cancel/return/refund, profile and order address changes, delivered exchanges, pending item changes, and conditional product/cancellation behavior. No obvious pair is merely a light paraphrase; detailed pair checks below remain subject to researcher confirmation."
+  },
+  "candidates": [
+    {
+      "task_id": "16",
+      "task_sha256": "a46a7848d29777c7d6bb3beadea6d3cafa0da12158830a6a0c685f90fb08ca55",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "pending-order cancellation, delivered-order return/refund",
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "calculate",
+        "cancel_pending_order",
+        "return_delivered_order_items"
+      ],
+      "reference_action_replay": "all 9 reference actions succeeded",
+      "rationale": "The source provides name+ZIP for required authentication. In a fresh copy of the pinned Retail DB, all nine reference actions succeed, including two pending-order cancellations, the delivered watch return, and the refund calculation. The requested total $8,276.23 matches the listed arithmetic. This is a mixed cancel/return/refund-information workflow.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "22",
+      "task_sha256": "968d73ce2d67f42ca10f1fd2b4368ac05db7bdf842bfcc26ca1afe1fec221b7f",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "customer default-address update, pending-order address change",
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "modify_user_address",
+        "get_order_details",
+        "modify_pending_order_address"
+      ],
+      "reference_action_replay": "all 7 succeeded",
+      "rationale": "Name+ZIP authenticates against the pinned DB. All seven reference actions succeed. The scenario explicitly asks to move the default address, update the one eligible pending order, then restore the original profile address; the original street address is retrievable from the profile. The service must confirm each write.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "29",
+      "task_sha256": "c12c34a735c9ac2d54991ef3c0f90e85c301a16e4731511266712ccd88d9125d",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "delivered-order exchange",
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "exchange_delivered_order_items"
+      ],
+      "reference_action_replay": "all 6 succeeded",
+      "rationale": "Name+ZIP authentication succeeds. All six reference actions succeed, including two same-product delivered exchanges. The hidden item ID is a fact the customer is allowed to withhold while asking the agent to find the pending-order variant; this is not a false statement. The price comparison has explicit expected values.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "35",
+      "task_sha256": "fb218ead70c72fc09b6f0f56ed75f821ab3a0d955b7c9852eab16694413f1a9a",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "delivered-order return/refund, pending-order item modification",
+      "relevant_tools": [
+        "find_user_id_by_email",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "return_delivered_order_items",
+        "modify_pending_order_items"
+      ],
+      "reference_action_replay": "one nonfatal email lookup miss; alternate email and remaining actions succeeded",
+      "rationale": "The known user ID and the second listed email identify the same account. The first email lookup is an expected nonfatal miss; the second succeeds, and all later reference actions succeed. Multiple personal email addresses are possible, and the scenario does not claim both are registered on the retail account. This provides a return plus pending-laptop-modification workflow.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "37",
+      "task_sha256": "b53308048e5c833bd881a714ac3b1f78d66ffb3a5fd46059065368b1eb190c08",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "pending-order item modification",
+      "relevant_tools": [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "modify_pending_order_items"
+      ],
+      "reference_action_replay": "one nonfatal email lookup miss; name+ZIP and remaining actions succeeded",
+      "rationale": "The first email lookup is not linked to a Retail account, but the supplied name+ZIP lookup succeeds and the subsequent order modification reference action succeeds. The task can be completed using the policy-approved authentication path and does not require claiming the email is the account email. It covers a payment/price constraint and a multi-item pending-order change.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "48",
+      "task_sha256": "963e54ba0c63fc1e8183b59d461836d228ef6b8436be0450192eec0b5bd64fc8",
+      "ai_disposition": "exclude_recommended",
+      "panel_candidate": false,
+      "eligibility_flags": {
+        "satisfiable": false,
+        "no_deception_required": true,
+        "policy_tool_compatible": false,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "delivered-order return/refund",
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "return_delivered_order_items"
+      ],
+      "reference_action_replay": "all 6 actions succeeded; authentication adequacy assessed separately",
+      "rationale": "The only explicit identity facts are a user ID and location; email is explicitly forgotten, and the full name is not separately stated. Retail policy requires email or full name+ZIP and forbids relying on user ID alone. Under the pinned user-simulation guideline, the customer cannot be assumed to invent or infer an unstated full name. The write reference action itself replays, but that does not resolve the authentication gap.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "52",
+      "task_sha256": "06bf80b755acbdedde2a6c963fa9e722316c1f2a18a24bfdfb513d00baff8e4f",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "delivered-order exchange",
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "exchange_delivered_order_items"
+      ],
+      "reference_action_replay": "all 5 succeeded",
+      "rationale": "Name+ZIP authenticates. All five reference actions succeed. The delivered-camera exchange specifies the source item, same-product variant constraint, maximum zoom, and payment method; the reference action confirms an available same-product target.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "57",
+      "task_sha256": "4c4ff215426c188639d3e35cab504cf2e83f4b1985e49c90d02706209f2447eb",
+      "ai_disposition": "exclude_recommended",
+      "panel_candidate": false,
+      "eligibility_flags": {
+        "satisfiable": false,
+        "no_deception_required": true,
+        "policy_tool_compatible": false,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "information / conditional workflow (researcher review required)",
+      "relevant_tools": [],
+      "reference_action_replay": "0 actions to replay",
+      "rationale": "The task has no reference actions, no communicate_info, and no NL assertions, so there is no verifiable completion target. Its identity details also provide only user ID+location while the customer does not know email. This is not suitable for the activation panel.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "63",
+      "task_sha256": "c3a9776570a1708599bd5132509f2cc27ac9cc791eec6d864a18885cf0668623",
+      "ai_disposition": "exclude_recommended",
+      "panel_candidate": false,
+      "eligibility_flags": {
+        "satisfiable": false,
+        "no_deception_required": true,
+        "policy_tool_compatible": false,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "pending-order item modification",
+      "relevant_tools": [
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "calculate",
+        "modify_pending_order_items"
+      ],
+      "reference_action_replay": "all 7 reference actions succeeded; poem-line requirement assessed separately",
+      "rationale": "The Retail modification itself has a valid reference sequence, but the scenario first requires the customer to provide a famous poem’s first line and specifies no poem or line. The pinned user-simulation guideline forbids inventing missing scenario facts. The out-of-domain request can be declined by Service, but the customer-side instruction as written cannot be faithfully enacted.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "72",
+      "task_sha256": "99e4758d08f8bdcf019a9b52fa0badd218e632181c78d7aa953994f8b001f554",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "pending-order address change, pending-order item modification",
+      "relevant_tools": [
+        "modify_pending_order_address",
+        "modify_pending_order_items"
+      ],
+      "reference_action_replay": "both writes succeeded",
+      "rationale": "Name+ZIP is provided. Both reference writes succeed. The scope and payment preference change before confirmation; the final gold action modifies only the backpack, while the pending-order address update is separate. This is a valid, nondeceptive preference revision when the agent confirms the final details before acting.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "73",
+      "task_sha256": "4e0ddaf28df78e409757e29bb645f64565c9f31ac21c6058dd3b7d7b99b4c555",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "delivered-order return/refund",
+      "relevant_tools": [
+        "return_delivered_order_items"
+      ],
+      "reference_action_replay": "write succeeded",
+      "rationale": "Name+email are provided. The reference return succeeds for the four listed items and leaves the coffee machine out. The pinned Retail tool accepts the order, item set, and payment method. This candidate has already received a formal semantic review requirement in the plan; this AI review does not replace that sign-off.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "78",
+      "task_sha256": "60d81c1582421ebca191d0e01d8ddc58ba382635bbfb3d1e4e66d212d74caa2e",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "pending-order address change, pending-order item modification, pending-order cancellation",
+      "relevant_tools": [
+        "modify_pending_order_address",
+        "modify_pending_order_items",
+        "cancel_pending_order"
+      ],
+      "reference_action_replay": "all 3 writes succeeded",
+      "rationale": "Name+email authenticate. All three reference writes succeed on a pending order address, pending-order item modification, and a separate pending-order cancellation. Calling the item change an “exchange” colloquially is compatible with the pending-order modify tool; the reference action matches policy/tool semantics.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "81",
+      "task_sha256": "1fa3c506c90d2350403d1b586ede8aec484c049e4f8bcb561e15ea174c1f6a76",
+      "ai_disposition": "eligible_not_selected",
+      "panel_candidate": false,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "pending-order cancellation",
+      "relevant_tools": [
+        "cancel_pending_order"
+      ],
+      "reference_action_replay": "both cancellations succeeded",
+      "rationale": "Name+email authenticate and both whole-order cancellations succeed for pending orders with the stated “no longer needed” reason. Eligible, but the panel already includes multi-order cancellation in Task 16 and a separate cancellation branch in Task 78; this simpler cancellation-only task adds less workflow diversity than the selected mixed and conditional tasks.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "88",
+      "task_sha256": "613bd83dc956025a6a1c2e24e340e3655a02218ecdc271f2ee1f5db1824e80fa",
+      "ai_disposition": "eligible_recommended_selected",
+      "panel_candidate": true,
+      "eligibility_flags": {
+        "satisfiable": true,
+        "no_deception_required": true,
+        "policy_tool_compatible": true,
+        "customer_facts_consistent": true
+      },
+      "workflow_hypothesis": "pending-order cancellation",
+      "relevant_tools": [
+        "cancel_pending_order"
+      ],
+      "reference_action_replay": "cancellation succeeded",
+      "rationale": "Name+email authenticate and the expected whole-order cancellation succeeds. The scenario itself supplies “ordered by mistake” as the cancellation reason and does not say that this would be false; treat it as truthful unless the researcher knows otherwise. The conditional “modify if available, otherwise cancel” adds a distinct product-availability branch. Confirm this reason remains truthful during manual sign-off.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "task_id": "103",
+      "task_sha256": "333e977f2b5f8595ce52a293e8c5bb56a4b928953d1aac88554bbdb89adde34d",
+      "ai_disposition": "exclude_recommended",
+      "panel_candidate": false,
+      "eligibility_flags": {
+        "satisfiable": false,
+        "no_deception_required": true,
+        "policy_tool_compatible": false,
+        "customer_facts_consistent": false
+      },
+      "workflow_hypothesis": "delivered-order return/refund, pending-order address change, pending-order item modification",
+      "relevant_tools": [
+        "return_delivered_order_items",
+        "modify_pending_order_address",
+        "modify_pending_order_items"
+      ],
+      "reference_action_replay": "all 4 writes succeeded; task/action identifier mismatch remains",
+      "rationale": "The reference writes replay successfully, but the task asks to return delivered goods and also says to tell the agent to “cancel” them, which can trigger a different policy action. The scenario does not specify how to resolve that conflict. In addition, the task is 103 while all reference action IDs are 104_* or unrelated, indicating a source-data binding concern. Exclude unless a researcher resolves both issues.",
+      "researcher_confirmation_required": true
+    }
+  ],
+  "pairwise_diversity": [
+    {
+      "left_task_id": "16",
+      "right_task_id": "22",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 22 is temporary default-address change, eligible order-address change, then profile rollback.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "16",
+      "right_task_id": "29",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "16",
+      "right_task_id": "35",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch return, but Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 35 is delivered-speaker return plus laptop option change in a separate pending order; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "16",
+      "right_task_id": "37",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 37 is budget-constrained, multi-item pending-order modification with price-information branch.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "16",
+      "right_task_id": "52",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 52 is single delivered-camera exchange to maximize one product attribute.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "16",
+      "right_task_id": "72",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 72 is address change plus item modification after payment and scope revisions before confirmation.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "16",
+      "right_task_id": "73",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch return, but Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 73 is selective multi-item delivered-order return, excluding one item; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "16",
+      "right_task_id": "78",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch cancel, but Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "16",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch cancel, but Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 88 is conditional variant change with whole-order cancellation fallback; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "22",
+      "right_task_id": "29",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "22",
+      "right_task_id": "35",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 35 is delivered-speaker return plus laptop option change in a separate pending order.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "22",
+      "right_task_id": "37",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 37 is budget-constrained, multi-item pending-order modification with price-information branch.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "22",
+      "right_task_id": "52",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 52 is single delivered-camera exchange to maximize one product attribute.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "22",
+      "right_task_id": "72",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch address, but Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 72 is address change plus item modification after payment and scope revisions before confirmation; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "22",
+      "right_task_id": "73",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "22",
+      "right_task_id": "78",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch address, but Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "22",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "29",
+      "right_task_id": "35",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 35 is delivered-speaker return plus laptop option change in a separate pending order.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "29",
+      "right_task_id": "37",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 37 is budget-constrained, multi-item pending-order modification with price-information branch.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "29",
+      "right_task_id": "52",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch exchange, but Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 52 is single delivered-camera exchange to maximize one product attribute; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "29",
+      "right_task_id": "72",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 72 is address change plus item modification after payment and scope revisions before confirmation.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "29",
+      "right_task_id": "73",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "29",
+      "right_task_id": "78",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 78 is pending-order address and item changes plus cancellation of a separate order.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "29",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "35",
+      "right_task_id": "37",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch item-modify, but Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 37 is budget-constrained, multi-item pending-order modification with price-information branch; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "35",
+      "right_task_id": "52",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 52 is single delivered-camera exchange to maximize one product attribute.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "35",
+      "right_task_id": "72",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch item-modify, but Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 72 is address change plus item modification after payment and scope revisions before confirmation; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "35",
+      "right_task_id": "73",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch return, but Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 73 is selective multi-item delivered-order return, excluding one item; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "35",
+      "right_task_id": "78",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch item-modify, but Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "35",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "37",
+      "right_task_id": "52",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 52 is single delivered-camera exchange to maximize one product attribute.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "37",
+      "right_task_id": "72",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch item-modify, but Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 72 is address change plus item modification after payment and scope revisions before confirmation; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "37",
+      "right_task_id": "73",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "37",
+      "right_task_id": "78",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch item-modify, but Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "37",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "52",
+      "right_task_id": "72",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 52 is single delivered-camera exchange to maximize one product attribute, while Task 72 is address change plus item modification after payment and scope revisions before confirmation.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "52",
+      "right_task_id": "73",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 52 is single delivered-camera exchange to maximize one product attribute, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "52",
+      "right_task_id": "78",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 52 is single delivered-camera exchange to maximize one product attribute, while Task 78 is pending-order address and item changes plus cancellation of a separate order.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "52",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 52 is single delivered-camera exchange to maximize one product attribute, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "72",
+      "right_task_id": "73",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 72 is address change plus item modification after payment and scope revisions before confirmation, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "72",
+      "right_task_id": "78",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch address, item-modify, but Task 72 is address change plus item modification after payment and scope revisions before confirmation, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "72",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 72 is address change plus item modification after payment and scope revisions before confirmation, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "73",
+      "right_task_id": "78",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 73 is selective multi-item delivered-order return, excluding one item, while Task 78 is pending-order address and item changes plus cancellation of a separate order.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "73",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Different dominant workflows: Task 73 is selective multi-item delivered-order return, excluding one item, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+      "researcher_confirmation_required": true
+    },
+    {
+      "left_task_id": "78",
+      "right_task_id": "88",
+      "ai_distinct_scenario": true,
+      "rationale": "Both touch cancel, but Task 78 is pending-order address and item changes plus cancellation of a separate order, while Task 88 is conditional variant change with whole-order cancellation fallback; the customer goal, order state, and/or required state transition differ materially.",
+      "researcher_confirmation_required": true
+    }
+  ],
+  "unresolved_human_confirmation": [
+    "Confirm all ten selected rows are eligible and their rationales are accurate.",
+    "Confirm Task 88’s “ordered by mistake” reason is truthful.",
+    "Confirm that the address and exchange task pairs remain sufficiently distinct for this study.",
+    "Confirm the Task 35/37 unlinked-email cases are acceptable under the fixed-fact/customer-consistency screen."
+  ]
+}

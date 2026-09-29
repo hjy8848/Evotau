@@ -1,0 +1,56 @@
+{
+  "episode_id": "evotau-phase0-8f8a554e-df89-4202-904b-d5530fe6b0d7",
+  "task_id": "16",
+  "seed": 1,
+  "customer_strategy_id": "8f8ca9d91930bdac",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/c082aef543bf4de2a8345f12a18a6c7c/native-simulation.json",
+  "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+  "tool_calls": 9,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 6,
+  "raw_review": {
+    "native_review": {
+      "summary": "The conversation proceeded correctly overall. The user (Fatima Johnson, zip 78712) was authenticated via name and zip code since she did not remember her email. The agent identified two pending orders (#W5199551, #W8665881) and the delivered order (#W9389413), confirmed the cancellation reason and the return item with the user, then cancelled both pending orders and requested a return for the Smart Watch (item 2554056026) to the original PayPal payment method. The total refund of $8,276.23 was correctly calculated and communicated, satisfying the natural language assertion. No user errors were found; the user followed the simulation guidelines and instructions consistently. The only agent error was making three simultaneous tool calls in turn 8 instead of one at a time, which was minor and did not affect the outcome.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent issued three get_order_details tool calls in a single turn, violating the policy that the agent should make at most one tool call at a time. This did not affect the final outcome or violate any security requirement, but it is a clear policy infraction.",
+          "correct_behavior": "The agent should have made only one tool call per turn, waiting for each tool response before issuing the next get_order_details call."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent asked the user to authenticate via name and zip code. The user provided 'Fatima Johnson' and ZIP '78712', and the agent successfully found the matching user account (fatima_johnson_7581) and pulled up their details before proceeding.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

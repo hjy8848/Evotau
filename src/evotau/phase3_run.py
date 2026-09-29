@@ -16,7 +16,12 @@ from typing import Any
 
 import yaml
 
-from .manifest import MechanismManifest, PilotManifest, sha256_json
+from .manifest import (
+    ActivationSmokeManifest,
+    MechanismManifest,
+    PilotManifest,
+    sha256_json,
+)
 from .native_runner import (
     StopBeforeEpisodeDispatch,
     _validate_phase0_parent,
@@ -48,7 +53,7 @@ def load_provider_bundle(
     specification: str,
     *,
     config: Mapping[str, Any],
-    manifest: MechanismManifest | PilotManifest,
+    manifest: MechanismManifest | PilotManifest | ActivationSmokeManifest,
     seed: int | None = None,
 ) -> LoadedProviderBundle:
     """Load a caller-selected `module:factory` returning native runner callbacks."""

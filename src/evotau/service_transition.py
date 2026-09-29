@@ -163,7 +163,7 @@ class GatedServiceTransition:
         if request_budget is not None:
             minimum_requests = required_episodes + 2  # one minimum attempt for each panel and provider
             remaining_requests = request_budget.snapshot().remaining
-            if remaining_requests < minimum_requests:
+            if remaining_requests is not None and remaining_requests < minimum_requests:
                 return incumbent, None, (
                     "inconclusive: complete Service gate requires at least "
                     f"{minimum_requests} provider attempts; {remaining_requests} remain"
@@ -206,7 +206,7 @@ class GatedServiceTransition:
 
         if request_budget is not None:
             remaining_requests = request_budget.snapshot().remaining
-            if remaining_requests < required_episodes:
+            if remaining_requests is not None and remaining_requests < required_episodes:
                 report = evaluate_repair_gate(
                     incumbent, candidate, (), target_failure=target, proposal=proposal,
                     audit=audit, initial_service_strategy_id=s0_id,

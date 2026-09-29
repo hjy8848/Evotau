@@ -1,0 +1,217 @@
+{
+  "episode_id": "evotau-phase0-11e63798-1297-4e9e-a566-9c1a0d0a7615",
+  "events": [
+    {
+      "arguments": {
+        "address1": "380 Maple Drive",
+        "address2": "Suite 960",
+        "city": "San Diego",
+        "country": "USA",
+        "order_id": "#W5056519",
+        "state": "CA",
+        "zip": "92101"
+      },
+      "changes": [
+        {
+          "after": "380 Maple Drive",
+          "before": "575 Oak Street",
+          "entity_id": "#W5056519",
+          "entity_type": "order",
+          "field_path": "address.address1"
+        },
+        {
+          "after": "Suite 960",
+          "before": "Suite 866",
+          "entity_id": "#W5056519",
+          "entity_type": "order",
+          "field_path": "address.address2"
+        },
+        {
+          "after": "San Diego",
+          "before": "Phoenix",
+          "entity_id": "#W5056519",
+          "entity_type": "order",
+          "field_path": "address.city"
+        },
+        {
+          "after": "CA",
+          "before": "AZ",
+          "entity_id": "#W5056519",
+          "entity_type": "order",
+          "field_path": "address.state"
+        },
+        {
+          "after": "92101",
+          "before": "85041",
+          "entity_id": "#W5056519",
+          "entity_type": "order",
+          "field_path": "address.zip"
+        }
+      ],
+      "event_index": 0,
+      "requestor": "assistant",
+      "tool_call_id": "call_gptxi9e36zlch5nw93snihax",
+      "tool_name": "modify_pending_order_address",
+      "turn_idx": 18
+    },
+    {
+      "arguments": {
+        "item_ids": [
+          "7902309762"
+        ],
+        "new_item_ids": [
+          "1573035764"
+        ],
+        "order_id": "#W5056519",
+        "payment_method_id": "credit_card_3095586"
+      },
+      "changes": [
+        {
+          "after": [
+            {
+              "item_id": "1573035764",
+              "name": "Makeup Kit",
+              "options": {
+                "brand": "Brand A",
+                "kit size": "professional",
+                "skin tone": "dark"
+              },
+              "price": 253.98,
+              "product_id": "5149340237"
+            }
+          ],
+          "before": [
+            {
+              "item_id": "7902309762",
+              "name": "Makeup Kit",
+              "options": {
+                "brand": "Brand B",
+                "kit size": "professional",
+                "skin tone": "light"
+              },
+              "price": 243.62,
+              "product_id": "5149340237"
+            }
+          ],
+          "entity_id": "#W5056519",
+          "entity_type": "order",
+          "field_path": "items"
+        },
+        {
+          "after": [
+            {
+              "amount": 243.62,
+              "payment_method_id": "credit_card_3095586",
+              "transaction_type": "payment"
+            },
+            {
+              "amount": 10.359999999999985,
+              "payment_method_id": "credit_card_3095586",
+              "transaction_type": "payment"
+            }
+          ],
+          "before": [
+            {
+              "amount": 243.62,
+              "payment_method_id": "credit_card_3095586",
+              "transaction_type": "payment"
+            }
+          ],
+          "entity_id": "#W5056519",
+          "entity_type": "order",
+          "field_path": "payment_history"
+        },
+        {
+          "after": "pending (item modified)",
+          "before": "pending",
+          "entity_id": "#W5056519",
+          "entity_type": "order",
+          "field_path": "status"
+        }
+      ],
+      "event_index": 1,
+      "requestor": "assistant",
+      "tool_call_id": "call_nwzed9kywtsg5o8r9hxfvrs7",
+      "tool_name": "modify_pending_order_items",
+      "turn_idx": 20
+    },
+    {
+      "arguments": {
+        "order_id": "#W5995614",
+        "reason": "ordered by mistake"
+      },
+      "changes": [
+        {
+          "after": "ordered by mistake",
+          "before": null,
+          "entity_id": "#W5995614",
+          "entity_type": "order",
+          "field_path": "cancel_reason"
+        },
+        {
+          "after": [
+            {
+              "amount": 1074.31,
+              "payment_method_id": "credit_card_3095586",
+              "transaction_type": "payment"
+            },
+            {
+              "amount": 1074.31,
+              "payment_method_id": "credit_card_3095586",
+              "transaction_type": "refund"
+            }
+          ],
+          "before": [
+            {
+              "amount": 1074.31,
+              "payment_method_id": "credit_card_3095586",
+              "transaction_type": "payment"
+            }
+          ],
+          "entity_id": "#W5995614",
+          "entity_type": "order",
+          "field_path": "payment_history"
+        },
+        {
+          "after": "cancelled",
+          "before": "pending",
+          "entity_id": "#W5995614",
+          "entity_type": "order",
+          "field_path": "status"
+        }
+      ],
+      "event_index": 2,
+      "requestor": "assistant",
+      "tool_call_id": "call_cah6t0tvevjd3kdo2w0su6s5",
+      "tool_name": "cancel_pending_order",
+      "turn_idx": 22
+    }
+  ],
+  "provenance": {
+    "manifest_sha256": "ab28239fb4f9a599dc03d226e3b3471252e3f9c1a6c23e0c8f3c850b839a50b0",
+    "tau_bench_commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+    "tau_bench_package_version": "1.0.1",
+    "tau_bench_repository": "sierra-research/tau2-bench",
+    "trajectory_sha256": "a095422248a60ecc78ee27acd145aec16a4b7055fdb5a049bfd2a86232c1924e"
+  },
+  "schema_version": 1,
+  "source": "deterministic_replay",
+  "status": "complete",
+  "summary": {
+    "actual_final_state_hash": "4ceb2d12183fc803d711eecf1146b54f9226a43a830737c46d26d6a5bff64a7e",
+    "db_match": true,
+    "field_change_count": 11,
+    "final_comparison": {
+      "db_match": true,
+      "differences": [],
+      "gold_state_available": true
+    },
+    "gold_final_state_hash": "4ceb2d12183fc803d711eecf1146b54f9226a43a830737c46d26d6a5bff64a7e",
+    "initial_state_hash": "b25c9cb211f5efcaee5dd646054a73c4a9f43f4f5acc32c10713cd9f9ac20e9c",
+    "mutation_event_count": 3,
+    "write_tool_call_count": 3
+  },
+  "task_id": "78",
+  "trace_sha256": "ae1c5881a6d5ac7c96a5e4566eb71ed33d04809464016c856aa724f1b1ad9450",
+  "trajectory_ref": "native-simulation.json"
+}

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass
 from threading import Lock, RLock
+from time import sleep
 from types import ModuleType
 from typing import Any
 
@@ -49,7 +51,7 @@ class ModelUsageSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class BudgetSnapshot:
-    cap: int
+    cap: int | None
     attempts: int
     successes: int
     failures: int
@@ -65,14 +67,17 @@ class BudgetSnapshot:
 
     def __post_init__(self) -> None:
         counters = (
-            self.cap, self.attempts, self.successes, self.failures, self.denied,
+            self.attempts, self.successes, self.failures, self.denied,
             self.prompt_tokens, self.completion_tokens, self.usage_responses,
             self.usage_unavailable, self.cache_hits, self.in_flight, self.reserved,
         )
         if any(type(value) is not int or value < 0 for value in counters):
             raise ValueError("provider budget counters must be non-negative integers")
-        if (self.cap < 1 or self.successes + self.failures != self.attempts
-                or self.attempts + self.in_flight + self.reserved > self.cap):
+        if self.cap is not None and (type(self.cap) is not int or self.cap < 1):
+            raise ValueError("provider budget cap must be a positive integer or None")
+        if (self.successes + self.failures != self.attempts
+                or (self.cap is not None
+                    and self.attempts + self.in_flight + self.reserved > self.cap)):
             raise ValueError("provider budget counters are inconsistent")
         if self.usage_responses + self.usage_unavailable > self.attempts:
             raise ValueError("provider usage counters exceed request attempts")
@@ -100,7 +105,9 @@ class BudgetSnapshot:
                 raise ValueError("per-model usage does not reconcile with the global budget snapshot")
 
     @property
-    def remaining(self) -> int:
+    def remaining(self) -> int | None:
+        if self.cap is None:
+            return None
         return self.cap - self.attempts - self.in_flight - self.reserved
 
     def to_dict(self) -> dict[str, Any]:
@@ -172,7 +179,7 @@ class EpisodeUsageTracker:
             self._values["failures"] += 1
             self._values["usage_unavailable"] += 1
 
-    def snapshot(self, *, cap: int) -> BudgetSnapshot:
+    def snapshot(self, *, cap: int | None) -> BudgetSnapshot:
         return BudgetSnapshot(
             cap=cap,
             **self._values,
@@ -192,6 +199,7 @@ class _InstrumentationState:
     original_default_retries: Any
     original_litellm_completion: Any
     guarded_completion: Any
+    retry_empty_responses: bool = False
     references: int = 1
 
 
@@ -199,12 +207,24 @@ _INSTRUMENTATION_LOCK = RLock()
 _INSTRUMENTATION_STATES: dict[int, _InstrumentationState] = {}
 
 
+def _is_empty_completion(response: Any) -> bool:
+    choices = RequestBudget._field(response, "choices")
+    if not choices:
+        return True
+    message = RequestBudget._field(choices[0], "message")
+    if message is None:
+        return True
+    content = RequestBudget._field(message, "content")
+    tool_calls = RequestBudget._field(message, "tool_calls")
+    return not content and not tool_calls
+
+
 class RequestBudget:
     """Count every call to the pinned tau-bench LiteLLM boundary before dispatch."""
 
-    def __init__(self, cap: int):
-        if cap < 1:
-            raise ValueError("request budget cap must be positive")
+    def __init__(self, cap: int | None):
+        if cap is not None and (type(cap) is not int or cap < 1):
+            raise ValueError("request budget cap must be a positive integer or None")
         self._cap = cap
         self._attempts = 0
         self._in_flight = 0
@@ -229,7 +249,8 @@ class RequestBudget:
     def reserve_episode_dispatch(self) -> ProviderDispatchReservation | None:
         """Reserve one first request so parallel episodes cannot oversubscribe the cap."""
         with self._lock:
-            if self._attempts + self._in_flight + self._reserved_dispatches >= self._cap:
+            if (self._cap is not None
+                    and self._attempts + self._in_flight + self._reserved_dispatches >= self._cap):
                 return None
             self._reserved_dispatches += 1
             return ProviderDispatchReservation(self)
@@ -293,7 +314,7 @@ class RequestBudget:
             if reserved_slot:
                 reservation._consumed = True
                 self._reserved_dispatches -= 1
-            if (not reserved_slot and
+            if (self._cap is not None and not reserved_slot and
                     self._attempts + self._in_flight + self._reserved_dispatches >= self._cap):
                 self._denied += 1
                 model_usage["denied"] += 1
@@ -401,7 +422,8 @@ class RequestBudget:
         if any(value < 0 for value in counters):
             raise ValueError("provider budget counters must be non-negative")
         if (snapshot.successes + snapshot.failures != snapshot.attempts
-                or snapshot.attempts + snapshot.in_flight + snapshot.reserved > snapshot.cap
+                or (snapshot.cap is not None
+                    and snapshot.attempts + snapshot.in_flight + snapshot.reserved > snapshot.cap)
                 or snapshot.in_flight or snapshot.reserved):
             raise ValueError("restored provider budget counters are inconsistent")
         if snapshot.usage_responses + snapshot.usage_unavailable > snapshot.attempts:
@@ -460,7 +482,9 @@ class RequestBudget:
         if snapshot.usage_responses + snapshot.usage_unavailable > snapshot.attempts:
             raise ValueError("absorbed usage counters exceed provider attempts")
         with self._lock:
-            if self._attempts + self._in_flight + self._reserved_dispatches + snapshot.attempts > self._cap:
+            if (self._cap is not None
+                    and self._attempts + self._in_flight + self._reserved_dispatches
+                    + snapshot.attempts > self._cap):
                 raise ValueError("absorbed phase usage exceeds the global provider-attempt budget")
             self._attempts += snapshot.attempts
             self._successes += snapshot.successes
@@ -494,12 +518,22 @@ class RequestBudget:
                     target[name] += getattr(row, name)
 
     @contextmanager
-    def instrument_tau_llm_utils(self, llm_utils: ModuleType | Any) -> Iterator[None]:
+    def instrument_tau_llm_utils(
+        self,
+        llm_utils: ModuleType | Any,
+        *,
+        retry_empty_responses: bool = False,
+    ) -> Iterator[None]:
         """Share one process-wide wrapper while concurrent episode scopes are active.
 
         The registry lock protects only installation and restoration. It is never
-        held while provider code runs, so independent episodes can overlap.
+        held while provider code runs, so independent episodes can overlap. When
+        enabled, structurally empty successful completions are retried with the
+        same request, and every provider call is separately accounted.
         """
+
+        if type(retry_empty_responses) is not bool:
+            raise TypeError("retry_empty_responses must be boolean")
 
         module_key = id(llm_utils)
         with _INSTRUMENTATION_LOCK:
@@ -509,6 +543,8 @@ class RequestBudget:
                     raise RuntimeError("provider instrumentation module identity was reused while active")
                 if state.budget is not self:
                     raise RuntimeError("concurrent τ-bench scopes must share one RequestBudget")
+                if state.retry_empty_responses != retry_empty_responses:
+                    raise RuntimeError("concurrent τ-bench scopes must share empty-response retry policy")
                 state.references += 1
             else:
                 original_completion = llm_utils.completion
@@ -524,14 +560,25 @@ class RequestBudget:
                     if litellm_module is not None:
                         kwargs["num_retries"] = 0
                     model_id = None if model is None else str(model)
-                    self._begin(model_id)
-                    try:
-                        result = original_completion(*args, **kwargs)
-                    except BaseException:
-                        self._finish(succeeded=False, model=model_id)
-                        raise
-                    self._finish(succeeded=True, response=result, model=model_id)
-                    return result
+                    empty_attempt = 0
+                    while True:
+                        self._begin(model_id)
+                        try:
+                            result = original_completion(*args, **kwargs)
+                        except BaseException:
+                            self._finish(succeeded=False, model=model_id)
+                            raise
+                        self._finish(succeeded=True, response=result, model=model_id)
+                        if not retry_empty_responses or not _is_empty_completion(result):
+                            return result
+                        empty_attempt += 1
+                        logging.getLogger(__name__).warning(
+                            "Provider returned an empty completion; retrying the frozen request "
+                            "(model=%s, empty_response_retry=%d)",
+                            model_id,
+                            empty_attempt,
+                        )
+                        sleep(1.0)
 
                 state = _InstrumentationState(
                     budget=self,
@@ -541,6 +588,7 @@ class RequestBudget:
                     original_default_retries=original_default_retries,
                     original_litellm_completion=original_litellm_completion,
                     guarded_completion=guarded_completion,
+                    retry_empty_responses=retry_empty_responses,
                 )
                 _INSTRUMENTATION_STATES[module_key] = state
                 llm_utils.completion = guarded_completion

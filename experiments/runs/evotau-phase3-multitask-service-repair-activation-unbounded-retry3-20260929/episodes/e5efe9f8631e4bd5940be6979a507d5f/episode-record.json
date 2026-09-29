@@ -1,0 +1,82 @@
+{
+  "episode_id": "evotau-phase0-d81eef52-a8a4-4734-9ea6-6b2c8d233f5a",
+  "task_id": "29",
+  "seed": 1,
+  "customer_strategy_id": "5902e2e2f5aa008d",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/e5efe9f8631e4bd5940be6979a507d5f/native-simulation.json",
+  "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+  "tool_calls": 10,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 3,
+  "raw_review": {
+    "native_review": {
+      "summary": "The conversation successfully handled both requested exchanges. The agent authenticated the user via name and zip code, identified the relevant orders, listed all available shorter bamboo skateboard options with prices ($180.10, $189.57, $208.60), and after user confirmation processed the skateboard exchange (31-inch bamboo plain → 28-inch bamboo plain) and the garden hose exchange (25ft rubber green → 50ft vinyl black from the pending order). The user followed all instructions, provided no incorrect or hallucinated information, and completed the task. The only errors were agent policy violations: making multiple tool calls in a single turn on turns 8, 13, and 20. These were minor procedural issues that did not affect the final outcome.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made four get_order_details tool calls in a single turn, and also included a text response alongside the tool calls. The policy explicitly states the agent should make at most one tool call at a time and should not respond to the user at the same time as making a tool call. This did not affect the final outcome, but it violates the stated procedure.",
+          "correct_behavior": "Make one get_order_details call at a time, wait for the tool response, and only then make the next call, without combining tool calls with a user-facing response."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 13,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made two get_product_details tool calls in the same turn and also included a text response. This violates the policy that the agent should make at most one tool call at a time and should not respond to the user simultaneously with a tool call. The outcome was still correct, but the procedure was not followed.",
+          "correct_behavior": "Make one get_product_details call, wait for its response, then make the second call separately without combining them with a text reply."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 20,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made two exchange_delivered_order_items tool calls in the same turn along with a text message. The policy requires at most one tool call at a time. Although both exchanges were processed correctly, the agent violated the stated one-tool-call-at-a-time rule.",
+          "correct_behavior": "Place the first exchange_delivered_order_items call, wait for the tool response, then place the second exchange call, without interleaving a user-facing response."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent requested the user's email for authentication, and when the user could not recall it, used name and zip code to successfully look up the account (isabella_johansson_2152). The agent confirmed the user's identity and accessed their orders, so authentication succeeded.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

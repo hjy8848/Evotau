@@ -1,0 +1,69 @@
+{
+  "episode_id": "evotau-phase0-78e140e3-8753-41cd-a113-8512dd72461e",
+  "task_id": "22",
+  "seed": 1,
+  "customer_strategy_id": "8f8ca9d91930bdac",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/e971049f3179461eb8d3c4b61375262a/native-simulation.json",
+  "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+  "tool_calls": 8,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 2,
+  "raw_review": {
+    "native_review": {
+      "summary": "The user requested an address change for their default account address and applicable orders, then reverted the default address back to the original after the changes were confirmed, while keeping the pending order's shipping address updated. The agent correctly authenticated the user via name/zip, checked order statuses, updated only the pending order's address, listed action details, and obtained explicit confirmation before each database update, including for the revert. The only errors were two policy violations where the agent made multiple tool calls at once (Turns 8 and 18); these did not affect the final outcome. No user errors were identified.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent issued three get_order_details tool calls simultaneously in a single turn. The policy explicitly states that the agent should make at most one tool call at a time and should not respond to the user while making a tool call. Although all three calls succeeded and returned valid data, this violates the stated procedural rule.",
+          "correct_behavior": "The agent should have made the get_order_details calls one at a time, waiting for each tool response before initiating the next call."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 18,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent issued two database-updating tool calls (modify_user_address and modify_pending_order_address) in the same turn. The policy requires at most one tool call at a time. Both updates succeeded and had explicit user confirmation, so the final outcome was correct, but the simultaneous call pattern violates the policy.",
+          "correct_behavior": "The agent should have made one tool call at a time, e.g., update the default address first, wait for the response, then update the order address."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent requested identity verification (email or name+zip). The user provided name and zip code, and the agent successfully looked up the matching account (ethan_garcia_1261) and retrieved account details, confirming the user's identity.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}
