@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · Episode Explorer{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">Trace explorer</div><h1>Episodes</h1><p>按 generation、panel、策略和审计状态筛选已保存的 episode。筛选只改变展示范围。</p></div><span class="badge">{{ episodes|length }} / {{ run.episodes|length }} visible</span></section>
+<form class="panel filter-bar" method="get" action="/runs/{{ run.run_id|urlencode }}/episodes" aria-label="Episode filters">
+ <div class="form-grid">
+  {% for key,label in [('generation','Generation'),('panel','Panel'),('customer','Customer'),('service','Service'),('task','Task'),('seed','Seed')] %}<label>{{ label }}<select name="{{ key }}"><option value="">All</option>{% for option in filter_options[key] %}<option value="{{ option }}" {% if filters[key] == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>{% endfor %}
+  <label>Failure status<select name="failure"><option value="">All</option><option value="verified" {% if filters.failure == 'verified' %}selected{% endif %}>Verified</option><option value="provisional" {% if filters.failure == 'provisional' %}selected{% endif %}>Provisional</option><option value="none" {% if filters.failure == 'none' %}selected{% endif %}>No attributed failure</option></select></label>
+  <label>Strategy adherence<select name="adherence"><option value="">All</option><option value="yes" {% if filters.adherence == 'yes' %}selected{% endif %}>Adherent</option><option value="no" {% if filters.adherence == 'no' %}selected{% endif %}>Not adherent</option><option value="unknown" {% if filters.adherence == 'unknown' %}selected{% endif %}>Unavailable</option></select></label>
+  <div class="page-actions"><button class="button" type="submit">Apply filters</button><a class="button button-quiet" href="/runs/{{ run.run_id|urlencode }}/episodes">Clear</a></div>
+ </div>
+</form>
+<div class="episode-layout section">
+ <aside class="panel episode-list" aria-label="Episodes list">
+   <div class="panel-header"><strong>Episodes</strong><span class="small muted">{{ episodes|length }}</span></div>
+   {% for episode in episodes %}<div class="episode-list-link-wrap">
+    <div class="episode-list-link" {% if request.url.path.endswith(episode.episode_id) %}aria-current="page"{% endif %}>
+      <a href="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}"><strong>{{ episode.episode_id }}</strong></a>
+      <span>{{ episode.panel_name or 'panel unavailable' }} · Task {{ episode.task_id }}</span>
+      <div class="annotation-row">{% if episode.verified_failure %}<span class="badge badge-verified">Verified</span>{% elif episode.policy_violation %}<span class="badge badge-provisional">Provisional</span>{% else %}<span class="badge badge-neutral">No attribution</span>{% endif %}</div>
+      <button class="trace-inspect" type="button" data-inspector-target data-inspect-url="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}" data-inspect-title="Episode {{ episode.episode_id }}">Inspect context</button>
+    </div>
+   </div>{% else %}<div class="empty-state">No episodes match these filters.</div>{% endfor %}
+ </aside>
+ <section class="panel">
+  <div class="panel-header"><div><div class="eyebrow">Selection</div><h2>Choose an episode</h2></div><a href="/runs/{{ run.run_id|urlencode }}#episodes">Run overview</a></div>
+  <div class="empty-state">选择左侧 episode 可打开完整 trace。Inspect context 会在右侧更新，不会改变 episode artifact。</div>
+ </section>
+ <aside class="panel inspector-panel" data-inspector-panel aria-label="Episode inspector">
+  <div class="panel-header"><div><div class="eyebrow">Context inspector</div><h2 data-inspector-title>Episode context</h2></div><button class="icon-button" type="button" data-inspector-close aria-label="关闭检查器">×</button></div>
+  <div class="inspector-content" data-inspector-content><p class="muted">从左侧选择一个 episode 检查其 task、seed 和策略状态。</p></div>
+ </aside>
+</div>
+{% endblock %}

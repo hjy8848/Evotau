@@ -153,7 +153,9 @@ class ArtifactReader:
             "real_provider_enabled": manifest.get("real_provider_enabled") is True,
             "upstream_commit": self._upstream_commit(manifest),
             "started_at": self._timestamp(manifest_path),
-            "result": redact_secrets(result),
+            # Before release, the aggregate result may still contain heldout rows
+            # even when the normalized episode list has been filtered.
+            "result": None if h_sealed else redact_secrets(result),
             "budget": budget,
             "episodes": episodes,
             "generation_commits": redact_secrets(commits),
@@ -636,9 +638,14 @@ class ArtifactReader:
             snapshot = None if latest is None else latest.get("budget_after")
         if not isinstance(snapshot, dict):
             return {"attempts": None, "cap": self._budget_cap(manifest), "prompt_tokens": None,
-                    "completion_tokens": None, "model_usage": [], "available": False}
+                    "completion_tokens": None, "model_usage": [], "available": False,
+                    "successes": None, "failures": None, "denied": None, "cache_hits": None}
         return {
             "attempts": snapshot.get("attempts"),
+            "successes": snapshot.get("successes"),
+            "failures": snapshot.get("failures"),
+            "denied": snapshot.get("denied"),
+            "cache_hits": snapshot.get("cache_hits"),
             "cap": snapshot.get("cap", self._budget_cap(manifest)),
             "prompt_tokens": snapshot.get("prompt_tokens") if snapshot.get("usage_unavailable", 0) == 0 else None,
             "completion_tokens": snapshot.get("completion_tokens") if snapshot.get("usage_unavailable", 0) == 0 else None,
@@ -805,9 +812,10 @@ class ArtifactReader:
     def _safe_raw_artifacts(
         self, manifest: dict[str, Any], result: dict[str, Any] | None, *, sealed: bool,
     ) -> dict[str, Any]:
+        safe_result = None if sealed else result
         return redact_secrets({
             "manifest": _safe_manifest_for_display(manifest, sealed=sealed),
-            "result": result,
+            "result": safe_result,
         })
 
     def _has_complete_result(self, run_path: Path) -> bool:
@@ -1082,4 +1090,9 @@ def _safe_manifest_for_display(manifest: dict[str, Any], *, sealed: bool) -> dic
         heldout = selection.get("heldout", ())
         selection["heldout"] = f"[SEALED: {len(heldout)} tasks]" if isinstance(heldout, list) else "[SEALED]"
         value["task_selection"] = selection
+    if sealed and isinstance(value.get("task_semantic_review"), dict):
+        # The review binds heldout task IDs and pairings; don't let Research mode
+        # reveal those identities before the registered release condition.
+        value["task_semantic_review"] = {"status": "[SEALED]"}
+        value.pop("task_semantic_review_sha256", None)
     return value

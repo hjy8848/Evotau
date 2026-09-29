@@ -68,6 +68,9 @@ class RunPreview:
             "provider_plugin": self.provider_plugin or "未设置",
             "tau2_data_path": self.tau2_data_path or "未设置",
             "phase0_result_path": self.phase0_result_path or "未设置",
+            "enforce_communication_protocol": self.manifest_document.get(
+                "enforce_communication_protocol",
+            ),
         }
 
 

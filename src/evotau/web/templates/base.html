@@ -1,39 +1,70 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="auto" data-display-mode="simple">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
   <title>{% block title %}EvoTau Experiment Console{% endblock %}</title>
-  <style>
-    :root{color-scheme:light;--ink:#192630;--muted:#63717b;--line:#d8e0e5;--paper:#f4f7f8;--panel:#fff;--blue:#185b74;--green:#28734b;--red:#a33e36;--yellow:#916300;--gray:#66717a}
-    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    header{background:#102f3b;color:white;padding:18px max(24px,calc((100vw - 1180px)/2));display:flex;align-items:center;justify-content:space-between;gap:16px}
-    header a{color:white;text-decoration:none}header strong{font-size:20px;letter-spacing:.02em}.tagline{color:#c1d0d5;font-size:13px}
-    nav{display:flex;gap:18px;flex-wrap:wrap}nav a{font-size:14px;color:#deeaed}
-    main{max-width:1180px;margin:28px auto;padding:0 22px 54px}.eyebrow{color:var(--blue);font-size:12px;text-transform:uppercase;letter-spacing:.12em;font-weight:700}
-    h1{font-size:30px;line-height:1.2;margin:7px 0 8px}h2{font-size:20px;margin:0 0 12px}h3{font-size:16px;margin:0 0 8px}p{margin:5px 0 12px}.muted{color:var(--muted)}.small{font-size:13px}.mono,code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
-    .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;min-width:0}.span-12{grid-column:span 12}.span-8{grid-column:span 8}.span-6{grid-column:span 6}.span-4{grid-column:span 4}
-    .status{display:inline-flex;align-items:center;gap:7px;font-weight:700}.status:before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}.success{color:var(--green)}.danger{color:var(--red)}.warning{color:var(--yellow)}.muted-status{color:var(--gray)}
-    .metric{font-size:25px;font-weight:700;margin:3px 0}.metric-label{font-size:13px;color:var(--muted)}.row{display:flex;gap:16px;flex-wrap:wrap}.row>*{flex:1;min-width:160px}
-    table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;vertical-align:top;padding:10px 9px;border-bottom:1px solid var(--line)}th{font-size:12px;color:var(--muted);font-weight:700}td a{color:var(--blue);text-decoration:none}td a:hover{text-decoration:underline}
-    .button,button{display:inline-block;border:0;border-radius:6px;padding:10px 15px;background:var(--blue);color:#fff;font:inherit;font-weight:700;text-decoration:none;cursor:pointer}.button.secondary{background:#e8eef1;color:#183844}.button.danger-button{background:#a33e36}.button:disabled,button:disabled{opacity:.55;cursor:not-allowed}
-    label{display:block;font-size:13px;font-weight:700;margin:11px 0 5px}input,select{width:100%;padding:10px;border:1px solid #bbc8ce;border-radius:6px;font:inherit;background:white;color:var(--ink)}form{margin:0}.form-actions{margin-top:15px}.notice{border-left:4px solid var(--blue);padding:11px 14px;background:#eaf3f6;border-radius:4px;margin:12px 0}.notice.warning-box{border-color:#b48218;background:#fbf5e7}.notice.danger-box{border-color:#a33e36;background:#fbefee}
-    .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-size:12px;margin:2px}.pill.sealed{background:#eceff1;color:#5e6870}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0}
-    details{border-top:1px solid var(--line);padding-top:10px;margin-top:12px}summary{cursor:pointer;color:var(--blue);font-weight:650}pre{background:#f2f5f6;border:1px solid var(--line);padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:440px;overflow:auto;font-size:12px}
-    .chat{display:flex;flex-direction:column;gap:12px}.bubble{max-width:82%;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:white;white-space:pre-wrap;word-break:break-word}.bubble.customer{align-self:flex-start;border-left:4px solid #718592}.bubble.agent{align-self:flex-end;border-right:4px solid var(--blue);background:#eff7f9}.bubble.tool{align-self:stretch;background:#f0f2f3}.bubble.call{align-self:stretch;border-style:dashed;background:#fbf5e7}.bubble-title{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px}.bubble pre{margin:7px 0 0;max-height:260px}
-    .bar{height:8px;background:#e2e9ec;border-radius:99px;overflow:hidden}.bar span{display:block;height:100%;background:var(--blue)}.event-list{max-height:270px;overflow:auto}.event{padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
-    .heat-low{background:#d9ede2}.heat-mid{background:#f8edcf}.heat-high{background:#f3d9d6}.heat-unknown{background:#eef0f1;color:#777}.heat-good{background:#d9ede2}.heat-bad{background:#f3d9d6}
-    footer{max-width:1180px;padding:0 22px 30px;margin:auto;color:var(--muted);font-size:12px}
-    @media(max-width:800px){header{align-items:flex-start;flex-direction:column}.span-8,.span-6,.span-4{grid-column:span 12}.bubble{max-width:100%}main{margin-top:20px}}
-  </style>
+  <link rel="stylesheet" href="/static/css/tokens.css?v=2">
+  <link rel="stylesheet" href="/static/css/base.css?v=2">
+  <link rel="stylesheet" href="/static/css/layout.css?v=2">
+  <link rel="stylesheet" href="/static/css/components.css?v=2">
+  <link rel="stylesheet" href="/static/css/pages.css?v=2">
+  <script src="/static/js/console.js?v=2" defer></script>
+  <script src="/static/js/inspector.js?v=2" defer></script>
+  <script src="/static/js/command-palette.js?v=2" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
-<header>
-  <a href="/"><strong>EvoTau</strong><div class="tagline">本地实验控制台 · 只读解释 Core artifacts</div></a>
-  <nav><a href="/">Dashboard</a>{% if run is defined %}<a href="/runs/{{ run.run_id|urlencode }}">Run</a><a href="/runs/{{ run.run_id|urlencode }}/cross-play">Cross-play</a>{% endif %}</nav>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
+<header class="topbar">
+  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">E</span><span><strong>EvoTau</strong><small>Research Console</small></span></a>
+  {% if run is defined %}
+  <div class="run-context"><span class="eyebrow">{{ run.phase }}</span><strong>{{ run.experiment_id }}</strong><span class="status status-{{ run.status }}">{{ {'complete':'已完成','running':'运行中','paused':'已暂停','failed':'失败','incomplete':'未完成','not_started':'尚未开始'}.get(run.status, run.status) }}</span></div>
+{% else %}<div class="topbar-context">本地实验控制台 <span class="dot-separator">·</span> Core artifacts 是唯一研究来源</div>{% endif %}
+  <div class="topbar-actions">
+    {% if run is defined and run.status == 'running' and not run.phase.startswith('0-') %}<form method="post" action="/runs/{{ run.run_id|urlencode }}/pause"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-quiet" type="submit">暂停于当前 episode 后</button></form>{% endif %}
+    <div class="segmented mode-switch" role="group" aria-label="显示模式"><button type="button" data-display-mode-button="simple" aria-pressed="true">Simple</button><button type="button" data-display-mode-button="research" aria-pressed="false">Research</button></div>
+    <button type="button" class="icon-button" data-theme-toggle aria-label="切换浅色或深色主题" title="切换主题">◐</button>
+    <button type="button" class="icon-button command-trigger" data-command-open aria-label="搜索 EvoTau" title="搜索 (⌘K / Ctrl+K)">⌕</button>
+  </div>
 </header>
-<main>{% block content %}{% endblock %}</main>
-<footer>Console events are observational only. Research evidence remains in the original immutable EvoTau artifacts.</footer>
+{% if run is defined %}
+<div class="run-subbar" aria-label="Run summary">
+  <span><small>Generation</small><strong>{{ run.current_generation if run.current_generation is not none else run.generation_commits|length }}</strong></span>
+  <span class="badge badge-customer">Customer {{ run.current_customer_id or 'Unavailable' }}</span>
+  <span class="badge badge-service">Service {{ run.current_service_id or 'Unavailable' }}</span>
+  <span><small>Episodes</small><strong>{{ run.episodes|length }}{% if run.episode_limit %} / {{ run.episode_limit }}{% endif %}</strong></span>
+  <span><small>Requests</small><strong>{{ run.budget.attempt_label }}</strong></span>
+  <span class="protocol-tag">{{ run.communication_mode_label or 'Protocol unknown' }}</span>
+  {% if run.status == 'running' and run.current_episode %}<span class="live-context"><i class="live-indicator"></i>Evaluating {{ run.current_customer_id or 'Customer' }} × {{ run.current_service_id or 'Service' }}</span>{% endif %}
+</div>
+<div class="workspace-shell">
+  <aside class="sidebar" aria-label="Run navigation">
+    <div class="sidebar-label">RUN WORKSPACE</div>
+    <a href="/runs/{{ run.run_id|urlencode }}#overview" class="nav-link"><span>Overview</span></a>
+    <a href="/runs/{{ run.run_id|urlencode }}#timeline" class="nav-link"><span>Timeline</span></a>
+    <a href="/runs/{{ run.run_id|urlencode }}/episodes" class="nav-link"><span>Episodes</span><span class="nav-count">{{ run.episodes|length }}</span></a>
+    <a href="/runs/{{ run.run_id|urlencode }}#failures" class="nav-link"><span>Failures</span><span class="nav-count">{{ run.verified_failures|length }}</span></a>
+    <a href="/runs/{{ run.run_id|urlencode }}#strategies" class="nav-link"><span>Strategies</span></a>
+    <a href="/runs/{{ run.run_id|urlencode }}/cross-play" class="nav-link"><span>Cross-play</span></a>
+    <a href="/runs/{{ run.run_id|urlencode }}#budget" class="nav-link"><span>Budget</span></a>
+    <a href="/runs/{{ run.run_id|urlencode }}/artifacts" class="nav-link"><span>Artifacts</span></a>
+    {% if run.heldout_task_count %}<a href="/runs/{{ run.run_id|urlencode }}/heldout" class="nav-link nav-sealed"><span>Heldout</span><span aria-label="封存">◈</span></a>{% endif %}
+    {% if run.phase.startswith('4-') %}<a href="/runs/{{ run.run_id|urlencode }}/task-review" class="nav-link"><span>Task review</span></a>{% endif %}
+    <div class="sidebar-divider"></div>
+    <a href="/compare" class="nav-link"><span>Compare runs</span></a>
+    <a href="/" class="nav-link nav-muted"><span>All experiments</span></a>
+    <div class="sidebar-foot">Local view · no provider calls</div>
+  </aside>
+{% endif %}
+<main id="main-content" class="main-content{% if run is not defined %} main-content-wide{% endif %}">{% block content %}{% endblock %}</main>
+{% if run is defined %}</div>{% endif %}
+<footer class="site-footer">Console 只观察和解释已有 artifacts。实验数据保持不可变；Web 不做研究决策。</footer>
+<dialog class="command-palette" data-command-dialog aria-label="搜索 Console">
+  <form method="dialog" class="command-search"><span aria-hidden="true">⌕</span><input type="search" data-command-input placeholder="搜索 Run、Episode、Failure、Strategy…" autocomplete="off" aria-label="搜索本地 artifacts"><button class="icon-button" value="cancel" aria-label="关闭搜索">Esc</button></form>
+  <div class="command-hint">使用 ↑ ↓ 选择，Enter 打开，Esc 关闭</div><div class="command-results" data-command-results role="listbox"></div>
+</dialog>
+<script type="application/json" id="command-index">{{ command_index|default([])|tojson }}</script>
 </body>
 </html>

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · Artifacts{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">Artifact browser</div><h1>Saved artifacts</h1><p>File metadata is read locally. Core outputs remain immutable; Console journal entries are labeled separately.</p></div><span class="badge">{{ artifacts|length }} visible files</span></section>
+{% if run.heldout_sealed %}<div class="notice notice-warning"><strong>HELDOUT SEALED</strong> · Sealed aggregate results omit size and digest until release.</div>{% endif %}
+<div class="panel section"><div class="artifact-row header"><div>Filename</div><div>SHA-256</div><div>Size</div><div>Status</div></div>
+ {% for item in artifacts %}<div class="artifact-row"><div class="mono">{{ item.path }}</div><div class="mono">{{ item.sha256[:16] ~ '…' if item.sha256 else 'Sealed' }}</div><div>{{ item.size if item.size is not none else 'Sealed' }}</div><div>{{ item.status }}</div></div>{% else %}<div class="empty-state">No artifact files are available.</div>{% endfor %}
+</div>
+<p class="small muted section">Hashes identify local files; they do not add or recalculate research evidence.</p>
+{% endblock %}

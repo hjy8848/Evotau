@@ -1,70 +1,112 @@
 {% extends "base.html" %}
 {% block title %}EvoTau · {{ run.experiment_id }}{% endblock %}
 {% block content %}
-<div class="eyebrow">{{ run.phase }}</div><h1>{{ run.experiment_id }}</h1>
-<div class="toolbar"><div><span class="status {% if run.status == 'complete' %}success{% elif run.status == 'failed' %}danger{% elif run.status == 'running' %}warning{% else %}muted-status{% endif %}">{{ {'complete':'已完成','running':'运行中','paused':'已安全暂停','failed':'失败','incomplete':'未完成 / 可恢复','not_started':'尚未开始'}.get(run.status, run.status) }}</span>
-  <span class="pill">Provider {{ 'ON' if run.real_provider_enabled else 'OFF' }}</span><span class="pill">τ-bench {{ run.upstream_commit or 'Unavailable' }}</span></div>
-  <div>{% if pause_available %}<form method="post" action="/runs/{{ run.run_id|urlencode }}/pause"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button secondary" type="submit">Pause after current episode</button></form>{% elif run.status == 'running' %}<span class="pill sealed">Phase 0 单场 run 会安全完成</span>{% endif %}</div></div>
-{% if run.status == 'running' and not run.phase.startswith('0-') %}<div class="notice">如果当前 episode 正在执行，它会先完成；暂停信号只会在下一次 episode 派发前生效。</div>{% endif %}
-{% if run.heldout_sealed %}<div class="notice warning-box">Heldout panel sealed · {{ run.heldout_task_count }} 个任务尚未开放；trajectory 不会通过 Console 展示。</div>{% endif %}
-{% if run.event_warning %}<div class="notice warning-box">{{ run.event_warning }}</div>{% endif %}
+<section id="overview" class="page-heading">
+  <div><div class="eyebrow">{{ run.phase }} · Overview</div><h1>{{ run.experiment_id }}</h1><p>本页把已提交的 generation、verified failure、预算和实验状态并列展示；每条研究结论仍以冻结 artifact 为准。</p></div>
+  <div class="page-actions"><span class="badge">Provider {{ 'ON' if run.real_provider_enabled else 'OFF' }}</span><span class="badge">τ-bench {{ run.upstream_commit or 'Unavailable' }}</span><a class="button button-secondary" href="/compare?run_a={{ run.run_id|urlencode }}">Compare runs</a></div>
+</section>
+{% if run.heldout_sealed %}<div class="notice notice-warning" role="status"><strong>HELDOUT SEALED · Heldout panel sealed</strong> · Frozen metadata allows {{ run.heldout_task_count }} heldout task(s). IDs and trajectories remain hidden.</div>{% endif %}
+{% if run.event_warning %}<div class="notice notice-warning">{{ run.event_warning }}</div>{% endif %}
 
-<section class="grid">
-  <div class="card span-3"><div class="metric">{{ run.current_generation if run.current_generation is not none else run.generation_commits|length }}</div><div class="metric-label">当前 generation / 已提交代数</div></div>
-  <div class="card span-3"><div class="metric">{{ run.episodes|length }} / {{ run.episode_limit if run.episode_limit is not none else 'Unavailable' }}</div><div class="metric-label">Episodes 已用 / 上限</div></div>
-  <div class="card span-3"><div class="metric">{{ run.budget.attempt_label }}</div><div class="metric-label">Provider attempts 已用 / 上限</div></div>
-  <div class="card span-3"><div class="metric">{{ run.budget.total_tokens if run.budget.total_tokens is not none else 'Unavailable' }}</div><div class="metric-label">Total tokens</div></div>
+<section class="metric-strip run-metrics" aria-label="Run metrics">
+  <div class="metric-item"><div class="label-caps">Generation</div><div class="metric-value">{{ run.current_generation if run.current_generation is not none else run.generation_commits|length }}{% if run.generation_commits %} / {{ run.generation_commits|length }} committed{% endif %}</div></div>
+  <div class="metric-item"><div class="label-caps">Customer</div><div class="metric-value customer-text">{{ run.current_customer_id or 'Unavailable' }}</div><div class="metric-caption">current strategy</div></div>
+  <div class="metric-item"><div class="label-caps">Service</div><div class="metric-value service-text">{{ run.current_service_id or 'Unavailable' }}</div><div class="metric-caption">current strategy</div></div>
+  <div class="metric-item"><div class="label-caps">Verified failures</div><div class="metric-value">{{ run.verified_failures|length }}</div><div class="metric-caption">provisional {{ run.provisional_failures|length }}</div></div>
+  <div class="metric-item"><div class="label-caps">Provider attempts</div><div class="metric-value">{{ run.budget.attempt_label }}</div><div class="metric-caption">{{ run.budget.progress_label }} used</div></div>
 </section>
 
-<section class="grid" style="margin-top:16px">
-  <div class="card span-4"><h2>当前 Episode</h2>{% if run.current_episode %}<p><span class="status warning">{{ run.current_episode.label }}</span></p><p class="mono">Attempt {{ run.current_episode.attempt_id }}</p>{% else %}<p class="muted">Unavailable · Core 当前没有可安全识别的活动 episode。</p>{% endif %}</div>
-  <div class="card span-4"><h2>当前 Customer</h2>{% if run.current_customer_id %}<p class="mono">{{ run.current_customer_id }}</p><p>{{ run.current_customer_view.summary }}</p>{% else %}<p class="muted">策略快照尚未提交或记录。</p>{% endif %}</div>
-  <div class="card span-4"><h2>当前 Service</h2>{% if run.current_service_id %}<p class="mono">{{ run.current_service_id }}</p>{% if run.current_service_view.available and run.current_service_view.rules %}{% for rule in run.current_service_view.rules %}<p>{{ rule.policy_ref }} · {{ rule.required_execution }}</p>{% endfor %}{% elif run.current_service_view.available %}<p>没有额外 repair rule。</p>{% else %}<p>策略快照不可用。</p>{% endif %}{% else %}<p class="muted">策略快照尚未提交或记录。</p>{% endif %}</div>
-</section>
+<div class="run-overview">
+ <div class="overview-main">
+  <section class="section" id="story">
+   <div class="section-heading"><div><div class="eyebrow">Evolution story</div><h2>What happened in this run</h2></div><span class="small muted">Summaries follow committed decision records</span></div>
+   {% if run.generation_views %}<div class="story-track">
+    {% for generation in run.generation_views %}<article class="story-generation" id="generation-{{ generation.generation }}">
+      <header><span>GENERATION {{ generation.generation }}</span><span>{{ generation.selection_label }}</span></header>
+      <div class="story-node customer-node"><strong>Customer · {{ generation.customer_id or 'Unavailable' }}</strong><small>{{ 'strategy updated' if generation.customer_evolved else 'incumbent retained' if generation.customer_evolved is sameas false else 'status unavailable' }}</small></div>
+      {% set generation_failures = run.verified_failures|selectattr('generation','equalto',generation.generation)|list %}
+      {% if generation_failures %}<div class="story-node failure-node"><strong>{{ generation_failures|length }} verified Service failure(s)</strong><small>Evidence is in Failure inspector</small></div>{% else %}<div class="story-node"><strong>No verified failure archived</strong><small>Task outcome and failure attribution are distinct</small></div>{% endif %}
+      <div class="story-node service-node"><strong>Service · {{ generation.service_id or 'Unavailable' }}</strong><small>{{ 'strategy updated' if generation.service_evolved else 'incumbent retained' if generation.service_evolved is sameas false else 'status unavailable' }}</small></div>
+      {% if generation.gate %}<div class="story-node repair-node"><strong>Repair gate · {{ generation.gate_view.label }}</strong><small>{{ generation.gate_view.detail }}</small></div>{% endif %}
+      <div class="research-only small muted">Commit note: {{ generation.note or 'Unavailable' }} · {{ generation.selection.reason if generation.selection else 'Selection details unavailable' }}</div>
+    </article>{% endfor %}
+   </div>{% else %}<div class="panel story-empty">Checkpoint 尚无已提交的 generation。当前展示范围来自 run artifacts。</div>{% endif %}
+   {% if run.generation_views %}<div class="panel section">
+     <div class="panel-header"><h2>Generation narrative</h2><span class="badge">Deterministic · no LLM summary</span></div>
+     {% for generation in run.generation_views %}<div class="narrative"><strong>Generation {{ generation.generation }}</strong>{% for line in generation.narrative %}<p>{{ line }}</p>{% endfor %}</div>{% endfor %}
+   </div>{% endif %}
+  </section>
 
-<section class="grid" style="margin-top:16px">
- <div class="card span-8">
-   <div class="toolbar"><div><div class="eyebrow">Episodes</div><h2>对话与结果</h2></div><a class="button secondary" href="/runs/{{ run.run_id|urlencode }}/cross-play">Cross-play</a></div>
-   {% if run.episodes %}<div style="overflow:auto"><table><thead><tr><th>Episode</th><th>Task</th><th>Customer / Service</th><th>结果</th><th>策略执行</th></tr></thead><tbody>
-   {% for episode in run.episodes %}<tr><td><a href="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}">{{ episode.episode_id }}</a><div class="small muted">{{ episode.panel_name or 'panel 未标记' }}</div></td><td>{{ episode.task_id }} · seed {{ episode.seed if episode.seed is not none else 'Unavailable' }}</td><td><span class="mono">{{ episode.customer_strategy_id or 'Unavailable' }}</span><br><span class="mono">{{ episode.service_strategy_id or 'Unavailable' }}</span></td><td>{% if episode.task_success is sameas true %}<span class="status success">任务成功</span>{% elif episode.task_success is sameas false %}<span class="status danger">任务未成功</span>{% else %}<span class="status muted-status">Unavailable</span>{% endif %}<div class="small">{{ '已验证 Service 失败' if episode.verified_failure else '任务结果不等同于已归因失败' }}</div></td><td>{% if episode.strategy_applicable is sameas true %}有机会；{% if episode.customer_strategy_adherent is sameas true %}按策略执行{% elif episode.customer_strategy_adherent is sameas false %}未按策略执行{% else %}adherence 不可用{% endif %}{% elif episode.strategy_applicable is sameas false %}本场不适用{% else %}不可用{% endif %}</td></tr>{% endfor %}
-   </tbody></table></div>{% else %}<p class="muted">Episode artifact 尚未落盘。</p>{% endif %}
+  <section class="section" id="timeline">
+   <div class="section-heading"><div><div class="eyebrow">Run timeline</div><h2>发生顺序</h2></div><span class="small muted">来自已写入 artifacts 和 Console event journal</span></div>
+   {% if run.human_events %}<div class="panel event-timeline" data-live-timeline data-seen-event-ids='{{ run.events|map(attribute="event_id")|list|tojson }}'>{% for event in run.human_events[-40:]|reverse %}<div class="event-time">{{ event.time }}</div><div class="event-copy"><strong>{{ event.title }}</strong>{% if event.episode_id %} · <a href="{{ event.url }}">打开 episode</a>{% endif %}<span class="research-inline mono"> · {{ event.kind }} · gen {{ event.generation }}</span></div>{% endfor %}</div>{% else %}<div class="panel empty-state">暂无可用 timeline events。</div>{% endif %}
+  </section>
+
+  <section class="section" id="episodes">
+   <div class="section-heading"><div><div class="eyebrow">Episode explorer</div><h2>Episodes <span class="badge">{{ run.episodes|length }}</span></h2></div><a class="button button-secondary" href="/runs/{{ run.run_id|urlencode }}/episodes">打开 Trace Explorer</a></div>
+   {% if run.episodes %}<div class="panel table-scroll"><table><thead><tr><th>Episode</th><th>Panel / task / seed</th><th>Customer × Service</th><th>τ-bench</th><th>Attribution</th></tr></thead><tbody>
+   {% for episode in run.episodes[:8] %}<tr><td><a class="mono" href="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}">{{ episode.episode_id }}</a></td><td>{{ episode.panel_name or 'Unavailable' }}<div class="small muted">Task {{ episode.task_id }} · seed {{ episode.seed if episode.seed is not none else 'Unavailable' }}</div></td><td><span class="badge badge-customer">{{ episode.customer_strategy_id or 'Unknown' }}</span> <span class="badge badge-service">{{ episode.service_strategy_id or 'Unknown' }}</span></td><td>{% if episode.task_success is sameas true %}<span class="badge badge-accepted">Task success</span>{% elif episode.task_success is sameas false %}<span class="badge badge-neutral">Task not successful</span>{% else %}<span class="badge">Unavailable</span>{% endif %}</td><td>{% if episode.verified_failure %}<span class="badge badge-verified">Verified failure</span>{% elif episode.policy_violation %}<span class="badge badge-provisional">Provisional</span>{% else %}<span class="badge badge-neutral">No verified attribution</span>{% endif %}</td></tr>{% endfor %}
+   </tbody></table></div>{% else %}<div class="panel empty-state">Episode artifact 尚未落盘。</div>{% endif %}
+  </section>
+
+  <section class="section" id="strategies">
+   <div class="section-heading"><div><div class="eyebrow">Strategy evolution</div><h2>Strategy diff</h2></div><span class="small muted">只对照 generation commit 中的 before / after 快照</span></div>
+   {% for generation in run.generation_views %}<div class="panel section">
+     <div class="panel-header"><strong>Generation {{ generation.generation }}</strong><span class="small muted">C {{ generation.decision_record.customer.incumbent_before_id if generation.decision_record.customer.incumbent_before_id is defined else generation.customer_id }} → {{ generation.customer_id }} · S {{ generation.service_id }}</span></div>
+     <div class="panel-body strategy-diff-grid">
+      <div><div class="badge badge-customer">Customer</div>
+       {% if generation.customer_diff.available %}<div class="strategy-diff">{% for row in generation.customer_diff.rows %}<div class="diff-field">{{ row.field }}</div><div class="diff-cell diff-before {% if not row.changed %}diff-unchanged{% endif %}">{{ row.before if row.before is not none else 'Unavailable' }}</div><div class="diff-cell diff-after {% if row.changed %}changed{% else %}diff-unchanged{% endif %}">{{ row.after if row.after is not none else 'Unavailable' }}</div>{% endfor %}</div>{% else %}<p class="small muted">本代没有可比较的 Customer snapshots。</p>{% endif %}
+      </div>
+      <div class="service-diff"><div class="badge badge-service">Service</div>
+       {% if generation.service_diff.available %}
+        {% for rule in generation.service_diff.added %}<div class="notice notice-success section"><strong>+ {{ rule.policy_ref }}</strong><p>{{ rule.trigger }}</p><p>{{ rule.required_execution }}</p></div>{% endfor %}
+        {% for rule in generation.service_diff.removed %}<div class="notice notice-danger section"><strong>− {{ rule.policy_ref }}</strong><p>{{ rule.trigger }}</p><p>{{ rule.required_execution }}</p></div>{% endfor %}
+        {% for row in generation.service_diff.rows %}<div class="list-row"><div><strong>{{ row.field }}</strong><p class="small muted">{{ row.before.trigger if row.before.trigger is defined else 'No trigger recorded' }}</p></div><span class="badge {% if row.changed %}badge-service{% else %}badge-neutral{% endif %}">{{ 'Changed' if row.changed else 'Unchanged' }}</span></div>{% endfor %}
+        {% if not generation.service_diff.added and not generation.service_diff.removed and not generation.service_diff.rows %}<p class="small muted">无额外 Service repair rule。</p>{% endif %}
+       {% else %}<p class="small muted">本代没有可比较的 Service snapshots。</p>{% endif %}
+      </div>
+     </div>
+   </div>{% else %}<div class="panel empty-state">暂无 committed strategy diff。</div>{% endfor %}
+  </section>
+
+  <section class="section" id="failures">
+   <div class="section-heading"><div><div class="eyebrow">Failure attribution</div><h2>Failures</h2></div><span class="small muted">Provisional candidates stay separate from verified attribution</span></div>
+   <div class="panel">
+    {% for failure in run.verified_failures %}<div class="list-row"><div><span class="badge badge-verified">VERIFIED</span> <a href="/runs/{{ run.run_id|urlencode }}/failures/{{ failure.failure_id|urlencode }}">{{ failure.signature.mistake_type }}</a><p class="small muted">Task {{ failure.task_id }} · generation {{ failure.generation }} · {{ failure.severity }}</p></div><a class="button button-secondary" href="/runs/{{ run.run_id|urlencode }}/failures/{{ failure.failure_id|urlencode }}">Inspect evidence</a></div>
+    {% else %}<div class="narrative"><strong>No verified Service failure is archived.</strong><p>τ-bench task outcome alone does not establish Service failure attribution.</p></div>{% endfor %}
+    {% for episode in run.provisional_failures %}<div class="list-row"><div><span class="badge badge-provisional">PROVISIONAL</span> <a href="/runs/{{ run.run_id|urlencode }}/failures/candidate-{{ episode.episode_id|urlencode }}">{{ episode.failure_category or 'Policy violation candidate' }}</a><p class="small muted">尚未通过独立验证，不计入 fitness。</p></div><a class="button button-secondary" href="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}">Open episode</a></div>{% endfor %}
+   </div>
+  </section>
+
+  <section class="section" id="crossplay">
+   <div class="section-heading"><div><div class="eyebrow">Saved cross-play</div><h2>Cross-play matrices</h2></div><a class="button button-secondary" href="/runs/{{ run.run_id|urlencode }}/cross-play">Open heatmap</a></div>
+   {% if run.crossplays %}<div class="panel panel-body">{{ run.crossplays|length }} validated saved matrix artifact(s). Console displays them without recomputing metrics.</div>{% else %}<div class="panel empty-state">No validated saved matrix is available for this run.</div>{% endif %}
+  </section>
+
+  <section class="section" id="budget">
+   <div class="section-heading"><div><div class="eyebrow">Provider budget</div><h2>Usage and cost</h2></div><span class="badge">Request cap from frozen manifest</span></div>
+   <div class="panel panel-body">
+    <div class="list-row"><div><strong>Provider requests</strong><p class="small muted">{{ run.budget.attempt_label }} attempts</p></div><strong>{{ run.budget.progress_label }}</strong></div>
+    <div class="progress" role="progressbar" aria-label="Provider request budget used" aria-valuemin="0" aria-valuemax="100" {% if run.budget.progress is not none %}aria-valuenow="{{ (run.budget.progress * 100)|round(1) }}"{% else %}aria-valuetext="Unavailable"{% endif %}><span {% if run.budget.progress is not none %}style="width:{{ (run.budget.progress * 100)|round(1) }}%"{% endif %}></span></div>
+    <div class="key-value section"><dt>Prompt / completion tokens</dt><dd>{{ run.budget.token_label }}</dd><dt>Total tokens</dt><dd>{{ run.budget.total_tokens if run.budget.total_tokens is not none else 'Unavailable' }}</dd><dt>Estimated cost</dt><dd>{{ run.budget.cost_label }}</dd><dt>Communication mode</dt><dd>{{ run.communication_mode_label }}</dd></div>
+    {% if run.budget.model_usage %}<details><summary>Per-model usage</summary><div class="table-scroll"><table><thead><tr><th>Model</th><th>Attempts</th><th>Prompt / completion</th><th>Cache hits</th></tr></thead><tbody>{% for item in run.budget.model_usage %}<tr><td class="mono">{{ item.model_id }}</td><td>{{ item.attempts if item.attempts is not none else 'Unavailable' }}</td><td>{% if item.usage_unavailable %}Unavailable{% else %}{{ item.prompt_tokens }} / {{ item.completion_tokens }}{% endif %}</td><td>{{ item.cache_hits if item.cache_hits is not none else 'Unavailable' }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
+    <p class="small muted section">Cost remains unavailable unless a frozen price schedule is recorded. Mixed text/tool messages are shown as communication telemetry, not as a failure label.</p>
+   </div>
+  </section>
+
+  <section class="section" id="artifacts"><div class="section-heading"><div><div class="eyebrow">Immutable artifacts</div><h2>Artifact index</h2></div><a class="button button-secondary" href="/runs/{{ run.run_id|urlencode }}/artifacts">Inspect files</a></div><p class="small muted">原始文件为证据来源；Console view model 只负责展示。</p></section>
  </div>
- <aside class="card span-4">
-   <div class="eyebrow">Budget and telemetry</div><h2>API / 成本</h2>
-   <p>Provider attempts：<strong>{{ run.budget.attempt_label }}</strong></p>
-   <p>Prompt / completion tokens：<strong>{{ run.budget.token_label }}</strong></p>
-   <p>Total tokens：<strong>{{ run.budget.total_tokens if run.budget.total_tokens is not none else 'Unavailable' }}</strong></p>
-   <p class="small muted">{{ run.budget.cost_label }}</p>
-   <p class="small muted">回调角色调用未在 Core 中分别记账；按角色拆分不可用，不作猜测。</p>
-   {% if run.budget.model_usage %}<table><thead><tr><th>模型 ID</th><th>Attempts</th><th>Prompt / completion</th></tr></thead><tbody>{% for item in run.budget.model_usage %}<tr><td class="mono">{{ item.model_id }}</td><td>{{ item.attempts }}</td><td>{{ item.prompt_tokens if not item.usage_unavailable else 'Unavailable' }} / {{ item.completion_tokens if not item.usage_unavailable else 'Unavailable' }}</td></tr>{% endfor %}</tbody></table>{% endif %}
-   <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
-   <h3>人工任务审查</h3><p><strong>{{ run.task_review.label }}</strong></p><p class="small muted">{{ run.task_review.detail }}</p>
+
+ <aside class="panel inspector-panel" data-inspector-panel aria-label="Run inspector">
+   <div class="panel-header"><div><div class="eyebrow">Context inspector</div><h2 data-inspector-title>Run context</h2></div><button type="button" class="icon-button" data-inspector-close aria-label="关闭检查器">×</button></div>
+   <div class="panel-body" data-inspector-content>
+    <div class="eyebrow">Current strategies</div><p><span class="badge badge-customer">{{ run.current_customer_id or 'Customer unavailable' }}</span></p><p>{{ run.current_customer_view.summary }}</p><p><span class="badge badge-service">{{ run.current_service_id or 'Service unavailable' }}</span></p>
+    <div class="section"><div class="eyebrow">Experiment health</div>{% for item in run.health %}<div class="list-row"><span>{{ item.label }}</span><span class="small {% if item.state == 'ok' %}success-text{% elif item.state == 'sealed' %}muted{% else %}subtle{% endif %}">{{ item.value }}</span></div>{% endfor %}</div>
+    <div class="section"><div class="eyebrow">Task review</div><strong>{{ run.task_review.label }}</strong><p class="small muted">{{ run.task_review.detail }}</p>{% if run.phase.startswith('4-') %}<a href="/runs/{{ run.run_id|urlencode }}/task-review">Review status</a>{% endif %}</div>
+    <div class="section"><div class="eyebrow">Frozen protocol</div><p>{{ run.communication_mode_label }}</p><p class="small muted">Mixed message count is observational telemetry and is not a Service failure by itself.</p></div>
+   </div>
  </aside>
-</section>
-
-<section class="card" style="margin-top:16px"><div class="eyebrow">Generation decisions</div><h2>Customer / Service 演变记录</h2>
-{% if run.generation_views %}{% for generation in run.generation_views %}<details open><summary>Generation {{ generation.generation }} · {{ generation.selection_label }}</summary>
-  <p class="small muted">{{ generation.note or '' }} · Customer {{ generation.customer_id }} · Service {{ generation.service_id }}</p>
-  {% if generation.selection %}<p>选择依据：{{ generation.selection.reason }} · {{ '已演变' if generation.selection.evolved else 'Customer 保持不变' }}</p>{% endif %}
-  {% if generation.customer_evaluations %}<table><thead><tr><th>Candidate strategy</th><th>面板</th><th>Verified failure fitness</th><th>审计覆盖</th></tr></thead><tbody>{% for evaluation in generation.customer_evaluations %}<tr><td class="mono">{{ evaluation.strategy_id }}</td><td>{{ evaluation.panel_name }}</td><td>{{ evaluation.fitness }}</td><td>{{ evaluation.failure_audit_refs|length }} 条</td></tr>{% endfor %}</tbody></table>{% endif %}
-  {% for proposal in generation.proposals %}<p class="small">候选 <span class="mono">{{ proposal.strategy_id }}</span> · 改变字段：{{ proposal.changed_fields|join(', ') }} · 支持失败：{{ proposal.supporting_failure_ids|length }}</p>{% endfor %}
-  {% if generation.gate %}<div class="notice {% if generation.gate_view.tone == 'success' %}{% elif generation.gate_view.tone == 'danger' %}danger-box{% else %}warning-box{% endif %}"><strong>{{ generation.gate_view.label }}</strong> · {{ generation.gate_view.detail }}{% if generation.gate.historical_replay_included is sameas false %}<p>Historical replay disabled by registered ablation.</p>{% endif %}</div>
-    <table><thead><tr><th>Gate check</th><th>Outcome</th><th>Reason</th></tr></thead><tbody>{% for unit in generation.gate.unit_results %}<tr><td>{{ unit[0] }}</td><td>{{ '通过' if unit[1] else '未通过' }}</td><td>{{ unit[2] }}</td></tr>{% endfor %}</tbody></table>
-    {% if generation.gate.proposal %}<h3>Repair proposal</h3><p>目标 verified failure：{{ generation.gate.target_failure_id }}</p><p>{{ generation.gate.proposal.verification_hypothesis }}</p><p>{{ generation.gate.proposal.rule.policy_ref }} · {{ generation.gate.proposal.rule.trigger }} · {{ generation.gate.proposal.rule.required_execution }}</p>{% endif %}
-  {% endif %}
-  <details><summary>Show technical details</summary><pre>{{ generation.decision_record|tojson(indent=2) }}</pre></details>
-</details>{% endfor %}{% else %}<p class="muted">Checkpoint 尚无已提交 generation。</p>{% endif %}
-</section>
-
-<section class="grid" style="margin-top:16px">
- <div class="card span-6"><div class="eyebrow">Attribution</div><h2>Verified failures</h2>{% if run.verified_failures %}{% for failure in run.verified_failures %}<p><a href="/runs/{{ run.run_id|urlencode }}/failures/{{ failure.failure_id|urlencode }}">{{ failure.signature.mistake_type }}</a> · Task {{ failure.task_id }} · generation {{ failure.generation }}</p>{% endfor %}{% else %}<p class="muted">暂无独立验证并复现的 Service failure。</p>{% endif %}
- {% if run.provisional_failures %}<h3>尚未验证的失败候选</h3>{% for episode in run.provisional_failures %}<p><a href="/runs/{{ run.run_id|urlencode }}/failures/candidate-{{ episode.episode_id|urlencode }}">{{ episode.failure_category or '策略违规候选' }}</a> · 尚未验证，不计入 fitness</p>{% endfor %}{% endif %}</div>
- <div class="card span-6"><div class="eyebrow">Console event stream</div><h2>近期观察事件</h2><div id="events" class="event-list">{% for event in run.events[-15:]|reverse %}<div class="event"><span class="mono">{{ event.event_type }}</span> · {{ event.episode_id or 'run' }}</div>{% endfor %}</div><p class="small muted">事件仅从已写入 artifact 派生，不作为研究证据。</p></div>
-</section>
-<details style="margin-top:16px"><summary>Show technical details</summary><pre>{{ run.raw_artifacts|tojson(indent=2) }}</pre></details>
-<script>
-(() => { const feed = new EventSource('/runs/{{ run.run_id|urlencode }}/events'); const box = document.getElementById('events');
-  feed.onmessage = (message) => { try { const e = JSON.parse(message.data); const row = document.createElement('div'); row.className = 'event'; row.textContent = e.event_type + ' · ' + (e.episode_id || 'run'); box.prepend(row); } catch (_) {} };
-})();
-</script>
+</div>
+<section class="research-only section"><details><summary>Research mode · safe artifact details</summary><pre>{{ run.raw_artifacts|tojson(indent=2) }}</pre></details></section>
+<script src="/static/js/live-run.js?v=2" defer></script>
 {% endblock %}

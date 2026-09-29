@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}EvoTau · Task review{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">Pilot preflight</div><h1>Task review</h1><p>Human task review status comes from the frozen manifest. Console does not complete or approve reviews.</p></div>{% if review.sealed %}<span class="badge">Sealed</span>{% elif review.label == '已记录' %}<span class="badge badge-accepted">Recorded</span>{% else %}<span class="badge badge-provisional">Pilot blocked</span>{% endif %}</section>
+{% if review.sealed %}<div class="notice notice-warning"><strong>HELDOUT SEALED</strong> · Review details stay hidden until the registered release condition is complete.</div>
+{% else %}<div class="panel panel-body"><div class="metric-strip"><div class="metric-item"><div class="label-caps">Tasks reviewed</div><div class="metric-value">{{ review.tasks if review.tasks is not none else 'Unavailable' }}</div></div><div class="metric-item"><div class="label-caps">Task-pairs reviewed</div><div class="metric-value">{{ review.pairs if review.pairs is not none else 'Unavailable' }}</div></div><div class="metric-item"><div class="label-caps">Status</div><div class="metric-value">{{ review.label }}</div></div><div class="metric-item"><div class="label-caps">Reviewer</div><div class="metric-value">{{ review.reviewer or 'Unavailable' }}</div></div><div class="metric-item"><div class="label-caps">Reviewed at</div><div class="metric-value">{{ review.timestamp or 'Unavailable' }}</div></div></div>
+ <dl class="key-value section"><dt>Review digest</dt><dd class="mono">{{ review.digest or 'Unavailable' }}</dd><dt>Frozen status</dt><dd>{{ run.task_review.detail }}</dd></dl>
+ {% if review.label != '已记录' %}<div class="notice notice-warning section"><strong>Pilot blocked</strong> · Required task and pairwise review is incomplete in the frozen manifest. Complete it through the existing task-review workflow before launch.</div>{% endif %}
+ </div>{% endif %}
+{% endblock %}

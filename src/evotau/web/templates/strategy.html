@@ -1,12 +1,10 @@
 {% extends "base.html" %}
-{% block title %}EvoTau · Strategy{% endblock %}
+{% block title %}EvoTau · {{ side|title }} strategy{% endblock %}
 {% block content %}
-<div class="eyebrow">Strategy snapshot</div><h1>{{ 'Customer' if side == 'customer' else 'Service' }} 策略</h1>
-<p class="muted">ID <span class="mono">{{ strategy_id }}</span> · 来自 run 中保存的策略档案 / generation decision。</p>
-<section class="card">
-{% if side == 'customer' %}
-{% if view.available %}<p><strong>信息披露：</strong>{{ view.disclosure }}</p><p><strong>请求顺序：</strong>{{ view.request_order }}</p><p><strong>挑战方式：</strong>{{ view.challenge_style }}</p><p><strong>最多挑战：</strong>{{ view.challenge_budget }} 次</p>{% else %}<p class="muted">{{ view.summary }}</p>{% endif %}
-{% else %}{% if view.available and view.rules %}{% for rule in view.rules %}<article class="notice"><h3>{{ rule.policy_ref }}</h3><p><strong>触发条件：</strong>{{ rule.trigger }}</p><p><strong>要求执行：</strong>{{ rule.required_execution }}</p><p><strong>证据引用：</strong>{{ rule.evidence_refs|join(', ') }}</p></article>{% endfor %}{% elif view.available %}<p>当前没有额外 Service repair rule。</p>{% else %}<p>Service 策略定义不可用。</p>{% endif %}{% endif %}
-</section>
-<details><summary>Show technical details</summary><pre>{{ strategy|tojson(indent=2) }}</pre></details>
+<section class="page-heading"><div><div class="eyebrow">Saved strategy snapshot</div><h1>{{ side|title }} strategy</h1><p class="mono">{{ strategy_id }}</p></div><span class="badge {% if side == 'customer' %}badge-customer{% else %}badge-service{% endif %}">{{ side|title }}</span></section>
+<div class="panel panel-body">
+{% if side == 'customer' %}{% if view.available %}<dl class="key-value"><dt>Information disclosure</dt><dd>{{ view.disclosure }}</dd><dt>Request order</dt><dd>{{ view.request_order }}</dd><dt>Challenge style</dt><dd>{{ view.challenge_style }}</dd><dt>Challenge budget</dt><dd>{{ view.challenge_budget if view.challenge_budget is not none else 'Unavailable' }}</dd></dl>{% else %}<p class="muted">{{ view.summary }}</p>{% endif %}
+{% else %}{% if view.available and view.rules %}{% for rule in view.rules %}<div class="list-row"><div><strong>{{ rule.policy_ref }}</strong><p>Trigger · {{ rule.trigger }}</p><p>Required execution · {{ rule.required_execution }}</p><p class="small muted">Evidence refs · {{ rule.evidence_refs|join(', ') }}</p></div></div>{% endfor %}{% elif view.available %}<p>No additional Service repair rule is recorded.</p>{% else %}<p class="muted">Service strategy snapshot unavailable.</p>{% endif %}{% endif %}
+</div>
+<details class="research-only section"><summary>Research mode · saved strategy fields</summary><pre>{{ strategy|tojson(indent=2) }}</pre></details>
 {% endblock %}
