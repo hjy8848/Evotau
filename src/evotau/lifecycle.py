@@ -10,6 +10,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any, Protocol
 
 from .archive import FailureArchive
@@ -25,6 +26,11 @@ from .checkpoint import (
 from .customer_evolver import (
     OperatorSelector,
     propose_customer_candidates_with_selector,
+)
+from .episode_execution import (
+    EpisodeSpec,
+    StopBeforeEpisodeDispatch,
+    run_episode_batch,
 )
 from .manifest import MechanismManifest, PilotManifest, sha256_json
 from .mutation import CustomerCandidate, propose_customer_candidates
@@ -120,37 +126,115 @@ def evaluate_customer_panel(
     strategy_seen_failures: dict[str, str] | None = None,
     failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
     request_budget: RequestBudget | None = None,
+    max_concurrency: int = 1,
+    reserve_episode: Callable[[EpisodeSpec], bool] | None = None,
+    release_episode: Callable[[EpisodeSpec], None] | None = None,
+    needs_provider_request: Callable[[EpisodeSpec], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+    episode_finished: Callable[[EpisodeSpec], None] | None = None,
+    batch_finished: Callable[[], None] | None = None,
 ) -> CandidateEvaluation:
     if not task_ids or not seeds:
         raise ValueError("evaluation panel needs at least one task and seed")
     if (len(set(task_ids)) != len(task_ids) or len(set(seeds)) != len(seeds)
             or any(type(seed) is not int or seed < 0 for seed in seeds)):
         raise ValueError("evaluation panel task IDs and seeds must be unique and valid")
-    customer_id, service_id = customer_strategy_id(strategy), service_strategy_id(service)
-    episodes: list[EpisodeRecord] = []
-    audit_refs: list[tuple[str, str]] = []
-    for task_id in task_ids:
-        for seed in seeds:
-            if request_budget is not None and request_budget.snapshot().remaining <= 0:
-                raise ProviderBudgetExceeded("generation stopped before episode: shared request budget exhausted")
-            episode = runner(task_id=task_id, seed=seed, customer=strategy, service=service, panel_name=panel_name)
-            if episode.task_id != task_id or episode.seed != seed:
-                raise ValueError("runner returned episode for a different task or seed")
-            if episode.customer_strategy_id != customer_id or episode.service_strategy_id != service_id:
-                raise ValueError("runner returned episode with mismatched strategy IDs")
-            episodes.append(episode)
-            verification_ref = None
-            if episode.has_attributable_failure_candidate:
-                if failure_verifier is not None:
-                    verification_ref = failure_verifier(episode)
-                elif strategy_seen_failures is not None:
-                    verification_ref = strategy_seen_failures.get(episode.episode_id) or episode.audit_ref
-                else:
-                    verification_ref = episode.audit_ref
-            if episode.has_attributable_failure_candidate and verification_ref and verification_ref.strip():
-                audit_refs.append((episode.episode_id, verification_ref.strip()))
-    return CandidateEvaluation(
-        customer_id, tuple(episodes), (), panel_name, tuple(audit_refs),
+    (evaluation,) = _evaluate_customer_panels(
+        runner,
+        task_ids=task_ids,
+        seeds=seeds,
+        strategies=(strategy,),
+        service=service,
+        panel_name=panel_name,
+        generation=generation,
+        strategy_seen_failures=strategy_seen_failures,
+        failure_verifier=failure_verifier,
+        request_budget=request_budget,
+        max_concurrency=max_concurrency,
+        reserve_episode=reserve_episode,
+        release_episode=release_episode,
+        needs_provider_request=needs_provider_request,
+        should_pause=should_pause,
+        episode_finished=episode_finished,
+        batch_finished=batch_finished,
+    )
+    return evaluation
+
+
+def _evaluate_customer_panels(
+    runner: EpisodeRunner,
+    *,
+    task_ids: tuple[str, ...],
+    seeds: tuple[int, ...],
+    strategies: tuple[CustomerStrategy, ...],
+    service: ServiceStrategy,
+    panel_name: str,
+    generation: int,
+    strategy_seen_failures: dict[str, str] | None = None,
+    failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
+    request_budget: RequestBudget | None = None,
+    max_concurrency: int = 1,
+    reserve_episode: Callable[[EpisodeSpec], bool] | None = None,
+    release_episode: Callable[[EpisodeSpec], None] | None = None,
+    needs_provider_request: Callable[[EpisodeSpec], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+    episode_finished: Callable[[EpisodeSpec], None] | None = None,
+    batch_finished: Callable[[], None] | None = None,
+) -> tuple[CandidateEvaluation, ...]:
+    if not task_ids or not seeds or not strategies:
+        raise ValueError("evaluation panel needs at least one task, seed, and Customer strategy")
+    if (len(set(task_ids)) != len(task_ids) or len(set(seeds)) != len(seeds)
+            or any(type(seed) is not int or seed < 0 for seed in seeds)):
+        raise ValueError("evaluation panel task IDs and seeds must be unique and valid")
+    strategy_ids = tuple(customer_strategy_id(item) for item in strategies)
+    if len(set(strategy_ids)) != len(strategy_ids):
+        raise ValueError("a parallel evaluation batch cannot repeat a Customer strategy")
+    specs = tuple(
+        EpisodeSpec(task_id, seed, strategy, service, panel_name, generation)
+        for strategy in strategies
+        for task_id in task_ids
+        for seed in seeds
+    )
+    episodes = run_episode_batch(
+        runner,
+        specs,
+        max_concurrency=max_concurrency,
+        request_budget=request_budget,
+        reserve_episode=reserve_episode,
+        release_episode=release_episode,
+        needs_provider_request=needs_provider_request,
+        should_pause=should_pause,
+        episode_finished=episode_finished,
+        batch_finished=batch_finished,
+    )
+    grouped: dict[str, list[EpisodeRecord]] = {customer_strategy_id(item): [] for item in strategies}
+    audit_refs: dict[str, list[tuple[str, str]]] = {
+        customer_strategy_id(item): [] for item in strategies
+    }
+    service_id = service_strategy_id(service)
+    for spec, episode in zip(specs, episodes, strict=True):
+        strategy_id = spec.customer_id
+        if episode.task_id != spec.task_id or episode.seed != spec.seed:
+            raise ValueError("runner returned episode for a different task or seed")
+        if episode.customer_strategy_id != strategy_id or episode.service_strategy_id != service_id:
+            raise ValueError("runner returned episode with mismatched strategy IDs")
+        grouped[strategy_id].append(episode)
+        verification_ref = None
+        if episode.has_attributable_failure_candidate:
+            if failure_verifier is not None:
+                verification_ref = failure_verifier(episode)
+            elif strategy_seen_failures is not None:
+                verification_ref = strategy_seen_failures.get(episode.episode_id) or episode.audit_ref
+            else:
+                verification_ref = episode.audit_ref
+        if episode.has_attributable_failure_candidate and verification_ref and verification_ref.strip():
+            audit_refs[strategy_id].append((episode.episode_id, verification_ref.strip()))
+    return tuple(
+        CandidateEvaluation(
+            customer_strategy_id(strategy), tuple(grouped[customer_strategy_id(strategy)]), (), panel_name,
+            tuple(audit_refs[customer_strategy_id(strategy)]),
+        )
+        for strategy in strategies
     )
 
 
@@ -171,6 +255,13 @@ def run_customer_round(
     confirmation_task_ids: tuple[str, ...] = (),
     confirmation_seeds: tuple[int, ...] = (),
     request_budget: RequestBudget | None = None,
+    max_concurrency: int = 1,
+    reserve_episode: Callable[[EpisodeSpec], bool] | None = None,
+    release_episode: Callable[[EpisodeSpec], None] | None = None,
+    needs_provider_request: Callable[[EpisodeSpec], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+    episode_finished: Callable[[EpisodeSpec], None] | None = None,
+    batch_finished: Callable[[], None] | None = None,
     proposal_provider: OperatorSelector | None = None,
     proposal_mode: str = "failure_conditioned",
     allow_strategy_revisit: bool = False,
@@ -190,11 +281,21 @@ def run_customer_round(
             raise ValueError("failure confirmation must preserve the ordered discovery task panel")
         if set(zip(task_ids, seeds)) & set(zip(confirmation_task_ids, confirmation_seeds)):
             raise ValueError("failure confirmation requires fresh task/seed pairs")
+    execution_options = {
+        "request_budget": request_budget,
+        "max_concurrency": max_concurrency,
+        "reserve_episode": reserve_episode,
+        "release_episode": release_episode,
+        "needs_provider_request": needs_provider_request,
+        "should_pause": should_pause,
+        "episode_finished": episode_finished,
+        "batch_finished": batch_finished,
+    }
     incumbent_eval = evaluate_customer_panel(
         runner, task_ids=task_ids, seeds=seeds, strategy=incumbent, service=service,
         panel_name="discovery", generation=generation, strategy_seen_failures=verification_refs,
         failure_verifier=failure_verifier,
-        request_budget=request_budget,
+        **execution_options,
     )
     if proposal_mode not in {"failure_conditioned", "random_mutation"}:
         raise ValueError("Customer proposal mode must be failure_conditioned or random_mutation")
@@ -227,31 +328,23 @@ def run_customer_round(
                 recent_failures=prior_failures, already_seen=tuple(seen_for_proposal),
                 evolution_task_ids=task_ids, operator_selector=proposal_provider,
             )
-    evaluations = [evaluate_customer_panel(
-        runner, task_ids=task_ids, seeds=seeds, strategy=candidate.strategy, service=service,
+    evaluations = list(_evaluate_customer_panels(
+        runner, task_ids=task_ids, seeds=seeds,
+        strategies=tuple(candidate.strategy for candidate in candidates), service=service,
         panel_name="discovery", generation=generation, strategy_seen_failures=verification_refs,
-        failure_verifier=failure_verifier,
-        request_budget=request_budget,
-    ) for candidate in candidates]
+        failure_verifier=failure_verifier, **execution_options,
+    ))
     confirmations: dict[str, CandidateEvaluation] | None = None
     confirmation_evaluations: list[CandidateEvaluation] = []
     probe = _choose_failure_replay_probe(incumbent_eval, tuple(evaluations))
     can_replay = bool(confirmation_task_ids and confirmation_seeds)
     if probe is not None and can_replay:
         selected_strategy = next(item.strategy for item in candidates if item.strategy_id == probe.strategy_id)
-        incumbent_confirm = evaluate_customer_panel(
+        incumbent_confirm, probe_confirm = _evaluate_customer_panels(
             runner, task_ids=confirmation_task_ids, seeds=confirmation_seeds,
-            strategy=incumbent, service=service, panel_name="confirmation",
+            strategies=(incumbent, selected_strategy), service=service, panel_name="confirmation",
             generation=generation, strategy_seen_failures=verification_refs,
-            failure_verifier=failure_verifier,
-            request_budget=request_budget,
-        )
-        probe_confirm = evaluate_customer_panel(
-            runner, task_ids=confirmation_task_ids, seeds=confirmation_seeds,
-            strategy=selected_strategy, service=service, panel_name="confirmation",
-            generation=generation, strategy_seen_failures=verification_refs,
-            failure_verifier=failure_verifier,
-            request_budget=request_budget,
+            failure_verifier=failure_verifier, **execution_options,
         )
         incumbent_eval, incumbent_confirm, _ = confirm_failure_reproductions(
             incumbent_eval, incumbent_confirm, generation=generation,
@@ -268,12 +361,11 @@ def run_customer_round(
     elif incumbent_eval.provisional_failure_events and can_replay:
         # A verified incumbent failure may justify a Service repair even when no
         # Customer candidate offers a novel or strictly stronger attack signal.
-        incumbent_confirm = evaluate_customer_panel(
+        (incumbent_confirm,) = _evaluate_customer_panels(
             runner, task_ids=confirmation_task_ids, seeds=confirmation_seeds,
-            strategy=incumbent, service=service, panel_name="confirmation",
+            strategies=(incumbent,), service=service, panel_name="confirmation",
             generation=generation, strategy_seen_failures=verification_refs,
-            failure_verifier=failure_verifier,
-            request_budget=request_budget,
+            failure_verifier=failure_verifier, **execution_options,
         )
         incumbent_eval, incumbent_confirm, _ = confirm_failure_reproductions(
             incumbent_eval, incumbent_confirm, generation=generation,
@@ -305,6 +397,13 @@ def run_frozen_customer_round(
     confirmation_task_ids: tuple[str, ...] = (),
     confirmation_seeds: tuple[int, ...] = (),
     request_budget: RequestBudget | None = None,
+    max_concurrency: int = 1,
+    reserve_episode: Callable[[EpisodeSpec], bool] | None = None,
+    release_episode: Callable[[EpisodeSpec], None] | None = None,
+    needs_provider_request: Callable[[EpisodeSpec], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+    episode_finished: Callable[[EpisodeSpec], None] | None = None,
+    batch_finished: Callable[[], None] | None = None,
 ) -> CustomerRound:
     """Collect fixed-Customer failure evidence without proposing or testing mutations."""
 
@@ -319,6 +418,13 @@ def run_frozen_customer_round(
         strategy_seen_failures=verification_refs,
         failure_verifier=failure_verifier,
         request_budget=request_budget,
+        max_concurrency=max_concurrency,
+        reserve_episode=reserve_episode,
+        release_episode=release_episode,
+        needs_provider_request=needs_provider_request,
+        should_pause=should_pause,
+        episode_finished=episode_finished,
+        batch_finished=batch_finished,
     )
     confirmations: tuple[CandidateEvaluation, ...] = ()
     if incumbent_evaluation.provisional_failure_events and confirmation_task_ids:
@@ -333,6 +439,13 @@ def run_frozen_customer_round(
             strategy_seen_failures=verification_refs,
             failure_verifier=failure_verifier,
             request_budget=request_budget,
+            max_concurrency=max_concurrency,
+            reserve_episode=reserve_episode,
+            release_episode=release_episode,
+            needs_provider_request=needs_provider_request,
+            should_pause=should_pause,
+            episode_finished=episode_finished,
+            batch_finished=batch_finished,
         )
         incumbent_evaluation, confirmation, _failures = confirm_failure_reproductions(
             incumbent_evaluation, confirmation, generation=generation,
@@ -479,8 +592,17 @@ class TwoGenerationSmoke:
         self.max_episodes = frozen_episode_cap if max_episodes is None else max_episodes
         if (type(self.max_episodes) is not int or not 0 <= self.max_episodes <= frozen_episode_cap):
             raise ValueError("controller episode limit must fit within the frozen manifest cap")
+        configured_concurrency = (
+            manifest.max_concurrency if typed_manifest
+            else int(manifest.get("max_concurrency", 1))
+        )
+        if type(configured_concurrency) is not int or not 1 <= configured_concurrency <= 4:
+            raise ValueError("controller max_concurrency must be in the range 1..4")
+        self.max_concurrency = configured_concurrency
         # Phase 3's 23-episode ceiling includes the Phase 0 integration episode.
         self.episode_attempts = 1 if self.manifest_context is not None else 0
+        self._episode_state_lock = Lock()
+        self._reserved_episode_keys: set[str] = set()
         self._last_customer: CustomerStrategy | None = None
         self._last_service: ServiceStrategy | None = None
         self._commit_records: list[dict] = []
@@ -492,20 +614,81 @@ class TwoGenerationSmoke:
 
     def _run_episode(self, **kwargs) -> EpisodeRecord:
         cache_key = _runner_cache_key(**kwargs)
-        if self._progress is not None and cache_key in self._progress["episodes"]:
-            return self._progress["episodes"][cache_key]
-        if self.episode_attempts >= self.max_episodes:
-            raise RuntimeError(f"episode cap {self.max_episodes} reached before dispatch")
-        if self.request_budget is not None and self.request_budget.snapshot().remaining <= 0:
+        with self._episode_state_lock:
+            if self._progress is not None and cache_key in self._progress["episodes"]:
+                return self._progress["episodes"][cache_key]
+            scheduled = cache_key in self._reserved_episode_keys
+            if scheduled:
+                self._reserved_episode_keys.remove(cache_key)
+            else:
+                if self.episode_attempts >= self.max_episodes:
+                    raise RuntimeError(f"episode cap {self.max_episodes} reached before dispatch")
+                self.episode_attempts += 1
+        if (not scheduled and self.request_budget is not None
+                and self.request_budget.snapshot().remaining <= 0):
+            with self._episode_state_lock:
+                self.episode_attempts -= 1
             raise ProviderBudgetExceeded("generation stopped before episode: shared request budget exhausted")
-        self.episode_attempts += 1
         try:
             episode = self.runner(**kwargs)
-            self._episode_history[cache_key] = episode
-            if self._progress is not None:
-                self._progress["episodes"][cache_key] = episode
+            with self._episode_state_lock:
+                self._episode_history[cache_key] = episode
+                if self._progress is not None:
+                    self._progress["episodes"][cache_key] = episode
             return episode
+        except StopBeforeEpisodeDispatch:
+            with self._episode_state_lock:
+                self.episode_attempts -= 1
+            raise
         finally:
+            if not scheduled:
+                self._persist_progress()
+
+    def _reserve_episode_spec(self, spec: EpisodeSpec) -> bool:
+        kwargs = spec.runner_kwargs()
+        cache_key = _runner_cache_key(**kwargs)
+        with self._episode_state_lock:
+            if self._progress is not None and cache_key in self._progress["episodes"]:
+                return True
+            if cache_key in self._reserved_episode_keys:
+                raise RuntimeError("episode batch repeats a task/seed/strategy/panel key")
+            if self.episode_attempts >= self.max_episodes:
+                return False
+            self.episode_attempts += 1
+            self._reserved_episode_keys.add(cache_key)
+            return True
+
+    def _release_episode_spec(self, spec: EpisodeSpec) -> None:
+        cache_key = _runner_cache_key(**spec.runner_kwargs())
+        with self._episode_state_lock:
+            if cache_key in self._reserved_episode_keys:
+                self._reserved_episode_keys.remove(cache_key)
+                self.episode_attempts -= 1
+
+    def _episode_needs_provider_request(self, spec: EpisodeSpec) -> bool:
+        cache_key = _runner_cache_key(**spec.runner_kwargs())
+        with self._episode_state_lock:
+            if self._progress is not None and cache_key in self._progress["episodes"]:
+                return False
+        has_completed = getattr(self.runner, "has_completed_episode", None)
+        return True if has_completed is None else not has_completed(**spec.runner_kwargs())
+
+    def _should_pause(self) -> bool:
+        signal = getattr(self.runner, "stop_before_next_episode_file", None)
+        if signal is None:
+            return False
+        if signal.is_symlink():
+            raise RuntimeError("pause signal path cannot be a symlink")
+        return signal.exists()
+
+    def _panel_batch_finished(self) -> None:
+        with self._episode_state_lock:
+            if self._reserved_episode_keys:
+                raise RuntimeError("episode batch ended with unconsumed episode-cap reservations")
+        self._persist_progress()
+
+    def _serial_episode_finished(self, _spec: EpisodeSpec) -> None:
+        if self.max_concurrency == 1:
             self._persist_progress()
 
     def _persist_progress(self) -> None:
@@ -723,6 +906,17 @@ class TwoGenerationSmoke:
                 commits.append(commit)
                 continue
             seed = self.episode_seed_base + generation
+            panel_execution = {
+                "max_concurrency": self.max_concurrency,
+                "reserve_episode": self._reserve_episode_spec,
+                "release_episode": self._release_episode_spec,
+                "needs_provider_request": self._episode_needs_provider_request,
+                "should_pause": self._should_pause,
+                "episode_finished": (
+                    self._serial_episode_finished if self.max_concurrency == 1 else None
+                ),
+                "batch_finished": self._panel_batch_finished,
+            }
             if freeze_customer:
                 round_result = run_frozen_customer_round(
                     self._run_episode, incumbent=customer, service=service,
@@ -732,6 +926,7 @@ class TwoGenerationSmoke:
                     confirmation_task_ids=self.evolution_task_ids,
                     confirmation_seeds=(self.episode_seed_base + 10_000 + generation,),
                     request_budget=self.request_budget,
+                    **panel_execution,
                 )
             else:
                 round_result = run_customer_round(
@@ -751,6 +946,7 @@ class TwoGenerationSmoke:
                     proposal_provider=customer_proposal_provider,
                     proposal_mode=customer_proposal_mode,
                     allow_strategy_revisit=allow_strategy_revisit,
+                    **panel_execution,
                 )
             old_customer = customer
             if round_result.selection.evolved:

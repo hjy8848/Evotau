@@ -548,8 +548,8 @@ class MechanismManifest:
             raise ValueError("Phase 3 permits at most 23 episodes including Phase 0 integration")
         if not 1 <= self.request_budget_cap <= 1800:
             raise ValueError("Phase 3 provider-attempt cap must be in the range 1..1800")
-        if self.provider_retries != 0 or self.max_concurrency != 1:
-            raise ValueError("mechanism smoke requires provider retries=0 and concurrency=1")
+        if self.provider_retries != 0 or type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 4:
+            raise ValueError("mechanism smoke requires provider retries=0 and concurrency in the range 1..4")
         models = dict(self.role_models)
         if set(models) != set(MECHANISM_ROLE_NAMES):
             raise ValueError(f"role_models must freeze exactly {sorted(MECHANISM_ROLE_NAMES)}")
@@ -790,8 +790,8 @@ class PilotManifest:
             )
         if type(self.request_budget_cap) is not int or self.request_budget_cap <= 0:
             raise ValueError("Pilot request_budget_cap must be a positive per-seed cap")
-        if self.provider_retries != 0 or self.max_concurrency != 1:
-            raise ValueError("Pilot requires provider retries=0 and concurrency=1")
+        if self.provider_retries != 0 or type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 4:
+            raise ValueError("Pilot requires provider retries=0 and concurrency in the range 1..4")
         if type(self.real_provider_enabled) is not bool:
             raise ValueError("Pilot real_provider_enabled must be boolean")
         models = dict(self.role_models)

@@ -6,13 +6,16 @@ import os
 from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
+from threading import Barrier, Event, Lock, Thread
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 import yaml
 
 from evotau.budget import RequestBudget
 from evotau.checkpoint import manifest_fingerprint
+from evotau.episode_execution import EpisodeSpec, run_episode_batch
 from evotau.manifest import ExperimentManifest, MechanismManifest, sha256_json
 from evotau.native_runner import (
     IndependentEpisodeAudit,
@@ -26,6 +29,7 @@ from evotau.phase0 import load_config
 from evotau.phase0_run import _load_pinned_task, execute_phase0
 from evotau.records import EpisodeStatus, EvidenceRef, customer_strategy_id
 from evotau.strategies import CustomerStrategy, ServiceStrategy
+from evotau.tau_adapter import _freeze_tau_evaluator_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -176,7 +180,13 @@ def test_native_runner_records_trajectory_review_independent_audit_and_shared_bu
     trajectory = json.loads((run_directory / "native-simulation.json").read_text(encoding="utf-8"))
     telemetry = json.loads((run_directory / "run-telemetry.json").read_text(encoding="utf-8"))
     stored_record = json.loads((run_directory / "episode-record.json").read_text(encoding="utf-8"))
+    trace = json.loads((run_directory / "db-state-trace.json").read_text(encoding="utf-8"))
     assert trajectory["id"] == record.episode_id
+    assert trace["status"] == "unavailable"
+    assert trace["reason_code"] == "pinned_environment_unavailable"
+    assert telemetry["db_trace_status"] == "unavailable"
+    assert telemetry["db_trace_generation_seconds"] >= 0
+    assert telemetry["db_trace_event_count"] == 0
     assert telemetry["budget_delta"]["attempts"] == 2
     assert telemetry["communication_protocol_observation"]["enforcement_enabled"] is False
     assert telemetry["communication_protocol_observation"]["mixed_text_tool_call_message_count"] == 1
@@ -238,6 +248,141 @@ def test_native_runner_without_independent_audit_is_uncertain_and_not_fit_eligib
     assert record.customer_valid is None
     assert not record.has_attributable_failure_candidate
     assert budget.snapshot().attempts == 1
+
+
+def test_parallel_native_episodes_isolate_tasks_artifacts_and_episode_usage(
+    tmp_path: Path, monkeypatch,
+):
+    runner, budget, provider = configured_runner(tmp_path, monkeypatch)
+    original_task = runner.tasks["73"]
+    copied_tasks = []
+    copied_lock = Lock()
+    start = Barrier(4)
+
+    def isolated_builder(**kwargs):
+        with copied_lock:
+            copied_tasks.append(kwargs["task"])
+        return SimpleNamespace(
+            agent=SimpleNamespace(system_prompt="native policy"),
+            user=SimpleNamespace(system_prompt="native guidelines"),
+            task=kwargs["task"],
+            seed=kwargs["seed"],
+        )
+
+    class Simulation:
+        def __init__(self, orchestrator):
+            self.id = f"sim-{uuid4()}"
+            self.task_id = orchestrator.task.id
+            self.seed = orchestrator.seed
+
+        def model_dump(self, *, mode):
+            assert mode == "json"
+            return {
+                "id": self.id, "task_id": self.task_id, "seed": self.seed,
+                "termination_reason": "agent_stop", "reward_info": {"reward": 0.0},
+                "messages": [], "review": {}, "auth_classification": {},
+            }
+
+    def parallel_run_with_budget(
+        orchestrator, request_budget, *, on_simulation, after_review, **_kwargs,
+    ):
+        start.wait(timeout=3)
+        simulation = Simulation(orchestrator)
+        with request_budget.instrument_tau_llm_utils(provider):
+            provider.completion(model="mock-agent")
+        on_simulation(simulation)
+        if after_review is not None:
+            after_review(simulation, orchestrator)
+        return simulation
+
+    monkeypatch.setattr("evotau.native_runner.build_phase0_orchestrator", isolated_builder)
+    monkeypatch.setattr("evotau.native_runner.run_with_budget", parallel_run_with_budget)
+    customers = (
+        CustomerStrategy(),
+        CustomerStrategy(disclosure="related_on_request"),
+        CustomerStrategy(request_order="reverse_independent"),
+        CustomerStrategy(challenge_style="ask_reason", challenge_budget=1),
+    )
+    specs = tuple(
+        EpisodeSpec("73", 42, customer, ServiceStrategy(), "discovery", 0)
+        for customer in customers
+    )
+    records = run_episode_batch(
+        runner, specs, max_concurrency=4, request_budget=budget,
+    )
+
+    assert len(records) == 4
+    assert len({item.trajectory_ref for item in records}) == 4
+    assert all(task is not original_task for task in copied_tasks)
+    assert len({id(task) for task in copied_tasks}) == 4
+    assert budget.snapshot().attempts == 4
+    episode_directories = sorted((runner.output_directory / "episodes").iterdir())
+    assert len(episode_directories) == 4
+    for directory in episode_directories:
+        telemetry = json.loads((directory / "run-telemetry.json").read_text(encoding="utf-8"))
+        assert telemetry["episode_budget_delta"]["attempts"] == 1
+        assert json.loads((directory / "native-simulation.json").read_text(encoding="utf-8"))["task_id"] == "73"
+        assert json.loads((directory / "episode-record.json").read_text(encoding="utf-8"))["task_id"] == "73"
+
+
+def test_frozen_evaluator_settings_allow_same_manifest_concurrency_and_restore():
+    pytest.importorskip("tau2.evaluator")
+    from tau2.evaluator import (
+        auth_classifier,
+        evaluator_nl_assertions,
+        review_llm_judge,
+    )
+
+    original_assertion_model = evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS
+    original_assertion_args = evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS_ARGS
+    original_auth_generate = auth_classifier.generate
+    original_review_generate = review_llm_judge.generate
+    entered = Event()
+    release = Event()
+    failures = []
+    settings = {
+        "evaluator_model": "frozen-evaluator",
+        "evaluator_model_args": {"temperature": 0.0},
+        "reviewer_model": "frozen-reviewer",
+        "reviewer_model_args": {"temperature": 0.0},
+    }
+
+    def worker():
+        try:
+            with _freeze_tau_evaluator_settings(**settings):
+                entered.set()
+                if not release.wait(timeout=3):
+                    raise TimeoutError("test did not release evaluator scope")
+        except Exception as exc:  # noqa: BLE001 - forward worker-thread errors to the test thread
+            failures.append(exc)
+
+    thread = Thread(target=worker)
+    thread.start()
+    try:
+        assert entered.wait(timeout=3)
+        active_auth_generate = auth_classifier.generate
+        with _freeze_tau_evaluator_settings(**settings):
+            assert evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS == "frozen-evaluator"
+            assert evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS_ARGS == {"temperature": 0.0}
+            assert auth_classifier.generate is active_auth_generate
+            with (
+                pytest.raises(RuntimeError, match="identical frozen evaluator settings"),
+                _freeze_tau_evaluator_settings(
+                    evaluator_model="other", evaluator_model_args={},
+                    reviewer_model="other", reviewer_model_args={},
+                ),
+            ):
+                pass
+        assert auth_classifier.generate is active_auth_generate
+    finally:
+        release.set()
+        thread.join(timeout=3)
+    assert not thread.is_alive()
+    assert not failures
+    assert evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS == original_assertion_model
+    assert evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS_ARGS == original_assertion_args
+    assert auth_classifier.generate is original_auth_generate
+    assert review_llm_judge.generate is original_review_generate
 
 
 def test_native_runner_can_execute_clean_user_without_strategy_overlay(tmp_path: Path, monkeypatch):

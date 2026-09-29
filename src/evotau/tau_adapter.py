@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, distribution
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -179,28 +180,67 @@ def _freeze_tau_evaluator_settings(
         (evaluator_nl_assertions, "DEFAULT_LLM_NL_ASSERTIONS_ARGS", dict(evaluator_model_args)),
     )
     reviewer_modules = (auth_classifier, review_llm_judge)
-    originals: list[tuple[Any, str, Any]] = []
+    global _EVALUATOR_SETTINGS_STATE
+    settings_key = json.dumps(
+        {
+            "evaluator_model": evaluator_model,
+            "evaluator_model_args": evaluator_model_args,
+            "reviewer_model": reviewer_model,
+            "reviewer_model_args": reviewer_model_args,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    with _EVALUATOR_SETTINGS_LOCK:
+        if _EVALUATOR_SETTINGS_STATE is None:
+            originals: list[tuple[Any, str, Any]] = []
+            for module, name, value in evaluator_attributes:
+                originals.append((module, name, getattr(module, name)))
+                setattr(module, name, value)
+            for module in reviewer_modules:
+                original = module.generate
+
+                def frozen_generate(
+                    *args: Any, _original=original, _model=reviewer_model,
+                    _model_args=reviewer_model_args, **kwargs: Any,
+                ) -> Any:
+                    # These modules import `generate` directly, so changing
+                    # llm_utils defaults alone would leave reviewer choice implicit.
+                    kwargs = dict(kwargs)
+                    kwargs["model"] = _model
+                    kwargs.update(_model_args)
+                    return _original(*args, **kwargs)
+
+                originals.append((module, "generate", original))
+                module.generate = frozen_generate
+            _EVALUATOR_SETTINGS_STATE = (settings_key, 1, originals)
+        else:
+            active_key, references, originals = _EVALUATOR_SETTINGS_STATE
+            if active_key != settings_key:
+                raise RuntimeError(
+                    "concurrent τ-bench episodes must use identical frozen evaluator settings"
+                )
+            _EVALUATOR_SETTINGS_STATE = (active_key, references + 1, originals)
     try:
-        for module, name, value in evaluator_attributes:
-            originals.append((module, name, getattr(module, name)))
-            setattr(module, name, value)
-        for module in reviewer_modules:
-            original = module.generate
-
-            def frozen_generate(*args: Any, _original=original, **kwargs: Any) -> Any:
-                # These two upstream modules import `generate` directly, so changing
-                # llm_utils defaults alone would leave their model choice implicit.
-                kwargs = dict(kwargs)
-                kwargs["model"] = reviewer_model
-                kwargs.update(reviewer_model_args)
-                return _original(*args, **kwargs)
-
-            originals.append((module, "generate", original))
-            module.generate = frozen_generate
         yield
     finally:
-        for module, name, original in reversed(originals):
-            setattr(module, name, original)
+        with _EVALUATOR_SETTINGS_LOCK:
+            state = _EVALUATOR_SETTINGS_STATE
+            if state is None or state[0] != settings_key:
+                raise RuntimeError("τ-bench evaluator settings scope was lost while active")
+            active_key, references, originals = state
+            if references == 1:
+                for module, name, original in reversed(originals):
+                    setattr(module, name, original)
+                _EVALUATOR_SETTINGS_STATE = None
+            else:
+                _EVALUATOR_SETTINGS_STATE = (active_key, references - 1, originals)
+
+
+_EVALUATOR_SETTINGS_LOCK = RLock()
+_EVALUATOR_SETTINGS_STATE: tuple[
+    str, int, list[tuple[Any, str, Any]]
+] | None = None
 
 
 def run_with_budget(

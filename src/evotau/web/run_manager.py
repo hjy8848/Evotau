@@ -38,6 +38,7 @@ class RunPreview:
     generations: int
     customer_candidates: int
     max_episodes: int
+    max_concurrency: int
     request_budget_cap: int
     provider_retries: int
     models: tuple[tuple[str, str], ...]
@@ -61,6 +62,7 @@ class RunPreview:
             "generations": self.generations,
             "customer_candidates": self.customer_candidates,
             "max_episodes": self.max_episodes,
+            "max_concurrency": self.max_concurrency,
             "request_budget_cap": self.request_budget_cap,
             "provider_retries": self.provider_retries,
             "models": self.models,
@@ -173,6 +175,7 @@ class RunManager:
             generations=generations,
             customer_candidates=candidates,
             max_episodes=manifest.max_episodes,
+            max_concurrency=manifest.max_concurrency,
             request_budget_cap=manifest.request_budget_cap,
             provider_retries=manifest.provider_retries,
             models=role_models,

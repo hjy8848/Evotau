@@ -105,6 +105,27 @@ def test_cost_profile_reports_descriptive_stats_and_conservative_incomplete_cost
     assert any("cache-hit" in item for item in report["episodes"][1]["cost_coverage_reasons"])
 
 
+def test_cost_profile_uses_episode_local_budget_delta_when_runs_overlap():
+    source = _input()
+    episode = source["runs"][0]["episodes"][0]
+    # A second episode completed between this episode's global snapshots.
+    episode["budget_after"] = _snapshot(
+        attempts=2, successes=2, prompt=300, completion=30, usage_responses=2,
+        models=[_model("model-a", attempts=2, successes=2, prompt=300,
+                       completion=30, usage_responses=2)],
+    )
+    episode["episode_budget_delta"] = episode["budget_before"] | {
+        "attempts": 1, "successes": 1, "prompt_tokens": 100,
+        "completion_tokens": 20, "usage_responses": 1,
+        "model_usage": [_model("model-a", attempts=1, successes=1, prompt=100,
+                                completion=20, usage_responses=1)],
+    }
+
+    report = analyze_cost_profile(source, input_sha256="c" * 64)
+    assert report["episodes"][0]["provider_attempts"] == 1
+    assert report["episodes"][0]["reported_total_tokens"] == 120
+
+
 def test_cost_profile_requires_episode_level_denominator_evidence():
     source = _input()
     source["runs"][0]["episodes"][1]["valid"] = True

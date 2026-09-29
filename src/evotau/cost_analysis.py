@@ -29,6 +29,7 @@ _RUN_FIELDS = {
 _EPISODE_FIELDS = {
     "episode_id", "valid", "verified_failure", "budget_before", "budget_after",
 }
+_EPISODE_FIELDS_WITH_LOCAL_USAGE = _EPISODE_FIELDS | {"episode_budget_delta"}
 _COUNTER_FIELDS = (
     "attempts", "successes", "failures", "denied", "prompt_tokens",
     "completion_tokens", "usage_responses", "usage_unavailable", "cache_hits",
@@ -87,7 +88,9 @@ def analyze_cost_profile(value: Any, *, input_sha256: str) -> dict[str, Any]:
             raise ValueError("valid-episode and verified-failure counts exceed their denominators")
         run_episodes: list[dict[str, Any]] = []
         for episode in rows:
-            if not isinstance(episode, dict) or set(episode) != _EPISODE_FIELDS:
+            if (not isinstance(episode, dict)
+                    or (set(episode) != _EPISODE_FIELDS
+                        and set(episode) != _EPISODE_FIELDS_WITH_LOCAL_USAGE)):
                 raise ValueError("episode telemetry has missing or unknown fields")
             episode_id = _nonempty(episode["episode_id"], "episode_id")
             if episode_id in episode_ids:
@@ -99,7 +102,13 @@ def analyze_cost_profile(value: Any, *, input_sha256: str) -> dict[str, Any]:
                 raise ValueError("an invalid episode cannot count as a verified failure")
             before = _budget_snapshot(episode["budget_before"], "budget_before")
             after = _budget_snapshot(episode["budget_after"], "budget_after")
-            usage = _episode_delta(before, after)
+            usage = (
+                _usage_from_snapshot(_budget_snapshot(
+                    episode["episode_budget_delta"], "episode_budget_delta",
+                ))
+                if "episode_budget_delta" in episode
+                else _episode_delta(before, after)
+            )
             cost = _episode_cost(usage, rates)
             output_episode = {
                 "episode_id": episode_id,
@@ -217,12 +226,14 @@ def _parse_rates(value: Any) -> dict[str, tuple[float, float]]:
 
 
 def _budget_snapshot(value: Any, name: str) -> BudgetSnapshot:
-    fields = {
+    legacy_fields = {
         "cap", "attempts", "successes", "failures", "denied", "prompt_tokens",
         "completion_tokens", "usage_responses", "usage_unavailable", "cache_hits",
         "model_usage",
     }
-    if not isinstance(value, dict) or set(value) != fields:
+    current_fields = legacy_fields | {"in_flight", "reserved"}
+    if (not isinstance(value, dict)
+            or (set(value) != legacy_fields and set(value) != current_fields)):
         raise ValueError(f"{name} must contain a complete provider-budget snapshot")
     try:
         snapshot = BudgetSnapshot(**value)
@@ -237,6 +248,27 @@ def _budget_snapshot(value: Any, name: str) -> BudgetSnapshot:
     if snapshot.attempts > snapshot.cap:
         raise ValueError(f"{name} attempts exceed the provider budget cap")
     return snapshot
+
+
+def _usage_from_snapshot(snapshot: BudgetSnapshot) -> dict[str, Any]:
+    if snapshot.in_flight or snapshot.reserved:
+        raise ValueError("episode budget delta cannot include active or reserved provider work")
+    usage = {name: getattr(snapshot, name) for name in _COUNTER_FIELDS}
+    if snapshot.model_usage:
+        usage["models"] = [
+            {"model_id": row.model_id, **{
+                name: getattr(row, name) for name in _COUNTER_FIELDS
+            }}
+            for row in snapshot.model_usage
+        ]
+        for name in _COUNTER_FIELDS:
+            if sum(item[name] for item in usage["models"]) != usage[name]:
+                raise ValueError("per-model episode usage does not reconcile")
+    elif any(usage.values()):
+        usage["models"] = [{"model_id": "__unattributed__", **usage.copy()}]
+    else:
+        usage["models"] = []
+    return usage
 
 
 def _episode_delta(before: BudgetSnapshot, after: BudgetSnapshot) -> dict[str, Any]:

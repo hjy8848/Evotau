@@ -148,6 +148,7 @@ class ArtifactReader:
             "phase": phase,
             "status": status,
             "episode_limit": _manifest_int(manifest, "max_episodes"),
+            "max_concurrency": _manifest_int(manifest, "max_concurrency"),
             "manifest": _safe_manifest_for_display(manifest, sealed=bool(heldout_ids) and not complete),
             "manifest_sha256": manifest.get("manifest_sha256"),
             "real_provider_enabled": manifest.get("real_provider_enabled") is True,
@@ -317,7 +318,8 @@ class ArtifactReader:
             roots = list((run_path / "seed-blocks").glob("*/episodes"))
         active = []
         artifact_names = {
-            "episode-record.json", "run-telemetry.json", "native-simulation.json", "incomplete-run.json",
+            "episode-record.json", "run-telemetry.json", "native-simulation.json",
+            "incomplete-run.json", "db-state-trace.json",
         }
         for root in roots:
             if not root.exists():
@@ -576,6 +578,9 @@ class ArtifactReader:
         _unused: Any,
     ) -> dict[str, Any]:
         messages = normalize_trajectory_messages(trajectory)
+        db_state_trace = self._db_state_trace_for_episode(
+            run_path, trajectory_root, record, trajectory,
+        )
         started_at = None
         trajectory_ref = record.get("trajectory_ref")
         if isinstance(trajectory_ref, str):
@@ -606,6 +611,7 @@ class ArtifactReader:
             "evidence": record.get("evidence", ()),
             "trajectory": redact_secrets(trajectory),
             "messages": normalize_trajectory_messages(trajectory),
+            "db_state_trace": db_state_trace,
             "telemetry": redact_secrets(telemetry),
             "tool_calls": sum(message.get("kind") == "tool_call" for message in messages),
             "budget": (telemetry or {}).get("budget_after"),
@@ -614,6 +620,57 @@ class ArtifactReader:
             "run_path": run_path,
             "started_at": started_at,
         }
+
+    def _db_state_trace_for_episode(
+        self,
+        run_path: Path,
+        trajectory_root: Path,
+        record: dict[str, Any],
+        trajectory: dict[str, Any],
+    ) -> dict[str, Any]:
+        unavailable = {
+            "schema_version": 1,
+            "status": "unavailable",
+            "reason_code": "trace_not_generated",
+            "events": [],
+        }
+        reference = record.get("trajectory_ref")
+        if not isinstance(reference, str):
+            return unavailable
+        try:
+            trajectory_path = self._contained_path(trajectory_root, reference)
+            trace_path = trajectory_path.parent / "db-state-trace.json"
+            if trace_path.is_symlink():
+                return unavailable
+            if not trace_path.exists():
+                return unavailable
+            trace = self._read_json(trace_path, expected=dict)
+            manifest = self._read_json(self._manifest_path(run_path), expected=dict)
+            trace_hash = trace.get("trace_sha256")
+            fingerprint_payload = dict(trace)
+            fingerprint_payload.pop("trace_sha256", None)
+            provenance = trace.get("provenance")
+            if (
+                trace.get("schema_version") != 1
+                or trace.get("source") != "deterministic_replay"
+                or trace_hash != sha256_json(fingerprint_payload)
+                or not isinstance(provenance, dict)
+                or provenance.get("manifest_sha256") != manifest.get("manifest_sha256")
+                or provenance.get("trajectory_sha256") != hashlib.sha256(trajectory_path.read_bytes()).hexdigest()
+                or str(trace.get("task_id")) != str(trajectory.get("task_id"))
+                or str(trace.get("episode_id")) != str(trajectory.get("id"))
+                or trace.get("status") not in {"complete", "unavailable"}
+            ):
+                return unavailable
+            if trace.get("status") == "complete" and (
+                not isinstance(trace.get("events"), list)
+                or not isinstance(trace.get("summary"), dict)
+            ):
+                return unavailable
+            return redact_secrets(trace)
+        except (ArtifactReadError, OSError, TypeError, ValueError, KeyError):
+            # The optional observer sidecar never hides a valid episode.
+            return unavailable
 
     def _budget_summary(
         self, manifest: dict[str, Any], result: dict[str, Any] | None, run_path: Path,

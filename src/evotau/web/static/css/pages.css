@@ -56,6 +56,25 @@
 .trace-tool.result { border-left: 2px solid var(--line-strong); }
 .trace-tool summary { display: flex; align-items: center; justify-content: space-between; color: var(--text-2); font: 10px var(--font-mono); }
 .trace-tool pre { max-height: 180px; margin: 7px 0 0; }
+.environment-summary { margin-inline: 18px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--bg-0); }
+.environment-summary-heading,.trace-db-change-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.environment-summary-heading h3 { margin: 2px 0 0; }
+.environment-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin-top: 10px; }
+.environment-metrics span { display: grid; gap: 3px; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 5px; }
+.environment-metrics small { color: var(--text-3); font-size: 9px; }
+.environment-metrics strong { color: var(--text-1); font: 12px var(--font-mono); }
+.environment-mismatch { margin: 9px 0 0; color: var(--warning) !important; }
+.trace-final-diff { margin-top: 9px; padding: 8px; border: 1px solid color-mix(in srgb,var(--warning) 35%,var(--line)); border-radius: 5px; background: color-mix(in srgb,var(--warning) 4%,var(--bg-0)); }
+.environment-integrity { margin-top: 9px; }
+.trace-db-change { min-width: 0; margin: 9px 0 3px; padding: 9px; border: 1px solid color-mix(in srgb,var(--success) 34%,var(--line)); border-left: 2px solid var(--success); border-radius: 5px; background: color-mix(in srgb,var(--success) 5%,var(--bg-0)); }
+.trace-db-change-heading { margin-bottom: 6px; color: var(--success); font: 9px var(--font-mono); }
+.trace-db-field { display: grid; grid-template-columns: minmax(125px,.7fr) minmax(0,1.3fr); gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+.trace-db-entity,.trace-db-values { min-width: 0; overflow-wrap: anywhere; }
+.trace-db-entity { color: var(--text-2); font-size: 10px; }
+.trace-db-entity .mono { display: block; color: var(--text-1); }
+.trace-db-values { display: grid; gap: 3px; color: var(--text-1); font: 10px var(--font-mono); }
+.trace-raw-values pre { max-width: 100%; margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.key-value dd.mono { overflow-wrap: anywhere; }
 .annotation-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
 .inspector-content { padding: 12px; }
 .inspector-content h3 { margin: 0 0 7px; }
@@ -97,7 +116,7 @@
 .run-overview .inspector-panel .list-row { font-size: 10px; }
 .preview-meta { overflow-wrap: anywhere; }
 @keyframes breathe { 50% { opacity: .45; } }
-@media (max-width: 640px) { .trace-list { padding: 6px 10px 12px; } .trace-row { grid-template-columns: 24px minmax(0,1fr); gap: 6px; } .trace-row[data-role="user"] .trace-content,.trace-row[data-role="assistant"] .trace-content { max-width: 94%; padding: 9px 11px; } }
+@media (max-width: 640px) { .trace-list { padding: 6px 10px 12px; } .trace-row { grid-template-columns: 24px minmax(0,1fr); gap: 6px; } .trace-row[data-role="user"] .trace-content,.trace-row[data-role="assistant"] .trace-content { max-width: 94%; padding: 9px 11px; } .environment-summary { margin-inline: 10px; } .environment-metrics { gap: 5px; } .environment-metrics span { padding: 6px; } .environment-metrics small { font-size: 8px; } .trace-db-field { grid-template-columns: minmax(0,1fr); gap: 3px; } }
 @media (max-width: 1240px) { .run-overview { grid-template-columns: minmax(0,1fr) 250px; } .episode-layout { grid-template-columns: 180px minmax(0,1fr); } .episode-layout > .inspector-panel { position: fixed; top: 60px; right: 0; z-index: 9; width: min(320px,90vw); height: calc(100vh - 60px); max-height: none; border-radius: 0; transform: translateX(102%); transition: transform .2s ease; } .episode-layout > .inspector-panel.is-open { transform: translateX(0); } }
 @media (max-width: 850px) { .run-overview,.crossplay-detail { grid-template-columns: minmax(0,1fr); } .run-overview > .inspector-panel { position: static; max-height: none; } .episode-layout { grid-template-columns: minmax(0,1fr); } .episode-list { position: static; max-height: 230px; } .story-generation::before { display: none; } }
 @media (max-width: 760px) { .strategy-diff-grid { grid-template-columns: 1fr; } }

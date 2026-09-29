@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import replace
+from threading import Barrier, Lock
+from time import sleep
+from types import SimpleNamespace
 
 import pytest
 
@@ -1067,6 +1070,140 @@ def test_pilot_controller_runs_three_generations_over_frozen_evolution_panel(tmp
     )
     assert final.state["episode_attempts"] == 27
     assert len(final.state["commits"]) == 3
+
+
+def test_controller_uses_manifest_concurrency_across_frozen_candidate_batch(tmp_path):
+    customer, service = CustomerStrategy(), ServiceStrategy()
+    lock = Lock()
+    active = 0
+    max_active = 0
+    calls = []
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+            calls.append((task_id, seed, customer_strategy_id(customer), panel_name))
+        sleep(0.004)
+        with lock:
+            active -= 1
+        return EpisodeRecord(
+            episode_id=f"{panel_name}:{task_id}:{seed}:{customer_strategy_id(customer)}",
+            task_id=task_id, seed=seed, customer_strategy_id=customer_strategy_id(customer),
+            service_strategy_id=service_strategy_id(service), status=EpisodeStatus.COMPLETE,
+            task_success=True, customer_valid=True, customer_strategy_adherent=True,
+            invalid_repeated_write_calls=0,
+        )
+
+    manifest = {
+        "fixture": "concurrent-controller", "generations": 2,
+        "max_episodes": 30, "max_concurrency": 4,
+    }
+    controller = TwoGenerationSmoke(
+        manifest=manifest, checkpoint_path=str(tmp_path / "concurrent-run.json"),
+        runner=runner, task_ids=("E1", "V1"), evolution_task_ids=("E1", "E2", "E3", "E4"),
+        seed=11,
+    )
+    commits = controller.run(customer, service)
+    assert [item.generation for item in commits] == [0, 1]
+    assert max_active == 4
+    assert len(calls) == 24
+    assert {item[0] for item in calls} == {"E1", "E2", "E3", "E4"}
+
+
+def test_concurrent_panel_error_checkpoints_drained_results_for_resume(tmp_path):
+    customer, service = CustomerStrategy(), ServiceStrategy()
+    started = Barrier(4)
+    lock = Lock()
+    failed_once = False
+    attempts_by_key = {}
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        nonlocal failed_once
+        key = (task_id, seed, customer_strategy_id(customer), panel_name)
+        with lock:
+            attempts_by_key[key] = attempts_by_key.get(key, 0) + 1
+            should_sync = (
+                not failed_once
+                and panel_name == "discovery"
+                and key[2] == customer_strategy_id(CustomerStrategy())
+            )
+        if should_sync:
+            started.wait(timeout=3)
+        if task_id == "E1" and key[2] == customer_strategy_id(CustomerStrategy()) and not failed_once:
+            with lock:
+                if not failed_once:
+                    failed_once = True
+                    raise RuntimeError("one worker interrupted")
+        return EpisodeRecord(
+            episode_id=f"{panel_name}:{task_id}:{seed}:{key[2]}",
+            task_id=task_id, seed=seed, customer_strategy_id=key[2],
+            service_strategy_id=service_strategy_id(service), status=EpisodeStatus.COMPLETE,
+            task_success=True, customer_valid=True, customer_strategy_adherent=True,
+            invalid_repeated_write_calls=0,
+        )
+
+    manifest = {
+        "fixture": "concurrent-resume", "generations": 2,
+        "max_episodes": 40, "max_concurrency": 4,
+    }
+    path = str(tmp_path / "concurrent-resume.json")
+    controller = TwoGenerationSmoke(
+        manifest=manifest, checkpoint_path=path, runner=runner,
+        task_ids=("E1", "V1"), evolution_task_ids=("E1", "E2", "E3", "E4"), seed=12,
+    )
+    with pytest.raises(RuntimeError, match="one worker interrupted"):
+        controller.run(customer, service)
+    saved = load_checkpoint(path, expected_manifest_hash=manifest_fingerprint(manifest))
+    completed_keys = saved.state["progress"]["episodes"]
+    assert len(completed_keys) == 3
+    assert saved.state["episode_attempts"] == 4
+
+    resumed = TwoGenerationSmoke(
+        manifest=manifest, checkpoint_path=path, runner=runner,
+        task_ids=("E1", "V1"), evolution_task_ids=("E1", "E2", "E3", "E4"), seed=12,
+    )
+    resumed.run(customer, service)
+    incumbent_id = customer_strategy_id(customer)
+    assert [attempts_by_key[(task_id, 12, incumbent_id, "discovery")]
+            for task_id in ("E1", "E2", "E3", "E4")] == [2, 1, 1, 1]
+
+
+def test_serial_controller_checkpoint_releases_unused_provider_reservations(tmp_path):
+    customer, service = CustomerStrategy(), ServiceStrategy()
+    budget = RequestBudget(cap=20)
+    provider = SimpleNamespace(
+        completion=lambda **_kwargs: SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+        ),
+        DEFAULT_MAX_RETRIES=0,
+    )
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        with budget.instrument_tau_llm_utils(provider):
+            provider.completion(model="mock")
+        return EpisodeRecord(
+            episode_id=f"{panel_name}:{task_id}:{seed}:{customer_strategy_id(customer)}",
+            task_id=task_id, seed=seed, customer_strategy_id=customer_strategy_id(customer),
+            service_strategy_id=service_strategy_id(service), status=EpisodeStatus.COMPLETE,
+            task_success=True, customer_valid=True, customer_strategy_adherent=True,
+            invalid_repeated_write_calls=0,
+        )
+
+    manifest = {"fixture": "serial-budget-checkpoint", "max_episodes": 20}
+    controller = TwoGenerationSmoke(
+        manifest=manifest, checkpoint_path=str(tmp_path / "serial-budget.json"),
+        runner=runner, task_ids=("E1", "V1"), evolution_task_ids=("E1", "E2", "E3"),
+        seed=13, request_budget=budget,
+    )
+    controller.run(customer, service)
+    saved = load_checkpoint(
+        tmp_path / "serial-budget.json", expected_manifest_hash=manifest_fingerprint(manifest),
+    )
+    assert saved.state["request_budget"]["attempts"] == 18
+    assert saved.state["request_budget"]["reserved"] == 0
+    assert saved.state["request_budget"]["in_flight"] == 0
 
 
 def test_prepared_generation_resume_reuses_persisted_selection_and_service_decision(tmp_path):

@@ -32,6 +32,7 @@ from .view_models import (
     budget_view,
     current_strategy_for_episode,
     customer_strategy_view,
+    db_state_trace_view,
     failure_status,
     generation_view,
     service_strategy_view,
@@ -375,6 +376,7 @@ def create_app(
         customer, service = current_strategy_for_episode(item["run"], item)
         return page(request, "episode.html", {
             "run": item["run"], "episode": item,
+            "db_trace_view": db_state_trace_view(item.get("db_state_trace")),
             "customer_strategy": customer_strategy_view(customer),
             "service_strategy": service_strategy_view(service),
         })
@@ -865,8 +867,23 @@ def _artifact_inventory(run: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             try:
                 parent = (trajectory_root / ref).resolve(strict=True).parent
-                for filename in ("episode-record.json", "run-telemetry.json", "native-simulation.json"):
-                    add(parent / filename, filename, "Verified by run index" if filename == "native-simulation.json" else "Available")
+                for filename in (
+                    "episode-record.json", "run-telemetry.json",
+                    "native-simulation.json", "db-state-trace.json",
+                ):
+                    if filename == "db-state-trace.json":
+                        trace = episode.get("db_state_trace")
+                        provenance = trace.get("provenance") if isinstance(trace, dict) else None
+                        if not isinstance(provenance, dict) or not provenance.get("trajectory_sha256"):
+                            continue
+                        artifact_state = "Verified by trace reader"
+                    else:
+                        artifact_state = (
+                            "Verified by run index"
+                            if filename == "native-simulation.json"
+                            else "Available"
+                        )
+                    add(parent / filename, filename, artifact_state)
             except (OSError, RuntimeError):
                 continue
     return sorted(entries.values(), key=lambda item: item["path"])

@@ -8,15 +8,30 @@ import json
 import math
 import sqlite3
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from pathlib import Path
+from threading import Lock
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from .budget import BudgetSnapshot, ModelUsageSnapshot, RequestBudget
+from .budget import (
+    BudgetSnapshot,
+    EpisodeUsageTracker,
+    ModelUsageSnapshot,
+    RequestBudget,
+)
 from .checkpoint import load_checkpoint, manifest_fingerprint
 from .communication import observe_communication_protocol
 from .customer_evolver import LLMCustomerEvolver, OperatorSelector
+from .db_state_trace import (
+    DBStateTraceError,
+    replay_db_state_trace,
+    unavailable_trace,
+    write_trace_once,
+)
+from .episode_execution import StopBeforeEpisodeDispatch
 from .manifest import (
     MechanismManifest,
     PilotManifest,
@@ -79,10 +94,6 @@ AuditProvider = Callable[
 
 class NativeEpisodeRunError(RuntimeError):
     """A native run failed; provider or credential details are kept out of records."""
-
-
-class StopBeforeEpisodeDispatch(RuntimeError):
-    """Console pause requested at a safe boundary before a new episode starts."""
 
 
 class TauBenchEpisodeRunner:
@@ -153,6 +164,7 @@ class TauBenchEpisodeRunner:
         self._completed_episode_cache: dict[
             str, tuple[EpisodeRecord, BudgetSnapshot, bool]
         ] = {}
+        self._completed_episode_cache_lock = Lock()
         manifest_path = self.output_directory / "manifest.json"
         if manifest_path.exists():
             saved = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -174,6 +186,40 @@ class TauBenchEpisodeRunner:
         service: ServiceStrategy,
         panel_name: str,
     ) -> EpisodeRecord:
+        with self.request_budget.track_episode_usage() as episode_usage:
+            return self._run_episode(
+                task_id=task_id,
+                seed=seed,
+                customer=customer,
+                service=service,
+                panel_name=panel_name,
+                episode_usage=episode_usage,
+            )
+
+    def has_completed_episode(
+        self, *, task_id: str, seed: int, customer: CustomerStrategy | None,
+        service: ServiceStrategy, panel_name: str,
+    ) -> bool:
+        key = {
+            "task_id": str(task_id),
+            "seed": seed,
+            "customer_strategy_id": customer_strategy_id(customer),
+            "service_strategy_id": service_strategy_id(service),
+            "panel_name": panel_name,
+        }
+        with self._completed_episode_cache_lock:
+            return sha256_json(key) in self._completed_episode_cache
+
+    def _run_episode(
+        self,
+        *,
+        task_id: str,
+        seed: int,
+        customer: CustomerStrategy | None,
+        service: ServiceStrategy,
+        panel_name: str,
+        episode_usage: EpisodeUsageTracker,
+    ) -> EpisodeRecord:
         try:
             task = self.tasks[str(task_id)]
         except KeyError as exc:
@@ -190,12 +236,23 @@ class TauBenchEpisodeRunner:
             "panel_name": panel_name,
         }
         episode_key_sha256 = sha256_json(episode_key)
-        cached = self._completed_episode_cache.get(episode_key_sha256)
+        with self._completed_episode_cache_lock:
+            cached = self._completed_episode_cache.get(episode_key_sha256)
+            if cached is not None and cached[2]:
+                self._completed_episode_cache[episode_key_sha256] = (
+                    cached[0], cached[1], False,
+                )
         if cached is not None:
             record, usage, recovered = cached
             if recovered:
-                self.request_budget.absorb_usage(usage)
-                self._completed_episode_cache[episode_key_sha256] = (record, usage, False)
+                try:
+                    self.request_budget.absorb_usage(usage)
+                except Exception:
+                    with self._completed_episode_cache_lock:
+                        self._completed_episode_cache[episode_key_sha256] = (
+                            record, usage, True,
+                        )
+                    raise
             return record
         if self.stop_before_next_episode_file is not None:
             signal = self.stop_before_next_episode_file
@@ -205,7 +262,8 @@ class TauBenchEpisodeRunner:
                 raise StopBeforeEpisodeDispatch(
                     "paused safely before dispatching the next native episode"
                 )
-        if self.request_budget.snapshot().remaining <= 0:
+        if (self.request_budget.snapshot().remaining <= 0
+                and not self.request_budget.has_current_episode_reservation()):
             raise RuntimeError("native episode refused before dispatch: request budget is exhausted")
 
         attempt_id = uuid4().hex
@@ -246,7 +304,7 @@ class TauBenchEpisodeRunner:
 
         try:
             orchestrator = build_phase0_orchestrator(
-                task=task,
+                task=deepcopy(task),
                 agent_model=self.models["agent"],
                 customer_model=self.models["customer"],
                 agent_model_args=self.model_args["agent"],
@@ -302,6 +360,14 @@ class TauBenchEpisodeRunner:
                 enforcement_enabled=self.manifest.enforce_communication_protocol,
             )
             episode_id = str(simulation_payload.get("id") or attempt_id)
+            db_trace_telemetry = _write_db_state_trace(
+                manifest=self.manifest,
+                task=task,
+                trajectory=simulation_payload,
+                trajectory_path=simulation_path,
+                episode_directory=episode_directory,
+                data_root=self.data_root,
+            )
             record = EpisodeRecord(
                 episode_id=episode_id,
                 task_id=str(task_id),
@@ -336,7 +402,7 @@ class TauBenchEpisodeRunner:
                 },
             )
             after = self.request_budget.snapshot()
-            usage_delta = _budget_snapshot_difference(after, before)
+            exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
             _write_json_once(telemetry_path, {
                 "attempt_id": attempt_id,
                 "simulation_id": episode_id,
@@ -349,14 +415,20 @@ class TauBenchEpisodeRunner:
                 "budget_before": before.to_dict(),
                 "budget_after": after.to_dict(),
                 "budget_delta": _snapshot_delta(before, after),
+                "episode_budget_delta": exact_episode_usage.to_dict(),
                 "communication_protocol_observation": protocol_observation,
                 "independent_audit": None if audit_result is None else _audit_dict(audit_result),
+                **db_trace_telemetry,
             })
             _write_json_once(record_path, record.to_dict())
-            self._completed_episode_cache[episode_key_sha256] = (record, usage_delta, False)
+            with self._completed_episode_cache_lock:
+                self._completed_episode_cache[episode_key_sha256] = (
+                    record, exact_episode_usage, False,
+                )
             return record
         except Exception as exc:
             after = self.request_budget.snapshot()
+            exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
             _write_json_once(episode_directory / "incomplete-run.json", {
                 "attempt_id": attempt_id,
                 "task_id": str(task_id),
@@ -376,6 +448,7 @@ class TauBenchEpisodeRunner:
                 "budget_before": before.to_dict(),
                 "budget_after": after.to_dict(),
                 "budget_delta": _snapshot_delta(before, after),
+                "episode_budget_delta": exact_episode_usage.to_dict(),
             })
             raise NativeEpisodeRunError(type(exc).__name__) from exc
 
@@ -423,9 +496,13 @@ class TauBenchEpisodeRunner:
                 raise ValueError("native episode cache key differs from its saved EpisodeRecord")
             before = BudgetSnapshot(**telemetry["budget_before"])
             after = BudgetSnapshot(**telemetry["budget_after"])
-            self._completed_episode_cache[key_sha] = (
-                record, _budget_snapshot_difference(after, before), True,
+            saved_episode_usage = telemetry.get("episode_budget_delta")
+            usage = (
+                BudgetSnapshot(**saved_episode_usage)
+                if isinstance(saved_episode_usage, dict)
+                else _budget_snapshot_difference(after, before)
             )
+            self._completed_episode_cache[key_sha] = (record, usage, True)
 
     def load_trajectory(self, episode: EpisodeRecord) -> Mapping[str, Any] | None:
         """Load one saved native simulation after enforcing output-directory containment."""
@@ -1162,6 +1239,58 @@ def _count_tool_calls(messages: Any) -> int:
         elif role == "multi_tool":
             count += len(message.get("tool_messages") or ())
     return count
+
+
+def _write_db_state_trace(
+    *, manifest: Any, task: Any, trajectory: Mapping[str, Any],
+    trajectory_path: Path, episode_directory: Path, data_root: Path,
+) -> dict[str, Any]:
+    """Generate an isolated display sidecar; any observer failure is non-fatal."""
+
+    started = perf_counter()
+    trajectory_bytes = b""
+    try:
+        trajectory_bytes = trajectory_path.read_bytes()
+        trace = replay_db_state_trace(
+            manifest=manifest.to_document(),
+            task=task,
+            trajectory=trajectory,
+            trajectory_bytes=trajectory_bytes,
+            data_dir=data_root,
+        )
+    except DBStateTraceError as exc:
+        trace = unavailable_trace(
+            task_id=str(trajectory.get("task_id", getattr(task, "id", "unknown"))),
+            episode_id=str(trajectory.get("id", episode_directory.name)),
+            manifest=manifest.to_document(),
+            trajectory_bytes=trajectory_bytes or None,
+            reason_code=exc.reason_code,
+        )
+    except Exception:  # noqa: BLE001 - observer failures cannot invalidate episodes
+        trace = unavailable_trace(
+            task_id=str(trajectory.get("task_id", getattr(task, "id", "unknown"))),
+            episode_id=str(trajectory.get("id", episode_directory.name)),
+            manifest=manifest.to_document(),
+            trajectory_bytes=trajectory_bytes or None,
+            reason_code="trace_not_generated",
+        )
+    artifact_saved = False
+    try:
+        write_trace_once(episode_directory / "db-state-trace.json", trace)
+        artifact_saved = True
+    except Exception:  # noqa: BLE001 - sidecar write errors never invalidate episodes
+        # A sidecar storage failure must not convert a completed episode into a
+        # Core failure. Console readers treat a missing sidecar as unavailable.
+        artifact_saved = False
+    summary = trace.get("summary", {}) if isinstance(trace, Mapping) else {}
+    if not isinstance(summary, Mapping):
+        summary = {}
+    return {
+        "db_trace_status": trace.get("status", "unavailable") if artifact_saved else "unavailable",
+        "db_trace_generation_seconds": round(perf_counter() - started, 6),
+        "db_trace_event_count": int(summary.get("mutation_event_count", 0)) if artifact_saved else 0,
+        "db_trace_field_change_count": int(summary.get("field_change_count", 0)) if artifact_saved else 0,
+    }
 
 
 def _provider_provenance_document(

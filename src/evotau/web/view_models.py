@@ -88,6 +88,78 @@ def budget_view(budget: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def db_state_trace_view(trace: Any) -> dict[str, Any]:
+    """Create restrained Simple and verbatim Research views of a trace sidecar."""
+
+    if not isinstance(trace, dict) or trace.get("status") != "complete":
+        return {
+            "available": False,
+            "reason_code": (trace or {}).get("reason_code", "trace_not_generated")
+            if isinstance(trace, dict) else "trace_not_generated",
+            "events": [],
+            "summary": {},
+        }
+    entity_labels = {"order": "Order", "order_item": "Order item", "product": "Product", "user": "User"}
+    field_labels = {
+        "status": "Status",
+        "return_items": "Return items",
+        "return_payment_method_id": "Refund method",
+        "cancel_reason": "Cancellation reason",
+        "exchange_items": "Exchange items",
+        "exchange_new_items": "Replacement items",
+        "exchange_payment_method_id": "Exchange payment method",
+        "exchange_price_difference": "Exchange price difference",
+    }
+    events = []
+    for event in trace.get("events", ()):
+        if not isinstance(event, dict):
+            continue
+        changes = []
+        for change in event.get("changes", ()):
+            if not isinstance(change, dict):
+                continue
+            entity_type = str(change.get("entity_type", ""))
+            field_path = str(change.get("field_path", ""))
+            leaf = field_path.rsplit(".", 1)[-1]
+            changes.append({
+                **change,
+                "simple_entity_label": entity_labels.get(entity_type),
+                "simple_field_label": field_labels.get(
+                    leaf, " ".join(word.capitalize() for word in leaf.replace("_", " ").split()),
+                ),
+            })
+        events.append({**event, "changes": changes})
+    summary = trace.get("summary")
+    summary = dict(summary) if isinstance(summary, dict) else {}
+    comparison = summary.get("final_comparison")
+    if isinstance(comparison, dict) and isinstance(comparison.get("differences"), list):
+        comparison = dict(comparison)
+        comparison["differences"] = [
+            {
+                **change,
+                "simple_entity_label": entity_labels.get(str(change.get("entity_type", ""))),
+                "simple_field_label": field_labels.get(
+                    str(change.get("field_path", "")).rsplit(".", 1)[-1],
+                    " ".join(
+                        word.capitalize()
+                        for word in str(change.get("field_path", "")).replace("_", " ").split()
+                    ),
+                ),
+            }
+            for change in comparison["differences"]
+            if isinstance(change, dict)
+        ]
+        summary["final_comparison"] = comparison
+    return {
+        "available": True,
+        "events": events,
+        "summary": summary,
+        "trace_sha256": trace.get("trace_sha256"),
+        "provenance": trace.get("provenance", {}),
+        "artifact_ref": "db-state-trace.json",
+    }
+
+
 def current_strategy_for_episode(run: dict[str, Any], episode: dict[str, Any]) -> tuple[Any, Any]:
     customer = episode.get("customer_strategy")
     service = episode.get("service_strategy")

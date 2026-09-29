@@ -23,7 +23,7 @@
   <div class="run-context"><span class="eyebrow">{{ run.phase }}</span><strong>{{ run.experiment_id }}</strong><span class="status status-{{ run.status }}">{{ {'complete':'已完成','running':'运行中','paused':'已暂停','failed':'失败','incomplete':'未完成','not_started':'尚未开始'}.get(run.status, run.status) }}</span></div>
 {% else %}<div class="topbar-context">本地实验控制台 <span class="dot-separator">·</span> Core artifacts 是唯一研究来源</div>{% endif %}
   <div class="topbar-actions">
-    {% if run is defined and run.status == 'running' and not run.phase.startswith('0-') %}<form method="post" action="/runs/{{ run.run_id|urlencode }}/pause"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-quiet" type="submit">暂停于当前 episode 后</button></form>{% endif %}
+    {% if run is defined and run.status == 'running' and not run.phase.startswith('0-') %}<form method="post" action="/runs/{{ run.run_id|urlencode }}/pause"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-quiet" type="submit">停止派发并完成运行中的 episodes</button></form>{% endif %}
     <div class="segmented mode-switch" role="group" aria-label="显示模式"><button type="button" data-display-mode-button="simple" aria-pressed="true">Simple</button><button type="button" data-display-mode-button="research" aria-pressed="false">Research</button></div>
     <button type="button" class="icon-button" data-theme-toggle aria-label="切换浅色或深色主题" title="切换主题">◐</button>
     <button type="button" class="icon-button command-trigger" data-command-open aria-label="搜索 EvoTau" title="搜索 (⌘K / Ctrl+K)">⌕</button>
@@ -35,6 +35,7 @@
   <span class="badge badge-customer">Customer {{ run.current_customer_id or 'Unavailable' }}</span>
   <span class="badge badge-service">Service {{ run.current_service_id or 'Unavailable' }}</span>
   <span><small>Episodes</small><strong>{{ run.episodes|length }}{% if run.episode_limit %} / {{ run.episode_limit }}{% endif %}</strong></span>
+  {% if run.max_concurrency %}<span><small>Worker limit</small><strong>{{ run.max_concurrency }}</strong></span>{% endif %}
   <span><small>Requests</small><strong>{{ run.budget.attempt_label }}</strong></span>
   <span class="protocol-tag">{{ run.communication_mode_label or 'Protocol unknown' }}</span>
   {% if run.status == 'running' and run.current_episode %}<span class="live-context"><i class="live-indicator"></i>Evaluating {{ run.current_customer_id or 'Customer' }} × {{ run.current_service_id or 'Service' }}</span>{% endif %}
