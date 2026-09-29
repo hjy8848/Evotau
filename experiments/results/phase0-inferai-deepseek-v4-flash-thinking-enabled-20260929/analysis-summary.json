@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "experiment_id": "evotau-phase0-inferai-deepseek-v4-flash-thinking-enabled-20260929",
+  "classification": "provider_integration_observation",
+  "research_evidence": false,
+  "comparison": {
+    "baseline_experiment_id": "evotau-phase0-inferai-deepseek-v4-flash-20260929",
+    "task_id": "73",
+    "seed": 42,
+    "prompt_hashes_match_baseline": true,
+    "only_model_behavior_setting_changed": "agent thinking_mode disabled -> enabled; customer/reviewer/evaluator stayed disabled"
+  },
+  "outcome": {
+    "run_status": "complete",
+    "termination_reason": "agent_error",
+    "native_reward": 0.0,
+    "diagnosis": "The agent authenticated and queried the account, then emitted explanatory text and a get_order_details tool call in the same assistant message. The pinned tau-bench half-duplex validator rejects a message containing both text and tool calls, so the run ended with agent_error before task completion.",
+    "review_note": "The native reviewer described the trajectory as early and reported no errors; this does not override the orchestration-level format failure.",
+    "interpretation": "Thinking-enabled output used tool-call-only messages for earlier actions but reproduced the mixed format on order lookup. One paired smoke run cannot establish a general causal claim about model capability."
+  },
+  "provider_usage": {
+    "cap": 24,
+    "attempts": 8,
+    "successes": 8,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 25909,
+    "completion_tokens": 564,
+    "usage_responses": 8,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 8,
+        "successes": 8,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 25909,
+        "completion_tokens": 564,
+        "usage_responses": 8,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      }
+    ]
+  },
+  "billing": {
+    "native_reported_cost": 0.0,
+    "provider_billed_amount_verified": false,
+    "note": "LiteLLM logged that the model has no price mapping; the native cost field does not establish the amount billed by InferAI."
+  },
+  "archive_handling": {
+    "provider_reasoning_content_removed_from_native_simulation": true,
+    "reasoning_fields_removed": 8,
+    "visible_messages_tool_calls_usage_and_evaluation_retained": true
+  }
+}
