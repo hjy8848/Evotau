@@ -664,8 +664,10 @@ class PilotManifest:
             raise ValueError("Pilot experiment ID must not be empty")
         if self.condition not in {
             "adaptive_coevolution", "one_shot_repair", "static_customer", "random_mutation",
+            "adaptive_customer", "frozen_service", "frozen_customer",
+            "no_historical_replay",
         }:
-            raise ValueError("Pilot condition is not a preregistered EvoTau condition")
+            raise ValueError("Pilot condition is not a supported EvoTau condition")
         if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
             TAU_BENCH_REPOSITORY, TAU_BENCH_COMMIT, TAU2_PACKAGE_VERSION,
         ):
@@ -798,6 +800,8 @@ class PilotManifest:
         models = experiment.get("models", {})
         customer = experiment.get("customer_strategy")
         service = experiment.get("service_strategy") or {"rules": []}
+        if experiment.get("condition") == "frozen_customer" and not isinstance(customer, dict):
+            raise ValueError("frozen_customer condition requires an explicit fixed CustomerStrategy")
         expected_panels = (
             *((str(task_id), "evolution") for task_id in selection["evolution"]),
             *((str(task_id), "validation") for task_id in selection["validation"]),

@@ -562,6 +562,8 @@ def run_native_pilot(
         raise RuntimeError("native Pilot execution is disabled in the frozen manifest")
     if manifest.condition not in {
         "adaptive_coevolution", "one_shot_repair", "random_mutation", "static_customer",
+        "adaptive_customer", "frozen_service", "frozen_customer",
+        "no_historical_replay",
     }:
         raise ValueError(
             "native multi-generation Pilot condition is not supported"
@@ -622,6 +624,8 @@ def run_native_pilot(
             raise ValueError("Pilot callbacks must include audit_provider and use supported roles")
         if any(not callable(value) for value in callbacks.values()):
             raise TypeError("every Pilot provider callback must be callable")
+        repair_keys = {"service_proposal_provider", "service_repair_audit_provider"}
+        has_transition = "service_transition" in callbacks
         if manifest.condition in {"random_mutation", "static_customer"}:
             control = manifest.condition
             if set(callbacks) != {"audit_provider"}:
@@ -629,20 +633,51 @@ def run_native_pilot(
                     f"{control} control accepts only audit_provider; it freezes Service and "
                     "cannot load a failure-aware Customer Evolver"
                 )
-        else:
-            has_transition = "service_transition" in callbacks
-            repair_keys = {"service_proposal_provider", "service_repair_audit_provider"}
+        elif manifest.condition in {"frozen_service", "adaptive_customer"}:
+            if has_transition or set(callbacks) & repair_keys:
+                raise ValueError(
+                    f"{manifest.condition} cannot load any Service repair callback"
+                )
+        elif manifest.condition == "frozen_customer":
+            if "customer_proposal_provider" in callbacks:
+                raise ValueError("frozen_customer cannot load a Customer Evolver callback")
             has_repair_callbacks = repair_keys <= set(callbacks)
             if bool(set(callbacks) & repair_keys) != has_repair_callbacks:
                 raise ValueError("Pilot repair proposal and audit callbacks must be supplied together")
             if has_transition == has_repair_callbacks:
                 raise ValueError("Pilot callbacks require a ServiceTransition or both repair callbacks")
-        if (manifest.condition not in {"random_mutation", "static_customer"}
+        elif manifest.condition == "no_historical_replay":
+            has_repair_callbacks = repair_keys <= set(callbacks)
+            if bool(set(callbacks) & repair_keys) != has_repair_callbacks:
+                raise ValueError("Pilot repair proposal and audit callbacks must be supplied together")
+            if has_transition and has_repair_callbacks:
+                raise ValueError("Pilot must use one Service transition callback route")
+            if has_transition:
+                from .service_transition import GatedServiceTransition
+
+                transition = callbacks["service_transition"]
+                if (not isinstance(transition, GatedServiceTransition)
+                        or transition.include_historical_replay):
+                    raise ValueError(
+                        "no_historical_replay requires GatedServiceTransition with historical replay disabled"
+                    )
+            elif not has_repair_callbacks:
+                raise ValueError("no_historical_replay requires a Service transition or both repair callbacks")
+        else:
+            has_repair_callbacks = repair_keys <= set(callbacks)
+            if bool(set(callbacks) & repair_keys) != has_repair_callbacks:
+                raise ValueError("Pilot repair proposal and audit callbacks must be supplied together")
+            if has_transition == has_repair_callbacks:
+                raise ValueError("Pilot callbacks require a ServiceTransition or both repair callbacks")
+        if (manifest.condition not in {"random_mutation", "static_customer", "frozen_customer"}
                 and "customer_proposal_provider" not in callbacks):
             callbacks["customer_proposal_provider"] = LLMCustomerEvolver(
                 model=role_models["evolver"], model_args=role_model_args["evolver"],
             )
-        if manifest.condition not in {"random_mutation", "static_customer"} and not has_transition:
+        if (manifest.condition not in {
+            "random_mutation", "static_customer", "frozen_service", "adaptive_customer",
+        }
+                and not has_transition):
             from .service_transition import GatedServiceTransition
 
             callbacks["service_transition"] = GatedServiceTransition(
@@ -655,6 +690,7 @@ def run_native_pilot(
                 proposal_provider=callbacks.pop("service_proposal_provider"),
                 audit_provider=callbacks.pop("service_repair_audit_provider"),
                 token_counter=service_token_counter,
+                include_historical_replay=manifest.condition != "no_historical_replay",
             )
         from .service_baselines import OneShotServiceTransition
 
@@ -800,7 +836,10 @@ def run_native_pilot(
                     "random_mutation" if manifest.condition == "random_mutation"
                     else "failure_conditioned"
                 ),
-                allow_frozen_service=manifest.condition == "random_mutation",
+                allow_frozen_service=manifest.condition in {
+                    "random_mutation", "frozen_service", "adaptive_customer",
+                },
+                freeze_customer=manifest.condition == "frozen_customer",
                 allow_strategy_revisit=True,
                 candidates_per_generation=manifest.customer_candidates,
             )
@@ -892,7 +931,7 @@ def run_native_pilot(
         if len(episode_records) != expected_episode_count:
             raise ValueError("Pilot episode artifacts do not reconcile with run and final-panel counts")
         rq1_study_run = None
-        if manifest.condition in {"adaptive_coevolution", "random_mutation", "static_customer"}:
+        if manifest.condition in {"adaptive_customer", "random_mutation", "static_customer"}:
             rq1_study_run = _build_rq1_pilot_study_run(
                 manifest=manifest,
                 evolution_seed=seed,
@@ -1512,7 +1551,7 @@ def _build_rq1_pilot_study_run(
     from .study_analysis import StudyRun
 
     condition = {
-        "adaptive_coevolution": "adaptive_customer",
+        "adaptive_customer": "adaptive_customer",
         "random_mutation": "random_mutation",
         "static_customer": "static_customer",
     }[manifest.condition]

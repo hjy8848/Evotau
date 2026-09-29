@@ -173,9 +173,19 @@ def test_typed_pilot_manifest_runs_one_independent_seed_checkpoint(tmp_path):
     assert len(calls) == 36
 
 
-def test_random_pilot_freezes_service_after_audited_failures(tmp_path):
+@pytest.mark.parametrize(
+    ("condition", "proposal_mode"),
+    [
+        ("random_mutation", "random_mutation"),
+        ("frozen_service", "failure_conditioned"),
+        ("adaptive_customer", "failure_conditioned"),
+    ],
+)
+def test_frozen_service_pilot_control_archives_failures_without_repair(
+    tmp_path, condition, proposal_mode,
+):
     config, _data_root = _pilot_fixture(tmp_path)
-    config["experiment"]["condition"] = "random_mutation"
+    config["experiment"]["condition"] = condition
     manifest = PilotManifest.from_mapping(config)
     archive = FailureArchive(tmp_path / "random-control.sqlite")
     service = ServiceStrategy()
@@ -203,13 +213,13 @@ def test_random_pilot_freezes_service_after_audited_failures(tmp_path):
     )
     commits = controller.run(
         CustomerStrategy(), service, failure_verifier=lambda item: f"audit:{item.episode_id}",
-        customer_proposal_mode="random_mutation", allow_frozen_service=True,
+        customer_proposal_mode=proposal_mode, allow_frozen_service=True,
         allow_strategy_revisit=True,
     )
 
     assert [commit.service_id for commit in commits] == [service_strategy_id(service)] * 3
     assert all(
-        commit.decision_record["customer"]["proposal_mode"] == "random_mutation"
+        commit.decision_record["customer"]["proposal_mode"] == proposal_mode
         and not commit.decision_record["service"]["transition_ran"]
         and commit.decision_record["service"]["incumbent_before"]
         == commit.decision_record["service"]["incumbent_after"]
@@ -357,7 +367,10 @@ def test_native_pilot_never_loads_provider_callbacks_while_provider_is_disabled(
 
 
 @pytest.mark.parametrize(
-    "condition", ["adaptive_coevolution", "random_mutation", "static_customer"],
+    "condition", [
+        "adaptive_customer", "adaptive_coevolution", "random_mutation", "static_customer",
+        "frozen_service", "frozen_customer", "no_historical_replay",
+    ],
 )
 def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
     tmp_path, monkeypatch, condition,
@@ -365,6 +378,8 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
     config, data_root = _pilot_fixture(tmp_path)
     experiment = config["experiment"]
     experiment["condition"] = condition
+    if condition == "frozen_customer":
+        experiment["customer_strategy"] = CustomerStrategy().to_dict()
     if condition == "static_customer":
         experiment["static_customer_portfolio"] = {
             "schema_version": 1,
@@ -391,6 +406,7 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
     monkeypatch.chdir(tmp_path)
     calls = []
     callback_seed_bases = []
+    frozen_customer_observations = []
 
     class FakePilotEpisodeRunner:
         def __init__(self, *, manifest, output_directory, **_kwargs):
@@ -405,8 +421,14 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
         def __call__(self, *, task_id, seed, customer, service, panel_name):
             self._counter += 1
             calls.append((task_id, seed, panel_name))
-            static_failure = condition == "static_customer" and (
-                panel_name == "discovery" or panel_name.startswith("pilot-static-reproduction-")
+            static_failure = (
+                condition == "static_customer" and (
+                    panel_name == "discovery"
+                    or panel_name.startswith("pilot-static-reproduction-")
+                )
+            ) or (
+                condition == "frozen_customer"
+                and panel_name in {"discovery", "confirmation"}
             )
             failure_stage, failure_policy, failure_type = (
                 "identity_verification", "retail.policy:identity_verification",
@@ -451,6 +473,34 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
         callback_seed_bases.append(seed_base)
         if condition in {"random_mutation", "static_customer"}:
             return {"audit_provider": lambda *_args: None}
+        if condition == "frozen_service":
+            return {
+                "audit_provider": lambda *_args: None,
+                "customer_proposal_provider": selector,
+            }
+        if condition == "adaptive_customer":
+            return {
+                "audit_provider": lambda *_args: None,
+                "customer_proposal_provider": selector,
+            }
+        if condition == "frozen_customer":
+            def frozen_service_transition(generation, customer, service, failures, *_args):
+                frozen_customer_observations.append((
+                    seed_base, generation, customer_strategy_id(customer), len(failures),
+                ))
+                return service, None, "frozen-customer ablation fixture"
+
+            return {
+                "audit_provider": lambda *_args: None,
+                "service_transition": frozen_service_transition,
+            }
+        if condition == "no_historical_replay":
+            return {
+                "audit_provider": lambda *_args: None,
+                "customer_proposal_provider": selector,
+                "service_proposal_provider": lambda *_args: None,
+                "service_repair_audit_provider": lambda *_args: None,
+            }
         return {
             "audit_provider": lambda *_args: None,
             "customer_proposal_provider": selector,
@@ -463,12 +513,17 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
     assert result["status"] == "complete"
     assert result["condition"] == condition
     assert result["evolution_seeds"] == [11, 17, 23]
-    assert len(result["rq1_study_runs"]) == 3
-    study_run = load_rq1_document({"schema_version": 2, "runs": result["rq1_study_runs"]})
-    assert [item.condition for item in study_run] == [
-        {"adaptive_coevolution": "adaptive_customer", "random_mutation": "random_mutation",
-         "static_customer": "static_customer"}[condition]
-    ] * 3
+    if condition in {
+        "adaptive_coevolution", "frozen_service", "frozen_customer", "no_historical_replay",
+    }:
+        assert result["rq1_study_runs"] == []
+    else:
+        assert len(result["rq1_study_runs"]) == 3
+        study_run = load_rq1_document({"schema_version": 2, "runs": result["rq1_study_runs"]})
+        assert [item.condition for item in study_run] == [
+            {"adaptive_customer": "adaptive_customer", "random_mutation": "random_mutation",
+             "static_customer": "static_customer"}[condition]
+        ] * 3
     assert callback_seed_bases == [100_000, 200_000, 300_000]
     observed_episode_seed_blocks = []
     for index, item in enumerate(result["seed_blocks"]):
@@ -492,23 +547,62 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
             assert len(seed_result["rq1_study_run"]["reproduction_episodes"]) == 36
             assert len(seed_result["rq1_study_run"]["verified_failures"]) == 36
         else:
-            assert [len(commit["decision_record"]["customer"]["proposals"])
-                    for commit in seed_result["generation_commits"]] == [2, 2, 2]
+            proposal_counts = [len(commit["decision_record"]["customer"]["proposals"])
+                               for commit in seed_result["generation_commits"]]
+            assert proposal_counts == ([0, 0, 0] if condition == "frozen_customer" else [2, 2, 2])
             expected_mode = "random_mutation" if condition == "random_mutation" else "failure_conditioned"
             assert all(
                 commit["decision_record"]["customer"]["proposal_mode"] == expected_mode
                 for commit in seed_result["generation_commits"]
             )
-            assert len(seed_result["rq1_study_run"]["episodes"]) == 36
-            expected_count = (
-                sum(
-                    (1 + len(commit["decision_record"]["customer"]["proposals"]))
-                    * len(config["experiment"]["task_selection"]["evolution"])
-                    for commit in seed_result["generation_commits"]
+            if condition in {
+                "adaptive_coevolution", "frozen_service", "frozen_customer",
+                "no_historical_replay",
+            }:
+                assert seed_result["rq1_study_run"] is None
+                if condition == "frozen_customer":
+                    assert len({commit["service_id"] for commit in seed_result["generation_commits"]}) == 1
+                    fixed_ids = {
+                        json.dumps(
+                            commit["decision_record"]["customer"]["incumbent_before"],
+                            sort_keys=True,
+                        )
+                        for commit in seed_result["generation_commits"]
+                    }
+                    assert len(fixed_ids) == 1
+                    assert all(
+                        commit["decision_record"]["customer"]["selection"]["evolved"] is False
+                        and commit["decision_record"]["service"]["transition_ran"] is True
+                        for commit in seed_result["generation_commits"]
+                    )
+                    expected_count = (
+                        2 * len(seed_result["generation_commits"])
+                        * len(config["experiment"]["task_selection"]["evolution"])
+                        + len(config["experiment"]["task_selection"]["validation"])
+                        + len(config["experiment"]["task_selection"]["heldout"])
+                    )
+                else:
+                    assert len({commit["service_id"] for commit in seed_result["generation_commits"]}) == 1
+                    expected_count = (
+                        sum(
+                            (1 + len(commit["decision_record"]["customer"]["proposals"]))
+                            * len(config["experiment"]["task_selection"]["evolution"])
+                            for commit in seed_result["generation_commits"]
+                        )
+                        + len(config["experiment"]["task_selection"]["validation"])
+                        + len(config["experiment"]["task_selection"]["heldout"])
+                    )
+            else:
+                assert len(seed_result["rq1_study_run"]["episodes"]) == 36
+                expected_count = (
+                    sum(
+                        (1 + len(commit["decision_record"]["customer"]["proposals"]))
+                        * len(config["experiment"]["task_selection"]["evolution"])
+                        for commit in seed_result["generation_commits"]
+                    )
+                    + len(config["experiment"]["task_selection"]["validation"])
+                    + len(config["experiment"]["task_selection"]["heldout"])
                 )
-                + len(config["experiment"]["task_selection"]["validation"])
-                + len(config["experiment"]["task_selection"]["heldout"])
-            )
         if condition == "random_mutation":
             assert len({commit["service_id"] for commit in seed_result["generation_commits"]}) == 1
             assert all(
@@ -526,6 +620,9 @@ def test_native_pilot_runs_three_seed_blocks_and_indexes_final_heldout_panels(
     assert all(len(item["provider_budget"]["model_usage"]) == 0 for item in result["seed_blocks"])
     assert {task_id for task_id, _seed, _panel in calls if task_id.startswith("H")} == {"H1", "H2"}
     assert not any("H" in panel for _task, _seed, panel in calls if "heldout" not in panel)
+    if condition == "frozen_customer":
+        assert len(frozen_customer_observations) == 9
+        assert all(item[3] >= 4 for item in frozen_customer_observations)
     previous_call_count = len(calls)
     resumed = run_native_pilot(
         config_path=config_path, data_dir=data_root, callback_factory=callback_factory,

@@ -111,12 +111,15 @@ class GateReport:
     inconclusive: bool = False
     unit_episode_refs: tuple[tuple[str, str, str], ...] = ()
     partial_episode_refs: tuple[tuple[str, str], ...] = ()
+    historical_replay_included: bool = True
 
     def __post_init__(self) -> None:
         if type(self.accepted) is not bool:
             raise TypeError("gate report accepted must be a boolean")
         if type(self.inconclusive) is not bool or (self.inconclusive and self.accepted):
             raise ValueError("an inconclusive repair gate cannot be accepted")
+        if type(self.historical_replay_included) is not bool:
+            raise TypeError("historical replay inclusion must be a boolean")
         if (not isinstance(self.target_failure_id, str) or not self.target_failure_id
                 or self.proposal.target_failure_id != self.target_failure_id):
             raise ValueError("gate report must retain its exact verified target failure")
@@ -154,6 +157,7 @@ class GateReport:
         return {
             "accepted": self.accepted,
             "inconclusive": self.inconclusive,
+            "historical_replay_included": self.historical_replay_included,
             "unit_episode_refs": [list(item) for item in self.unit_episode_refs],
             "partial_episode_refs": [list(item) for item in self.partial_episode_refs],
             "reasons": list(self.reasons),
@@ -220,8 +224,9 @@ def evaluate_repair_gate(
     token_counter: Callable[[str], int],
     inconclusive: bool = False,
     partial_episode_refs: tuple[tuple[str, str], ...] = (),
+    include_historical_replay: bool = True,
 ) -> GateReport:
-    """Apply target/replay/clean/validation checks, retaining the initial clean anchor."""
+    """Apply target/clean/validation gates and an optional historical replay guard."""
     reasons: list[str] = []
     results: list[tuple[str, bool, str]] = []
     target_failure_id = target_failure.failure_id
@@ -246,7 +251,11 @@ def evaluate_repair_gate(
         reasons.append("repair gate requires a verified target failure ID")
     if candidate == incumbent:
         reasons.append("repair gate candidate must differ from the incumbent strategy")
-    required_panels = {"target", "historical", "clean", "validation"}
+    if type(include_historical_replay) is not bool:
+        raise TypeError("include_historical_replay must be a boolean")
+    required_panels = {"target", "clean", "validation"}
+    if include_historical_replay:
+        required_panels.add("historical")
     panels = {unit.panel for unit in units}
     if not required_panels <= panels:
         reasons.append(f"missing gate panels: {sorted(required_panels - panels)}")
@@ -271,8 +280,11 @@ def evaluate_repair_gate(
         for unit in target_units
     ):
         reasons.append("target baseline trials do not reproduce the verified target failure signature")
-    if sum(unit.panel == "historical" for unit in units) > 1:
-        reasons.append("the MVP gate permits at most one historical replay unit")
+    historical_count = sum(unit.panel == "historical" for unit in units)
+    if include_historical_replay and historical_count != 1:
+        reasons.append("the MVP gate requires exactly one historical replay unit")
+    elif not include_historical_replay and historical_count:
+        reasons.append("historical replay units are forbidden by the no-history ablation")
     for unit in units:
         ok, reason = _check_unit(
             unit,
@@ -304,6 +316,7 @@ def evaluate_repair_gate(
             for unit in units
         ),
         partial_episode_refs=partial_episode_refs,
+        historical_replay_included=include_historical_replay,
     )
 
 

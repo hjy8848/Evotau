@@ -37,7 +37,8 @@ class ServiceRepairInput:
     fixed_policy_text: str | None
     current_service: ServiceStrategy
     prior_same_signature_failures: tuple[FailureRecord, ...]
-    incumbent_passing_history: EpisodeRecord
+    # None only in the preregistered no-historical-replay ablation.
+    incumbent_passing_history: EpisodeRecord | None
 
 
 ProposalProvider = Callable[[ServiceRepairInput], RepairProposal]
@@ -52,7 +53,8 @@ class GatedServiceTransition:
     counted by the controller's shared ``RequestBudget`` instrumentation.
     Gate panels use E for target/history/clean, V for adversarial validation,
     and a deterministic seed range disjoint from Customer discovery and
-    confirmation panels.
+    confirmation panels. The no-history ablation omits only the historical
+    incumbent-passing replay; target, clean, and validation gates remain.
     """
 
     evolution_task_id: str
@@ -64,6 +66,7 @@ class GatedServiceTransition:
     token_counter: Callable[[str], int]
     evolution_task_ids: tuple[str, ...] = ()
     validation_task_ids: tuple[str, ...] = ()
+    include_historical_replay: bool = True
 
     def __post_init__(self) -> None:
         if not self.evolution_task_id or not self.validation_task_id:
@@ -76,6 +79,8 @@ class GatedServiceTransition:
             raise TypeError("Service transition requires proposal and independent audit providers")
         if not callable(self.token_counter):
             raise TypeError("Service transition requires the frozen agent-model token counter")
+        if type(self.include_historical_replay) is not bool:
+            raise TypeError("include_historical_replay must be a boolean")
         e_tasks = self.evolution_task_ids or (self.evolution_task_id,)
         v_tasks = self.validation_task_ids or (self.validation_task_id,)
         if (not e_tasks or not v_tasks or len(set(e_tasks)) != len(e_tasks)
@@ -108,12 +113,15 @@ class GatedServiceTransition:
         target, target_customer, target_episode = self._select_target(failures, episode_runner)
         if target is None or target_customer is None or target_episode is None:
             return incumbent, None, "inconclusive: no E-task verified failure has resolvable strategy and trajectory evidence"
-        historical = self._select_historical(episode_runner, incumbent, task_id=target.task_id)
-        if historical is None:
-            return incumbent, None, "inconclusive: no valid incumbent-passing E-task replay is available"
-        history_customer = episode_runner.resolve_customer_strategy(historical.customer_strategy_id)
-        if history_customer is None:
-            return incumbent, None, "inconclusive: historical replay Customer snapshot is unavailable"
+        historical = None
+        history_customer = None
+        if self.include_historical_replay:
+            historical = self._select_historical(episode_runner, incumbent, task_id=target.task_id)
+            if historical is None:
+                return incumbent, None, "inconclusive: no valid incumbent-passing E-task replay is available"
+            history_customer = episode_runner.resolve_customer_strategy(historical.customer_strategy_id)
+            if history_customer is None:
+                return incumbent, None, "inconclusive: historical replay Customer snapshot is unavailable"
         try:
             target_trajectory = episode_runner.load_trajectory(target_episode)
         except (OSError, ValueError):
@@ -143,7 +151,8 @@ class GatedServiceTransition:
         s0_id = service_strategy_id(self.initial_service)
         requires_separate_s0_anchor = service_strategy_id(incumbent) != s0_id
         required_episodes = (
-            6 + 2 * len(self.e_tasks) + 2 * len(self.v_tasks)
+            4 + (2 if self.include_historical_replay else 0)
+            + 2 * len(self.e_tasks) + 2 * len(self.v_tasks)
             + (len(self.e_tasks) if requires_separate_s0_anchor else 0)
         )
         if episode_runner.remaining_episodes < required_episodes:
@@ -183,6 +192,7 @@ class GatedServiceTransition:
                 incumbent, incumbent, (), target_failure=target, proposal=proposal,
                 audit=audit, initial_service_strategy_id=s0_id,
                 token_counter=self.token_counter,
+                include_historical_replay=self.include_historical_replay,
             )
             return incumbent, report, "rejected: static policy audit or repair constraints failed"
         if candidate == incumbent:
@@ -190,6 +200,7 @@ class GatedServiceTransition:
                 incumbent, candidate, (), target_failure=target, proposal=proposal,
                 audit=audit, initial_service_strategy_id=s0_id,
                 token_counter=self.token_counter,
+                include_historical_replay=self.include_historical_replay,
             )
             return incumbent, report, "rejected: repair does not change the incumbent Service strategy"
 
@@ -200,6 +211,7 @@ class GatedServiceTransition:
                     incumbent, candidate, (), target_failure=target, proposal=proposal,
                     audit=audit, initial_service_strategy_id=s0_id,
                     token_counter=self.token_counter, inconclusive=True,
+                    include_historical_replay=self.include_historical_replay,
                 )
                 return incumbent, report, (
                     "inconclusive: proposal and audit left fewer provider attempts than the "
@@ -244,15 +256,17 @@ class GatedServiceTransition:
                 break
         if stopped_for_budget is None:
             try:
-                units.append(run_pair(
-                    key="historical-1", panel="historical", task_id=historical.task_id,
-                    seed=base_seed + 2, panel_name="historical-1",
-                    fixed_customer=history_customer,
-                ))
+                if self.include_historical_replay:
+                    assert historical is not None and history_customer is not None
+                    units.append(run_pair(
+                        key="historical-1", panel="historical", task_id=historical.task_id,
+                        seed=base_seed + 2, panel_name="historical-1",
+                        fixed_customer=history_customer,
+                    ))
                 for index, task_id in enumerate(self.e_tasks, start=1):
                     unit_key = f"clean-{index}"
                     panel_suffix = "clean" if len(self.e_tasks) == 1 else unit_key
-                    seed = base_seed + 2 + index
+                    seed = base_seed + 1 + int(self.include_historical_replay) + index
                     clean_old = episode_runner(
                         task_id=task_id, seed=seed, customer=None,
                         service=incumbent,
@@ -288,7 +302,8 @@ class GatedServiceTransition:
                 for index, task_id in enumerate(self.v_tasks, start=1):
                     units.append(run_pair(
                         key=f"validation-{index}", panel="validation", task_id=task_id,
-                        seed=base_seed + 2 + len(self.e_tasks) + index,
+                        seed=base_seed + 1 + int(self.include_historical_replay)
+                        + len(self.e_tasks) + index,
                         panel_name=f"validation-{index}", fixed_customer=customer,
                     ))
             except Exception as exc:
@@ -301,9 +316,14 @@ class GatedServiceTransition:
             proposal=proposal, audit=audit, initial_service_strategy_id=s0_id,
             token_counter=self.token_counter, inconclusive=stopped_for_budget is not None,
             partial_episode_refs=tuple(partial_episode_refs),
+            include_historical_replay=self.include_historical_replay,
         )
         if report.accepted:
-            return candidate, report, "accepted: complete target/history/clean/validation gate passed"
+            panels = (
+                "target/history/clean/validation"
+                if self.include_historical_replay else "target/clean/validation"
+            )
+            return candidate, report, f"accepted: complete {panels} gate passed"
         if stopped_for_budget is not None:
             return incumbent, report, (
                 "inconclusive: request or episode budget exhausted during the paired gate; "

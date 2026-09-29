@@ -159,6 +159,30 @@ def test_gated_transition_executes_complete_paired_gate_and_accepts_only_candida
     assert any(call["task_id"] == "V" and call["customer"] == customer for call in calls)
 
 
+def test_no_historical_replay_ablation_skips_history_and_records_gate_condition():
+    customer, incumbent, failure, _historical, calls, proposals, episode_runner, transition = _fixture()
+    source = episode_runner.find_failure_episode(failure)
+    episode_runner.episode_history = (source,)
+    transition = replace(transition, include_historical_replay=False)
+
+    candidate, report, note = transition(
+        0, customer, incumbent, (failure,), episode_runner, None,
+    )
+
+    assert candidate != incumbent
+    assert report is not None and report.accepted
+    assert report.historical_replay_included is False
+    assert report.to_dict()["historical_replay_included"] is False
+    assert all(unit[0] != "historical-1" for unit in report.unit_episode_refs)
+    assert len(report.unit_episode_refs) == 4
+    assert len(calls) == 8
+    assert not any("historical" in call["panel_name"] for call in calls)
+    assert sorted({call["seed"] for call in calls}) == [20_010, 20_011, 20_012, 20_013]
+    assert len(proposals) == 1
+    assert proposals[0][1] == failure.failure_id
+    assert note.startswith("accepted:")
+
+
 def test_gated_transition_pairs_clean_and_validation_units_across_pilot_panels():
     customer, incumbent, failure, _historical, calls, _proposals, episode_runner, transition = _fixture(
         remaining_episodes=14,

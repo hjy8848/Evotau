@@ -292,6 +292,70 @@ def run_customer_round(
     )
 
 
+def run_frozen_customer_round(
+    runner: EpisodeRunner,
+    *,
+    incumbent: CustomerStrategy,
+    service: ServiceStrategy,
+    task_ids: tuple[str, ...],
+    seeds: tuple[int, ...],
+    generation: int,
+    verification_refs: dict[str, str] | None = None,
+    failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
+    confirmation_task_ids: tuple[str, ...] = (),
+    confirmation_seeds: tuple[int, ...] = (),
+    request_budget: RequestBudget | None = None,
+) -> CustomerRound:
+    """Collect fixed-Customer failure evidence without proposing or testing mutations."""
+
+    incumbent_evaluation = evaluate_customer_panel(
+        runner,
+        task_ids=task_ids,
+        seeds=seeds,
+        strategy=incumbent,
+        service=service,
+        panel_name="discovery",
+        generation=generation,
+        strategy_seen_failures=verification_refs,
+        failure_verifier=failure_verifier,
+        request_budget=request_budget,
+    )
+    confirmations: tuple[CandidateEvaluation, ...] = ()
+    if incumbent_evaluation.provisional_failure_events and confirmation_task_ids:
+        confirmation = evaluate_customer_panel(
+            runner,
+            task_ids=confirmation_task_ids,
+            seeds=confirmation_seeds,
+            strategy=incumbent,
+            service=service,
+            panel_name="confirmation",
+            generation=generation,
+            strategy_seen_failures=verification_refs,
+            failure_verifier=failure_verifier,
+            request_budget=request_budget,
+        )
+        incumbent_evaluation, confirmation, _failures = confirm_failure_reproductions(
+            incumbent_evaluation, confirmation, generation=generation,
+        )
+        confirmations = (confirmation,)
+    strategy_id = customer_strategy_id(incumbent)
+    selection = SelectionDecision(
+        incumbent_id=strategy_id,
+        selected_id=strategy_id,
+        evolved=False,
+        reason="Customer is frozen by the registered ablation",
+        discovery_scores=((strategy_id, incumbent_evaluation.fitness),),
+    )
+    return CustomerRound(
+        incumbent=incumbent_evaluation,
+        proposals=(),
+        candidates=(),
+        selection=selection,
+        verified_failures=incumbent_evaluation.verified_failures,
+        confirmation_evaluations=confirmations,
+    )
+
+
 def _choose_failure_replay_probe(
     incumbent: CandidateEvaluation,
     candidates: tuple[CandidateEvaluation, ...],
@@ -543,6 +607,7 @@ class TwoGenerationSmoke:
             customer_proposal_provider: OperatorSelector | None = None,
             customer_proposal_mode: str = "failure_conditioned",
             allow_frozen_service: bool = False,
+            freeze_customer: bool = False,
             allow_strategy_revisit: bool = False,
             candidates_per_generation: int = 2) -> tuple[GenerationCommit, ...]:
         """Execute two Customer-first generations on E with a fresh confirmation seed.
@@ -560,6 +625,8 @@ class TwoGenerationSmoke:
             raise ValueError("Customer proposal mode must be failure_conditioned or random_mutation")
         if type(allow_frozen_service) is not bool:
             raise TypeError("allow_frozen_service must be boolean")
+        if type(freeze_customer) is not bool:
+            raise TypeError("freeze_customer must be boolean")
         if type(allow_strategy_revisit) is not bool:
             raise TypeError("allow_strategy_revisit must be boolean")
         if isinstance(self.manifest, MechanismManifest):
@@ -578,8 +645,13 @@ class TwoGenerationSmoke:
             )
             if customer_proposal_mode != expected_mode:
                 raise ValueError("Pilot condition and Customer proposal mode differ")
-            if allow_frozen_service != (self.manifest.condition == "random_mutation"):
-                raise ValueError("only the random-mutation Pilot control freezes Service without repair")
+            expected_frozen_service = self.manifest.condition in {
+                "random_mutation", "frozen_service", "adaptive_customer",
+            }
+            if allow_frozen_service != expected_frozen_service:
+                raise ValueError("Pilot frozen-Service condition and Service transition differ")
+            if freeze_customer != (self.manifest.condition == "frozen_customer"):
+                raise ValueError("Pilot frozen-Customer condition and Customer update differ")
             if self.manifest.condition == "static_customer" and allow_strategy_revisit:
                 raise ValueError("static_customer Pilot does not use adaptive proposal revisits")
         commits: list[GenerationCommit] = []
@@ -651,24 +723,35 @@ class TwoGenerationSmoke:
                 commits.append(commit)
                 continue
             seed = self.episode_seed_base + generation
-            round_result = run_customer_round(
-                self._run_episode, incumbent=customer, service=service,
-                task_ids=self.evolution_task_ids, seeds=(seed,), generation=generation,
-                proposal_seed=self.seed + generation * 1009, count=candidates_per_generation,
-                verification_refs=verification_refs,
-                failure_verifier=failure_verifier,
-                already_seen=self._progress["seen_strategy_ids"],
-                prior_failures=(
-                    () if self.failure_archive is None
-                    else self.failure_archive.active_representatives(current_generation=generation)
-                ),
-                confirmation_task_ids=self.evolution_task_ids,
-                confirmation_seeds=(self.episode_seed_base + 10_000 + generation,),
-                request_budget=self.request_budget,
-                proposal_provider=customer_proposal_provider,
-                proposal_mode=customer_proposal_mode,
-                allow_strategy_revisit=allow_strategy_revisit,
-            )
+            if freeze_customer:
+                round_result = run_frozen_customer_round(
+                    self._run_episode, incumbent=customer, service=service,
+                    task_ids=self.evolution_task_ids, seeds=(seed,), generation=generation,
+                    verification_refs=verification_refs,
+                    failure_verifier=failure_verifier,
+                    confirmation_task_ids=self.evolution_task_ids,
+                    confirmation_seeds=(self.episode_seed_base + 10_000 + generation,),
+                    request_budget=self.request_budget,
+                )
+            else:
+                round_result = run_customer_round(
+                    self._run_episode, incumbent=customer, service=service,
+                    task_ids=self.evolution_task_ids, seeds=(seed,), generation=generation,
+                    proposal_seed=self.seed + generation * 1009, count=candidates_per_generation,
+                    verification_refs=verification_refs,
+                    failure_verifier=failure_verifier,
+                    already_seen=self._progress["seen_strategy_ids"],
+                    prior_failures=(
+                        () if self.failure_archive is None
+                        else self.failure_archive.active_representatives(current_generation=generation)
+                    ),
+                    confirmation_task_ids=self.evolution_task_ids,
+                    confirmation_seeds=(self.episode_seed_base + 10_000 + generation,),
+                    request_budget=self.request_budget,
+                    proposal_provider=customer_proposal_provider,
+                    proposal_mode=customer_proposal_mode,
+                    allow_strategy_revisit=allow_strategy_revisit,
+                )
             old_customer = customer
             if round_result.selection.evolved:
                 selected = next(item.strategy for item in round_result.proposals
