@@ -148,11 +148,17 @@ class ServiceStrategy:
         return {"rules": [rule.to_dict() for rule in self.rules]}
 
 
-def render_customer_strategy(strategy: CustomerStrategy | None) -> str:
+def render_customer_strategy(strategy: CustomerStrategy | None | object) -> str:
     """Render the bounded fields as a separate block subordinate to tau-bench inputs."""
 
     if strategy is None:
         return ""
+    if getattr(strategy, "is_skill_v3", False):
+        from .customer_skill_v3 import render_customer_skill_v3
+
+        return render_customer_skill_v3(strategy)
+    if not isinstance(strategy, CustomerStrategy):
+        raise TypeError("Customer overlay must be a CustomerStrategy or CustomerSkill")
     if strategy.is_v2:
         return _render_customer_strategy_v2(strategy)
     disclosure_text = {

@@ -68,6 +68,37 @@ An opt-in direct-strategy variant is available only in the separate activation-s
 
 The successful InferAI DeepSeek V4 Flash proposal-only smoke is archived at `experiments/results/customer-evolver-proposal-smoke-inferai-deepseek-v4-flash-attempt3-20261003/proposal-smoke.json`. It returned two schema-valid exploratory strategies in one completion (1,034 prompt and 232 completion tokens); no task IDs, failure evidence, or benchmark episodes were involved. LiteLLM has no price entry for this model, so the artifact records usage but not a billed amount. Earlier invalid responses and their validation diagnostics are retained in the neighboring attempt artifacts.
 
+### Customer Evolver V3: bounded open-ended skills
+
+`customer_evolver_schema: skill_v3` adds an opt-in Customer representation beside V2. V3 evolves one small, reusable natural-language interaction procedure with a fixed trigger, ordered steps, stop condition, hypothesis, and evidence references; the deterministic renderer supplies immutable factual-safety invariants and appends the skill inside `<evotau_customer_skill>` after τ-bench's native Customer prompt. The native system prompt, task scenario, policy, tools, and evaluator stay upstream-owned. V3's E-only reflection is sanitized, while candidate selection continues to use only independently reproduced and audited policy-attributable Service failures. A novel skill, a native task failure, or a Customer-invalid episode cannot increase fitness. V1/V2 artifacts and default behavior remain unchanged.
+
+The frozen InferAI DeepSeek V4 Flash configs for this mechanism are `configs/customer-skill-v3-proposal-smoke-inferai-deepseek-v4-flash-20261003.yaml`, `configs/customer-skill-v3-behavior-smoke-inferai-deepseek-v4-flash-20261003.yaml`, and the paired `configs/customer-representation-v2-inferai-deepseek-v4-flash-bounded-20261003.yaml` / `configs/customer-representation-v3-inferai-deepseek-v4-flash-bounded-20261003.yaml`. The proposal smoke asks for K=2 candidates in a single provider-only request, with no τ-bench episode. After it passes, the behavior smoke runs a matched Task 22 V2/V3 pair at seed 1, freezes Service S0, and verifies native prompt/scenario preservation. The paired activation arms then use the same reviewed E panel, baseline, S0, provider settings, seeds, evaluator, concurrency, retry policy, and 1,800-attempt ceiling per arm. The Task 22 reflection input contains only an abstract disputed `unsupported_factual_detail` signal, marked ineligible for fitness.
+
+With pinned τ-bench data and `OPENAI_API_KEY` injected from the local secret store, run the stages in order:
+
+```sh
+python -m evotau.customer_skill_v3_smoke \
+  --config configs/customer-skill-v3-proposal-smoke-inferai-deepseek-v4-flash-20261003.yaml \
+  --tau2-data-dir /path/to/pinned-tau2-bench/data
+
+python -m evotau.customer_skill_v3_behavior_smoke \
+  --config configs/customer-skill-v3-behavior-smoke-inferai-deepseek-v4-flash-20261003.yaml \
+  --tau2-data-dir /path/to/pinned-tau2-bench/data \
+  --provider-plugin evotau.provider_plugins.deepseek_v4_flash:build_callbacks
+
+python -m evotau.activation_smoke_run \
+  --config configs/customer-representation-v2-inferai-deepseek-v4-flash-bounded-20261003.yaml \
+  --tau2-data-dir /path/to/pinned-tau2-bench/data \
+  --provider-plugin evotau.provider_plugins.deepseek_v4_flash:build_callbacks
+
+python -m evotau.activation_smoke_run \
+  --config configs/customer-representation-v3-inferai-deepseek-v4-flash-bounded-20261003.yaml \
+  --tau2-data-dir /path/to/pinned-tau2-bench/data \
+  --provider-plugin evotau.provider_plugins.deepseek_v4_flash:build_callbacks
+```
+
+Each stage writes to its own immutable directory under `experiments/results/`; a retry needs a newly reviewed config and output path. The V2 comparison arm receives the same sanitized reflection seed, but reflection is opt-in so the existing V2 default is unchanged. V3 proposal attempts are accounted separately in run telemetry and checkpoint decisions. These bounded representation runs are mechanism evidence only and do not change Pilot or Formal.
+
 Independent episode audits separately record factual Customer validity, whether an EvoTau behavior had an opportunity to apply, adherence when applicable, and the count of invalid repeated write calls. `None` can run the native τ-bench Customer without a strategy overlay; Service clean-gate pairs require that mode, while adversarial target/history/validation pairs must have an applicable, adherent Customer strategy. A Service gate fails closed when repeated-write audit counts are missing or the candidate adds one. Cross-play reports the count and audit coverage so unknown observations stay visible; attribution rates use applicable, adherent episodes as their denominator.
 
 Customer mutation records now include exact changed fields, the expected behavioral effect, and the failure IDs that support a failure-conditioned proposal. `FailureArchive.active_representatives()` caps replay representatives at 32, orders them deterministically by recent recurrence, severity, replay coverage, and recency, and retains the full append-only history. `mark_replayed()` and `active_replay_coverage()` report representative coverage; each generation checkpoint stores the resulting coverage snapshot with its decision. `evotau.calibration.calibrate_attribution()` reports whether independent double review of at least 30 distinct candidate positives meets the plan's 90% conservative precision and 10% critical-fact dispute thresholds. It returns `insufficient_evidence` or `pause_automation` when the corresponding condition is not met; it does not generate human reviews.

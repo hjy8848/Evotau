@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from .manifest import sha256_json
-from .records import EvidenceRef, FailureRecord, FailureSignature
+from .records import EvidenceRef, FailureRecord, FailureSignature, customer_strategy_id
 from .strategies import CustomerStrategy, ServiceStrategy
 
 MAX_ACTIVE_FAILURE_REPRESENTATIVES = 32
@@ -67,11 +67,11 @@ class FailureArchive:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )""")
 
-    def append_customer_strategy(self, strategy: CustomerStrategy, *, parent_id: str | None,
+    def append_customer_strategy(self, strategy: CustomerStrategy | object, *, parent_id: str | None,
                                  operator: str, generation: int) -> bool:
         if generation < 0 or not operator:
             raise ValueError("Customer strategy archive requires a non-negative generation and operator")
-        strategy_id = sha256_json(strategy.to_dict())[:16]
+        strategy_id = customer_strategy_id(strategy)
         payload = json.dumps(strategy.to_dict(), sort_keys=True, separators=(",", ":"))
         with self._connect() as db:
             cursor = db.execute(
@@ -85,7 +85,7 @@ class FailureArchive:
             rows = db.execute("SELECT strategy_id FROM customer_strategies").fetchall()
         return frozenset(row["strategy_id"] for row in rows)
 
-    def get_customer_strategy(self, strategy_id: str) -> CustomerStrategy | None:
+    def get_customer_strategy(self, strategy_id: str) -> CustomerStrategy | object | None:
         """Resolve one immutable Customer snapshot by its canonical strategy ID."""
         if not isinstance(strategy_id, str) or not strategy_id.strip():
             raise ValueError("Customer strategy lookup requires a non-empty strategy ID")
@@ -94,7 +94,14 @@ class FailureArchive:
                 "SELECT payload FROM customer_strategies WHERE strategy_id=?",
                 (strategy_id,),
             ).fetchone()
-        return None if row is None else CustomerStrategy(**json.loads(row["payload"]))
+        if row is None:
+            return None
+        value = json.loads(row["payload"])
+        if value.get("schema_version") == 3:
+            from .lifecycle import _customer_from_dict
+
+            return _customer_from_dict(value)
+        return CustomerStrategy(**value)
 
     def customer_strategies(self, limit: int = 100) -> tuple[dict, ...]:
         if limit < 0:

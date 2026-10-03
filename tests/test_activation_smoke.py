@@ -86,6 +86,37 @@ def test_activation_can_freeze_v2_strategy_proposals_without_changing_legacy_pro
         ActivationSmokeManifest.from_mapping(config, task_review_document=reviewed_panel())
 
 
+def test_skill_v3_is_explicit_and_representation_comparison_freezes_service_reflection_and_budget() -> None:
+    config = activation_config()
+    config["experiment"]["condition"] = "customer_representation_comparison"
+    config["experiment"]["customer_evolver_schema"] = "skill_v3"
+    config["experiment"]["customer_strategy"] = CustomerStrategy.v2_baseline().to_dict()
+    config["experiment"]["reflection_seed_path"] = "experiments/preflights/reflection.json"
+    config["experiment"]["reflection_seed_sha256"] = "a" * 64
+    for args in config["experiment"]["model_args"].values():
+        args.pop("max_tokens", None)
+    manifest = ActivationSmokeManifest.from_mapping(
+        config, task_review_document=reviewed_panel(),
+    )
+    payload = manifest.to_payload()
+    assert manifest.customer_evolver_schema == "skill_v3"
+    assert manifest.condition == "customer_representation_comparison"
+    assert manifest.reflection_seed_sha256 == "a" * 64
+    assert payload["reflection_seed_sha256"] == "a" * 64
+    assert all("max_tokens" not in args for _, args in manifest.role_model_args)
+
+    invalid = dict(config["experiment"]["model_args"])
+    invalid["customer"] = {**invalid["customer"], "max_tokens": 512}
+    config["experiment"]["model_args"] = invalid
+    with pytest.raises(ValueError, match="omit max_tokens"):
+        ActivationSmokeManifest.from_mapping(config, task_review_document=reviewed_panel())
+
+    config = activation_config()
+    config["experiment"]["customer_evolver_schema"] = "skill_v9"
+    with pytest.raises(ValueError, match="unsupported activation Customer Evolver schema"):
+        ActivationSmokeManifest.from_mapping(config, task_review_document=reviewed_panel())
+
+
 def test_uncapped_request_budget_is_only_enabled_for_explicit_diagnostic_config() -> None:
     config = activation_config()
     config["experiment"]["request_budget_cap"] = None

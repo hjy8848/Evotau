@@ -6,7 +6,9 @@ silently interprets a task failure as an attributed Service failure.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -24,13 +26,20 @@ from .checkpoint import (
     save_checkpoint,
 )
 from .customer_evolver import (
-    OperatorSelector,
     propose_customer_candidates_with_selector,
 )
 from .customer_evolver_v2 import (
     STRATEGY_FIELDS,
-    StrategyProposalProvider,
     propose_customer_strategies,
+)
+from .customer_skill_v3 import (
+    MAX_TESTED_SKILL_MEMORY,
+    CustomerSkill,
+    CustomerSkillCandidate,
+    propose_customer_skills,
+    render_customer_skill_v3,
+    sanitized_reflection_context,
+    validate_skill,
 )
 from .episode_execution import (
     EpisodeSpec,
@@ -117,6 +126,34 @@ class CustomerRound:
     selection: SelectionDecision
     verified_failures: tuple[FailureRecord, ...]
     confirmation_evaluations: tuple[CandidateEvaluation, ...] = ()
+    proposal_usage: Mapping[str, Any] | None = None
+
+
+def _request_budget_delta(before: BudgetSnapshot | None, after: BudgetSnapshot | None) -> dict[str, Any] | None:
+    if before is None or after is None:
+        return None
+    counters = (
+        "attempts", "successes", "failures", "denied", "prompt_tokens",
+        "completion_tokens", "usage_responses", "usage_unavailable", "cache_hits",
+    )
+    before_models = {item.model_id: item for item in before.model_usage}
+    after_models = {item.model_id: item for item in after.model_usage}
+    model_usage = []
+    for model_id in sorted(set(before_models) | set(after_models)):
+        left = before_models.get(model_id)
+        right = after_models.get(model_id)
+        model_usage.append({
+            "model_id": model_id,
+            **{
+                name: getattr(right, name, 0) - getattr(left, name, 0)
+                for name in counters
+            },
+        })
+    return {
+        "cap": after.cap,
+        **{name: getattr(after, name) - getattr(before, name) for name in counters},
+        "model_usage": model_usage,
+    }
 
 
 def evaluate_customer_panel(
@@ -246,7 +283,7 @@ def _evaluate_customer_panels(
 def run_customer_round(
     runner: EpisodeRunner,
     *,
-    incumbent: CustomerStrategy,
+    incumbent: Any,
     service: ServiceStrategy,
     task_ids: tuple[str, ...],
     seeds: tuple[int, ...],
@@ -258,6 +295,10 @@ def run_customer_round(
     already_seen: tuple[str, ...] | frozenset[str] = (),
     already_tested_strategies: tuple[CustomerStrategy, ...] = (),
     prior_failures: tuple[FailureRecord, ...] = (),
+    reflection_seed_signals: Mapping[str, Any] | None = None,
+    already_tested_skills: tuple[CustomerSkill, ...] = (),
+    tested_skill_memory: tuple[Mapping[str, Any], ...] = (),
+    enable_reflective_proposals: bool = False,
     confirmation_task_ids: tuple[str, ...] = (),
     confirmation_seeds: tuple[int, ...] = (),
     request_budget: RequestBudget | None = None,
@@ -268,11 +309,12 @@ def run_customer_round(
     should_pause: Callable[[], bool] | None = None,
     episode_finished: Callable[[EpisodeSpec], None] | None = None,
     batch_finished: Callable[[], None] | None = None,
-    proposal_provider: OperatorSelector | StrategyProposalProvider | None = None,
+    proposal_provider: Any | None = None,
     proposal_mode: str = "failure_conditioned",
     allow_strategy_revisit: bool = False,
-    frozen_proposals: tuple[CustomerCandidate, ...] | None = None,
-    proposals_ready: Callable[[tuple[CustomerCandidate, ...]], None] | None = None,
+    frozen_proposals: tuple[Any, ...] | None = None,
+    frozen_proposal_usage: Mapping[str, Any] | None = None,
+    proposals_ready: Callable[[tuple[Any, ...], Mapping[str, Any]], None] | None = None,
 ) -> CustomerRound:
     """Evaluate a shared panel, then replay audited signals before scoring failures."""
     if (not task_ids or not seeds or len(set(task_ids)) != len(task_ids)
@@ -305,11 +347,22 @@ def run_customer_round(
         failure_verifier=failure_verifier,
         **execution_options,
     )
-    if proposal_mode not in {"failure_conditioned", "random_mutation", "strategy_v2"}:
+    if proposal_mode not in {"failure_conditioned", "random_mutation", "strategy_v2", "skill_v3"}:
         raise ValueError("unsupported Customer proposal mode")
     if type(allow_strategy_revisit) is not bool:
         raise TypeError("allow_strategy_revisit must be boolean")
+    proposal_budget_before = None if request_budget is None else request_budget.snapshot()
     seen_for_proposal = () if allow_strategy_revisit else already_seen
+    if type(enable_reflective_proposals) is not bool:
+        raise TypeError("enable_reflective_proposals must be boolean")
+    reflection_feedback = (
+        sanitized_reflection_context(
+            incumbent_eval,
+            prior_signals=reflection_seed_signals,
+            verified_failures=prior_failures,
+        )
+        if enable_reflective_proposals or proposal_mode == "skill_v3" else None
+    )
     if proposal_mode == "strategy_v2":
         if frozen_proposals is not None:
             candidates = frozen_proposals
@@ -344,6 +397,9 @@ def run_customer_round(
                 "already_seen": tuple(seen_for_proposal),
                 "already_tested_strategies": already_tested_strategies,
                 "evolution_task_ids": task_ids,
+                "reflection_feedback": reflection_feedback or sanitized_reflection_context(
+                    incumbent_eval, verified_failures=prior_failures,
+                ),
                 "proposal_provider": proposal_provider,
             }
             if request_budget is None:
@@ -355,8 +411,61 @@ def run_customer_round(
                     llm_utils, retry_empty_responses=True,
                 ):
                     candidates = propose_customer_strategies(incumbent, count, **proposal_kwargs)
-            if proposals_ready is not None:
-                proposals_ready(candidates)
+    elif proposal_mode == "skill_v3":
+        if frozen_proposals is not None:
+            candidates = frozen_proposals
+            parent_id = customer_strategy_id(incumbent)
+            verified_ids = {item.failure_id for item in prior_failures}
+            candidate_ids = {item.strategy_id for item in candidates}
+            if (len(candidates) != count or len(candidate_ids) != count
+                    or any(
+                        not isinstance(item, CustomerSkillCandidate)
+                        or not isinstance(item.strategy, CustomerSkill)
+                        or item.parent_id != parent_id
+                        or item.operator not in {"create", "refine", "replace"}
+                        or item.generation != generation
+                        or item.strategy_id in set(seen_for_proposal) | {parent_id}
+                        or not all(re.fullmatch(r"[0-9a-f]{64}", value or "") for value in (
+                            item.proposal_context_sha256,
+                            item.proposal_response_sha256,
+                            item.rendered_skill_sha256,
+                        ))
+                        or not set(item.supporting_failure_ids) <= verified_ids
+                        or item.supporting_failure_ids != item.strategy.evidence_refs
+                        or item.rendered_skill_sha256 != hashlib.sha256(
+                            render_customer_skill_v3(item.strategy).encode("utf-8")
+                        ).hexdigest()
+                        or validate_skill(
+                            item.strategy.to_dict()["skill"], incumbent=incumbent,
+                            operation=item.operator, verified_failure_ids=tuple(verified_ids),
+                            forbidden_literals=tuple(getattr(runner, "customer_skill_forbidden_literals", ())),
+                        ) != item.strategy
+                        for item in candidates
+                    )):
+                raise ValueError("frozen skill_v3 proposals differ from the incumbent or tested set")
+        else:
+            if proposal_provider is None:
+                raise ValueError("skill_v3 Customer evolution requires a skill proposal provider")
+            proposal_kwargs = {
+                "generation": generation,
+                "seed": proposal_seed,
+                "recent_failures": prior_failures,
+                "already_seen": tuple(seen_for_proposal),
+                "already_tested_skills": already_tested_skills,
+                "tested_skill_memory": tested_skill_memory,
+                "reflection_feedback": reflection_feedback,
+                "forbidden_literals": tuple(getattr(runner, "customer_skill_forbidden_literals", ())),
+                "proposal_provider": proposal_provider,
+            }
+            if request_budget is None:
+                candidates = propose_customer_skills(incumbent, count, **proposal_kwargs)
+            else:
+                from tau2.utils import llm_utils
+
+                with request_budget.instrument_tau_llm_utils(
+                    llm_utils, retry_empty_responses=True,
+                ):
+                    candidates = propose_customer_skills(incumbent, count, **proposal_kwargs)
     elif proposal_mode == "random_mutation":
         if frozen_proposals is not None or proposals_ready is not None:
             raise ValueError("frozen strategy proposals require strategy_v2 mode")
@@ -391,6 +500,16 @@ def run_customer_round(
                 recent_failures=prior_failures, already_seen=tuple(seen_for_proposal),
                 evolution_task_ids=task_ids, operator_selector=proposal_provider,
             )
+    proposal_usage = (
+        dict(frozen_proposal_usage or {})
+        if frozen_proposals is not None
+        else _request_budget_delta(
+            proposal_budget_before,
+            None if request_budget is None else request_budget.snapshot(),
+        )
+    )
+    if proposals_ready is not None and proposal_mode in {"strategy_v2", "skill_v3"}:
+        proposals_ready(candidates, proposal_usage)
     evaluations = list(_evaluate_customer_panels(
         runner, task_ids=task_ids, seeds=seeds,
         strategies=tuple(candidate.strategy for candidate in candidates), service=service,
@@ -443,7 +562,7 @@ def run_customer_round(
     return CustomerRound(
         incumbent_eval, candidates, tuple(evaluations), selection,
         tuple(failures_by_id[key] for key in sorted(failures_by_id)),
-        tuple(confirmation_evaluations),
+        tuple(confirmation_evaluations), proposal_usage,
     )
 
 
@@ -760,7 +879,7 @@ class TwoGenerationSmoke:
     def _persist_progress(self) -> None:
         if self._progress is None:
             return
-        customer = self._last_customer or CustomerStrategy(**self._progress["customer"])
+        customer = self._last_customer or _customer_from_dict(self._progress["customer"])
         service = self._last_service or _service_from_dict(self._progress["service"])
         progress = {
             "generation": self._progress["generation"],
@@ -805,7 +924,7 @@ class TwoGenerationSmoke:
         elif existing != coverage:
             raise ValueError("prepared generation replay-coverage summary changed during recovery")
 
-    def commit_generation(self, generation: int, customer: CustomerStrategy,
+    def commit_generation(self, generation: int, customer: Any,
                           service: ServiceStrategy, *, note: str = "",
                           customer_evolved: bool = False, service_evolved: bool = False,
                           decision_record: dict[str, Any] | None = None) -> GenerationCommit:
@@ -851,12 +970,14 @@ class TwoGenerationSmoke:
         self._progress = None
         return commit
 
-    def run(self, customer: CustomerStrategy, service: ServiceStrategy, *,
+    def run(self, customer: Any, service: ServiceStrategy, *,
             verification_refs: dict[str, str] | None = None,
             failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
             service_transition: ServiceTransition | None = None,
-            customer_proposal_provider: OperatorSelector | StrategyProposalProvider | None = None,
+            customer_proposal_provider: Any | None = None,
             customer_proposal_mode: str = "failure_conditioned",
+            reflection_seed_signals: Mapping[str, Any] | None = None,
+            enable_reflective_proposals: bool = False,
             allow_frozen_service: bool = False,
             freeze_customer: bool = False,
             allow_strategy_revisit: bool = False,
@@ -872,7 +993,7 @@ class TwoGenerationSmoke:
         """
         if candidates_per_generation != 2:
             raise ValueError("minimal smoke freezes K=2 Customer candidates per generation")
-        if customer_proposal_mode not in {"failure_conditioned", "random_mutation", "strategy_v2"}:
+        if customer_proposal_mode not in {"failure_conditioned", "random_mutation", "strategy_v2", "skill_v3"}:
             raise ValueError("unsupported Customer proposal mode")
         if type(allow_frozen_service) is not bool:
             raise TypeError("allow_frozen_service must be boolean")
@@ -907,7 +1028,8 @@ class TwoGenerationSmoke:
                 raise ValueError("static_customer Pilot does not use adaptive proposal revisits")
         if isinstance(self.manifest, Mapping) and self.manifest.get("phase") == "3-multitask-service-repair-activation":
             expected_mode = (
-                "strategy_v2" if self.manifest.get("customer_evolver_schema") == "strategy_v2"
+                self.manifest.get("customer_evolver_schema")
+                if self.manifest.get("customer_evolver_schema") in {"strategy_v2", "skill_v3"}
                 else "failure_conditioned"
             )
             if customer_proposal_mode != expected_mode:
@@ -924,7 +1046,7 @@ class TwoGenerationSmoke:
             if restored.state.get("episode_seed_base", self.seed) != self.episode_seed_base:
                 raise ValueError("checkpoint episode seed schedule differs from the current seed block")
             self.episode_attempts = int(restored.state.get("episode_attempts", 0))
-            self._last_customer = customer = CustomerStrategy(**restored.state["customer"])
+            self._last_customer = customer = _customer_from_dict(restored.state["customer"])
             self._last_service = service = _service_from_dict(restored.state["service"])
             commits.extend(GenerationCommit(**item) for item in restored.state.get("commits", []))
             self._commit_records = list(restored.state.get("commits", []))
@@ -949,7 +1071,9 @@ class TwoGenerationSmoke:
                 }
                 if "customer_proposals" in progress:
                     self._progress["customer_proposals"] = progress["customer_proposals"]
-                customer = CustomerStrategy(**self._progress["customer"])
+                if "customer_proposal_usage" in progress:
+                    self._progress["customer_proposal_usage"] = progress["customer_proposal_usage"]
+                customer = _customer_from_dict(self._progress["customer"])
                 service = _service_from_dict(self._progress["service"])
                 start_generation = self._progress["generation"]
             else:
@@ -968,7 +1092,7 @@ class TwoGenerationSmoke:
                 }
             prepared = self._progress.get("prepared_generation")
             if prepared is not None:
-                customer = CustomerStrategy(**prepared["customer"])
+                customer = _customer_from_dict(prepared["customer"])
                 service = _service_from_dict(prepared["service"])
                 self._apply_prepared_archive(prepared)
                 expected = GenerationCommit(**prepared["commit"])
@@ -1006,18 +1130,36 @@ class TwoGenerationSmoke:
                     **panel_execution,
                 )
             else:
-                def persist_v2_proposals(proposals: tuple[CustomerCandidate, ...]) -> None:
+                def persist_customer_proposals(
+                    proposals: tuple[Any, ...], usage: Mapping[str, Any],
+                ) -> None:
                     if self._progress is None:
                         raise RuntimeError("Customer proposal checkpoint has no active generation")
                     self._progress["customer_proposals"] = [
-                        _customer_candidate_to_dict(item) for item in proposals
+                        _customer_proposal_to_dict(item) for item in proposals
                     ]
+                    self._progress["customer_proposal_usage"] = dict(usage or {})
                     self._persist_progress()
 
-                frozen_v2 = (
-                    tuple(_customer_candidate_from_dict(item) for item in self._progress["customer_proposals"])
-                    if customer_proposal_mode == "strategy_v2" and "customer_proposals" in self._progress
+                frozen_proposals = (
+                    tuple(_customer_proposal_from_dict(item)
+                          for item in self._progress["customer_proposals"])
+                    if customer_proposal_mode in {"strategy_v2", "skill_v3"}
+                    and "customer_proposals" in self._progress
                     else None
+                )
+                archived_customer_payloads = (
+                    () if self.failure_archive is None else self.failure_archive.customer_strategies(
+                        limit=min(MAX_TESTED_SKILL_MEMORY, len(self._progress["seen_strategy_ids"])),
+                    )
+                )
+                archived_v2_strategies = tuple(
+                    CustomerStrategy(**item) for item in archived_customer_payloads
+                    if item.get("schema_version") != 3
+                )
+                archived_v3_skills = tuple(
+                    _customer_from_dict(item) for item in archived_customer_payloads
+                    if item.get("schema_version") == 3
                 )
                 round_result = run_customer_round(
                     self._run_episode, incumbent=customer, service=service,
@@ -1026,27 +1168,26 @@ class TwoGenerationSmoke:
                     verification_refs=verification_refs,
                     failure_verifier=failure_verifier,
                     already_seen=self._progress["seen_strategy_ids"],
-                    already_tested_strategies=(
-                        () if self.failure_archive is None else tuple(
-                            CustomerStrategy(**item)
-                            for item in self.failure_archive.customer_strategies(
-                                limit=len(self._progress["seen_strategy_ids"]),
-                            )
-                        )
-                    ),
+                    already_tested_strategies=archived_v2_strategies,
+                    already_tested_skills=archived_v3_skills,
+                    tested_skill_memory=_tested_skill_memory_from_commits(self._commit_records),
                     prior_failures=(
                         () if self.failure_archive is None
                         else self.failure_archive.active_representatives(current_generation=generation)
                     ),
+                    reflection_seed_signals=reflection_seed_signals,
+                    enable_reflective_proposals=enable_reflective_proposals,
                     confirmation_task_ids=self.evolution_task_ids,
                     confirmation_seeds=(self.episode_seed_base + 10_000 + generation,),
                     request_budget=self.request_budget,
                     proposal_provider=customer_proposal_provider,
                     proposal_mode=customer_proposal_mode,
                     allow_strategy_revisit=allow_strategy_revisit,
-                    frozen_proposals=frozen_v2,
+                    frozen_proposals=frozen_proposals,
+                    frozen_proposal_usage=self._progress.get("customer_proposal_usage"),
                     proposals_ready=(
-                        persist_v2_proposals if customer_proposal_mode == "strategy_v2" else None
+                        persist_customer_proposals
+                        if customer_proposal_mode in {"strategy_v2", "skill_v3"} else None
                     ),
                     **panel_execution,
                 )
@@ -1178,6 +1319,29 @@ def _service_from_dict(value: dict) -> ServiceStrategy:
     ) for item in value["rules"]))
 
 
+def _customer_from_dict(value: Mapping[str, Any]) -> Any:
+    if value.get("schema_version") == 3:
+        skill_value = value.get("skill")
+        if not isinstance(skill_value, Mapping) or set(value) != {"schema_version", "skill"}:
+            raise ValueError("saved V3 Customer skill has an invalid checkpoint schema")
+        expected = {"name", "trigger", "procedure", "stop_conditions", "hypothesis", "evidence_refs"}
+        if set(skill_value) != expected:
+            raise ValueError("saved V3 Customer skill fields differ from its schema")
+        skill = CustomerSkill(
+            name=skill_value["name"], trigger=skill_value["trigger"],
+            procedure=tuple(skill_value["procedure"]),
+            stop_conditions=skill_value["stop_conditions"],
+            hypothesis=skill_value["hypothesis"],
+            evidence_refs=tuple(skill_value["evidence_refs"]),
+        )
+        validate_skill(
+            skill.to_dict()["skill"], incumbent=CustomerStrategy.v2_baseline(),
+            operation="create", verified_failure_ids=skill.evidence_refs,
+        )
+        return skill
+    return CustomerStrategy(**dict(value))
+
+
 def _budget_snapshot_dict(budget: RequestBudget | None) -> dict | None:
     if budget is None:
         return None
@@ -1211,6 +1375,39 @@ def _customer_candidate_to_dict(candidate: CustomerCandidate) -> dict[str, Any]:
     }
 
 
+def _customer_proposal_to_dict(candidate: Any) -> dict[str, Any]:
+    if isinstance(candidate, CustomerSkillCandidate):
+        return candidate.to_dict()
+    return _customer_candidate_to_dict(candidate)
+
+
+def _customer_proposal_from_dict(value: Mapping[str, Any]) -> Any:
+    if value.get("candidate_schema") == "skill_v3":
+        expected = {
+            "candidate_schema", "strategy_id", "strategy", "parent_id", "operator",
+            "rationale", "changed_fields", "expected_behavioral_effect",
+            "supporting_failure_ids", "proposal_context_sha256", "proposal_response_sha256",
+            "rendered_skill_sha256", "generation",
+        }
+        if set(value) != expected:
+            raise ValueError("saved V3 Customer proposal has an invalid checkpoint schema")
+        candidate = CustomerSkillCandidate(
+            strategy=_customer_from_dict(value["strategy"]),
+            parent_id=value["parent_id"], operator=value["operator"], rationale=value["rationale"],
+            changed_fields=tuple(value["changed_fields"]),
+            expected_behavioral_effect=value["expected_behavioral_effect"],
+            supporting_failure_ids=tuple(value["supporting_failure_ids"]),
+            proposal_context_sha256=value["proposal_context_sha256"],
+            proposal_response_sha256=value["proposal_response_sha256"],
+            rendered_skill_sha256=value["rendered_skill_sha256"],
+            generation=int(value["generation"]),
+        )
+        if candidate.strategy_id != value["strategy_id"]:
+            raise ValueError("saved V3 Customer proposal ID differs from its canonical content")
+        return candidate
+    return _customer_candidate_from_dict(dict(value))
+
+
 def _customer_candidate_from_dict(value: dict[str, Any]) -> CustomerCandidate:
     if not isinstance(value, dict) or set(value) != {
         "strategy_id", "strategy", "parent_id", "operator", "rationale",
@@ -1236,8 +1433,8 @@ def _customer_candidate_from_dict(value: dict[str, Any]) -> CustomerCandidate:
 def _generation_decision_record(
     *,
     generation: int,
-    old_customer: CustomerStrategy,
-    new_customer: CustomerStrategy,
+    old_customer: Any,
+    new_customer: Any,
     old_service: ServiceStrategy,
     new_service: ServiceStrategy,
     round_result: CustomerRound,
@@ -1264,6 +1461,11 @@ def _generation_decision_record(
                     "expected_behavioral_effect": proposal.expected_behavioral_effect,
                     "supporting_failure_ids": list(proposal.supporting_failure_ids),
                     "proposal_context_sha256": proposal.proposal_context_sha256,
+                    **({
+                        "proposal_response_sha256": proposal.proposal_response_sha256,
+                        "rendered_skill_sha256": proposal.rendered_skill_sha256,
+                        "generation": proposal.generation,
+                    } if isinstance(proposal, CustomerSkillCandidate) else {}),
                 }
                 for proposal in round_result.proposals
             ],
@@ -1272,6 +1474,7 @@ def _generation_decision_record(
                 *(item.to_dict() for item in round_result.candidates),
                 *(item.to_dict() for item in round_result.confirmation_evaluations),
             ],
+            "proposal_usage": round_result.proposal_usage,
             "selection": asdict(round_result.selection),
         },
         "service": {
@@ -1284,6 +1487,58 @@ def _generation_decision_record(
         },
         "verified_failures": [failure.to_dict() for failure in round_result.verified_failures],
     }
+
+
+def _tested_skill_memory_from_commits(
+    commits: list[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    """Project committed V3 outcomes into a bounded, transcript-free Evolver memory."""
+
+    rows: list[dict[str, Any]] = []
+    for commit in commits:
+        decision = commit.get("decision_record", {})
+        customer = decision.get("customer", {}) if isinstance(decision, Mapping) else {}
+        proposals = customer.get("proposals", ()) if isinstance(customer, Mapping) else ()
+        evaluations = customer.get("evaluations", ()) if isinstance(customer, Mapping) else ()
+        by_id = {
+            item.get("strategy_id"): item for item in evaluations
+            if isinstance(item, Mapping) and item.get("strategy_id")
+        }
+        for proposal in proposals:
+            if not isinstance(proposal, Mapping):
+                continue
+            strategy = proposal.get("strategy")
+            if not isinstance(strategy, Mapping) or strategy.get("schema_version") != 3:
+                continue
+            evaluation = by_id.get(proposal.get("strategy_id"), {})
+            episodes = evaluation.get("episodes", ()) if isinstance(evaluation, Mapping) else ()
+            invalidity: dict[str, int] = {}
+            for episode in episodes:
+                if not isinstance(episode, Mapping):
+                    continue
+                category = episode.get("customer_invalidity_category")
+                if isinstance(category, str):
+                    invalidity[category] = invalidity.get(category, 0) + 1
+            rows.append({
+                "skill_id": str(proposal["strategy_id"]),
+                "skill": dict(strategy.get("skill", {})),
+                "parent_id": str(proposal.get("parent_id", "")),
+                "generation": int(proposal.get("generation", commit.get("generation", 0))),
+                "applicability_count": sum(
+                    item.get("strategy_applicable") is True for item in episodes if isinstance(item, Mapping)
+                ),
+                "adherence_count": sum(
+                    item.get("customer_strategy_adherent") is True for item in episodes
+                    if isinstance(item, Mapping)
+                ),
+                "customer_valid_count": sum(
+                    item.get("customer_valid") is True for item in episodes if isinstance(item, Mapping)
+                ),
+                "provisional_failure_count": int(evaluation.get("provisional_failure_count", 0)),
+                "verified_failure_refs": list(evaluation.get("failure_ids", ())),
+                "invalidity_categories": invalidity,
+            })
+    return tuple(rows[-MAX_TESTED_SKILL_MEMORY:])
 
 
 def _prepared_archive_payload(
@@ -1335,7 +1590,7 @@ def _append_prepared_archive(
         return
     for item in payload["customers"]:
         archive.append_customer_strategy(
-            CustomerStrategy(**item["strategy"]), parent_id=item["parent_id"],
+            _customer_from_dict(item["strategy"]), parent_id=item["parent_id"],
             operator=item["operator"], generation=int(item["generation"]),
         )
     for item in payload["services"]:

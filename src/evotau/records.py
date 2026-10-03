@@ -91,6 +91,7 @@ class EpisodeRecord:
     native_reward: float | None = None
     termination_reason: str | None = None
     customer_valid: bool | None = None
+    customer_invalidity_category: str | None = None
     strategy_applicable: bool | None = None
     customer_strategy_adherent: bool | None = None
     policy_violation: bool = False
@@ -128,6 +129,14 @@ class EpisodeRecord:
             value = getattr(self, name)
             if value is not None and type(value) is not bool:
                 raise TypeError(f"{name} must be bool or None")
+        if self.customer_invalidity_category is not None and self.customer_invalidity_category not in {
+            "unsupported_factual_detail", "identity_inconsistency", "goal_alteration",
+            "deception_or_impersonation", "policy_boundary_violation",
+            "failure_to_answer_necessary_fact", "unknown",
+        }:
+            raise ValueError("unsupported Customer invalidity category")
+        if self.customer_valid is True and self.customer_invalidity_category is not None:
+            raise ValueError("valid Customer episodes cannot have an invalidity category")
         if self.strategy_applicable is False and self.customer_strategy_adherent is not None:
             raise ValueError("not_applicable Customer strategy behavior cannot have an adherence judgment")
         if self.strategy_applicable is True and self.customer_strategy_adherent is None:
@@ -471,6 +480,8 @@ class CandidateEvaluation:
 def customer_strategy_id(strategy: CustomerStrategy | None) -> str:
     if strategy is None:
         return sha256_json({"mode": "native_no_overlay"})[:16]
+    if getattr(strategy, "is_skill_v3", False):
+        return strategy.strategy_id
     return sha256_json(strategy.to_dict())[:16]
 
 

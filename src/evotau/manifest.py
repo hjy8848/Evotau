@@ -1045,6 +1045,7 @@ class ActivationSmokeManifest:
     checkpoint_path: str = "experiments/checkpoints/evotau-activation-smoke"
     unbounded_provider_budget: bool = False
     customer_evolver_schema: str = "operator_v1"
+    reflection_seed_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _validate_code_provenance(self.evotau_git_commit, self.evotau_source_sha256)
@@ -1060,10 +1061,19 @@ class ActivationSmokeManifest:
             raise ValueError("activation smoke is fixed to Retail, half-duplex text, and train E/V")
         if type(self.enforce_communication_protocol) is not bool or self.enforce_communication_protocol:
             raise ValueError("activation smoke records communication protocol without enforcement")
-        if self.condition != "adaptive_coevolution":
-            raise ValueError("activation smoke freezes the existing adaptive co-evolution condition")
-        if self.customer_evolver_schema not in {"operator_v1", "strategy_v2"}:
-            raise ValueError("activation Customer Evolver schema must be operator_v1 or strategy_v2")
+        if self.condition not in {"adaptive_coevolution", "customer_representation_comparison"}:
+            raise ValueError("unsupported activation condition")
+        if self.customer_evolver_schema not in {"operator_v1", "strategy_v2", "skill_v3"}:
+            raise ValueError("activation Customer Evolver schema must be operator_v1, strategy_v2, or skill_v3")
+        if (self.condition == "customer_representation_comparison"
+                and self.customer_evolver_schema not in {"strategy_v2", "skill_v3"}):
+            raise ValueError("representation comparison requires strategy_v2 or skill_v3")
+        if self.condition == "customer_representation_comparison":
+            if (not isinstance(self.reflection_seed_sha256, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", self.reflection_seed_sha256)):
+                raise ValueError("representation comparison requires a frozen reflection-signal SHA-256")
+        elif self.reflection_seed_sha256 is not None:
+            raise ValueError("reflection seed is only supported in the representation comparison condition")
         if len(self.evolution_task_ids) != 10 or len(set(self.evolution_task_ids)) != 10:
             raise ValueError("activation smoke requires exactly ten unique E tasks")
         if not self.validation_task_ids or len(set(self.validation_task_ids)) != len(self.validation_task_ids):
@@ -1097,6 +1107,9 @@ class ActivationSmokeManifest:
             raise ValueError("live activation smoke requires frozen model IDs for every role")
         model_args_payload = _role_model_args_payload(self.role_model_args)
         freeze_role_model_args(model_args_payload, roles=MECHANISM_ROLE_NAMES)
+        if (self.condition == "customer_representation_comparison"
+                and any("max_tokens" in values for values in model_args_payload.values())):
+            raise ValueError("representation comparison must omit max_tokens for every role")
         if self.unbounded_provider_budget and any(
             "max_tokens" in values for values in model_args_payload.values()
         ):
@@ -1191,16 +1204,41 @@ class ActivationSmokeManifest:
             raise ValueError("unbounded provider configuration must set request_budget_cap to null")
         customer = experiment.get("customer_strategy")
         customer_evolver_schema = experiment.get("customer_evolver_schema", "operator_v1")
-        if customer_evolver_schema not in {"operator_v1", "strategy_v2"}:
+        if customer_evolver_schema not in {"operator_v1", "strategy_v2", "skill_v3"}:
             raise ValueError("unsupported activation Customer Evolver schema")
         if customer_evolver_schema == "strategy_v2" and not isinstance(customer, Mapping):
             raise ValueError("strategy_v2 requires an explicit seven-field Customer incumbent")
+        if customer_evolver_schema == "skill_v3" and not isinstance(customer, Mapping):
+            raise ValueError("skill_v3 requires an explicit matched Customer baseline")
+        reflection_seed_sha256 = experiment.get("reflection_seed_sha256")
+        if str(experiment.get("condition")) == "customer_representation_comparison":
+            if not isinstance(experiment.get("reflection_seed_path"), str):
+                raise ValueError("representation comparison requires a reflection_seed_path")
+            if (not isinstance(reflection_seed_sha256, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", reflection_seed_sha256)):
+                raise ValueError("representation comparison requires a frozen reflection_seed_sha256")
+        elif reflection_seed_sha256 is not None or experiment.get("reflection_seed_path") is not None:
+            raise ValueError("reflection seed is only supported in the representation comparison condition")
         if customer is not None:
-            from .strategies import CustomerStrategy
+            if customer_evolver_schema == "skill_v3" and customer.get("schema_version") == 3:
+                from .customer_skill_v3 import CustomerSkill
 
-            parsed_customer = CustomerStrategy(**customer)
-            if parsed_customer.is_v2 != (customer_evolver_schema == "strategy_v2"):
-                raise ValueError("activation Customer strategy and Evolver schema differ")
+                if set(customer) != {"schema_version", "skill"} or not isinstance(customer["skill"], Mapping):
+                    raise ValueError("skill_v3 incumbent has an invalid explicit skill schema")
+                skill_data = dict(customer["skill"])
+                skill_data["procedure"] = tuple(skill_data["procedure"])
+                skill_data["evidence_refs"] = tuple(skill_data.get("evidence_refs", ()))
+                CustomerSkill(**skill_data)
+            else:
+                from .strategies import CustomerStrategy
+
+                parsed_customer = CustomerStrategy(**customer)
+                if customer_evolver_schema == "strategy_v2" and not parsed_customer.is_v2:
+                    raise ValueError("strategy_v2 activation requires a seven-field Customer baseline")
+                if customer_evolver_schema == "operator_v1" and parsed_customer.is_v2:
+                    raise ValueError("operator_v1 cannot reinterpret a seven-field V2 Customer baseline")
+                if customer_evolver_schema == "skill_v3" and not parsed_customer.is_v2:
+                    raise ValueError("skill_v3 requires a V2 baseline or an explicit V3 skill")
         service = experiment.get("service_strategy") or {"rules": []}
         code = capture_code_provenance()
         return cls(
@@ -1248,6 +1286,7 @@ class ActivationSmokeManifest:
             checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
             unbounded_provider_budget=unbounded_provider_budget,
             customer_evolver_schema=customer_evolver_schema,
+            reflection_seed_sha256=reflection_seed_sha256,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -1306,8 +1345,10 @@ class ActivationSmokeManifest:
             "auditor_calibration_status": "role-separated_but_not_yet_human-calibrated",
             "paths": {"output": self.output_path, "checkpoint": self.checkpoint_path},
         }
-        if self.customer_evolver_schema == "strategy_v2":
-            payload["customer_evolver_schema"] = "strategy_v2"
+        if self.customer_evolver_schema in {"strategy_v2", "skill_v3"}:
+            payload["customer_evolver_schema"] = self.customer_evolver_schema
+        if self.reflection_seed_sha256 is not None:
+            payload["reflection_seed_sha256"] = self.reflection_seed_sha256
         return payload
 
     @property

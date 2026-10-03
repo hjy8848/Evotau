@@ -55,8 +55,12 @@ def load_provider_bundle(
     config: Mapping[str, Any],
     manifest: MechanismManifest | PilotManifest | ActivationSmokeManifest,
     seed: int | None = None,
+    allow_frozen_service: bool = False,
 ) -> LoadedProviderBundle:
     """Load a caller-selected `module:factory` returning native runner callbacks."""
+
+    if type(allow_frozen_service) is not bool:
+        raise TypeError("allow_frozen_service must be boolean")
 
     module_name, separator, attribute = specification.partition(":")
     if not separator or not module_name.strip() or not attribute.strip():
@@ -100,7 +104,7 @@ def load_provider_bundle(
         raise ProviderPluginError(
             "provide either service_transition or both repair callbacks, not both"
         )
-    if not has_transition and not has_repair_providers:
+    if not has_transition and not has_repair_providers and not allow_frozen_service:
         raise ProviderPluginError(
             "provider plugin must return service_transition or both Service repair callbacks"
         )

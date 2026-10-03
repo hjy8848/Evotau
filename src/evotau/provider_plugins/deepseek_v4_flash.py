@@ -81,6 +81,12 @@ def build_callbacks(
             payload={
                 "schema": {
                     "customer_valid": "boolean",
+                    "customer_invalidity_category": (
+                        "null if customer_valid; otherwise one of "
+                        "unsupported_factual_detail, identity_inconsistency, goal_alteration, "
+                        "deception_or_impersonation, policy_boundary_violation, "
+                        "failure_to_answer_necessary_fact, unknown; category only, never quote or repeat the fact"
+                    ),
                     "strategy_applicable": "boolean",
                     "customer_strategy_adherent": "boolean or null",
                     "policy_violation": "boolean",
@@ -133,6 +139,9 @@ def build_callbacks(
             "evidence",
         }
         _require_keys(result, required, "episode audit")
+        is_skill_v3 = bool(getattr(customer, "is_skill_v3", False))
+        if is_skill_v3 and "customer_invalidity_category" not in result:
+            raise ValueError("skill_v3 episode audit must return customer_invalidity_category")
         violation = _strict_bool(result["policy_violation"], "policy_violation")
         if violation:
             evidence = _parse_evidence(result["evidence"])
@@ -180,9 +189,25 @@ def build_callbacks(
             raise ValueError(
                 "invalid_repeated_write_calls must be a non-negative integer"
             )
+        customer_valid = _strict_bool(result["customer_valid"], "customer_valid")
+        invalidity_category = result.get("customer_invalidity_category")
+        if customer_valid:
+            if invalidity_category is not None:
+                raise ValueError("valid Customer audit cannot include an invalidity category")
+        else:
+            if invalidity_category is not None:
+                invalidity_category = _required_str(
+                    invalidity_category, "customer_invalidity_category"
+                )
+            if invalidity_category is not None and invalidity_category not in {
+                "unsupported_factual_detail", "identity_inconsistency", "goal_alteration",
+                "deception_or_impersonation", "policy_boundary_violation",
+                "failure_to_answer_necessary_fact", "unknown",
+            }:
+                raise ValueError("Customer invalidity category is outside the fixed taxonomy")
         return IndependentEpisodeAudit(
             verifier_ref=_AUDIT_VERIFIER,
-            customer_valid=_strict_bool(result["customer_valid"], "customer_valid"),
+            customer_valid=customer_valid,
             strategy_applicable=strategy_applicable,
             customer_strategy_adherent=adherent,
             policy_violation=violation,
@@ -191,6 +216,7 @@ def build_callbacks(
             mistake_type=mistake_type,
             workflow_stage=workflow_stage,
             evidence=evidence,
+            customer_invalidity_category=invalidity_category,
         )
 
     def service_proposal_provider(repair_input: ServiceRepairInput) -> RepairProposal:

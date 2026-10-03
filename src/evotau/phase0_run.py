@@ -165,9 +165,27 @@ def _load_pinned_tasks(
 
 def _parse_strategies(
     experiment: Mapping[str, Any],
-) -> tuple[CustomerStrategy | None, ServiceStrategy]:
+) -> tuple[Any | None, ServiceStrategy]:
     customer_data = experiment.get("customer_strategy")
-    customer = None if customer_data is None else CustomerStrategy(**customer_data)
+    if customer_data is None:
+        customer = None
+    elif isinstance(customer_data, Mapping) and customer_data.get("schema_version") == 3:
+        from .customer_skill_v3 import validate_skill
+
+        if set(customer_data) != {"schema_version", "skill"} or not isinstance(customer_data["skill"], Mapping):
+            raise ValueError("V3 Customer baseline has an invalid explicit schema")
+        raw_skill = customer_data["skill"]
+        normalized = validate_skill(
+            raw_skill,
+            incumbent=CustomerStrategy.v2_baseline(),
+            operation="create",
+            verified_failure_ids=raw_skill.get("evidence_refs", ()),
+        )
+        if normalized.to_dict() != customer_data:
+            raise ValueError("V3 Customer baseline must be canonical")
+        customer = normalized
+    else:
+        customer = CustomerStrategy(**customer_data)
     service_data = experiment.get("service_strategy") or {"rules": []}
     rules = tuple(
         ServiceRule(

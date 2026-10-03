@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .manifest import ActivationSmokeManifest
+from .customer_skill_v3 import validate_reflection_seed_signals
+from .manifest import ActivationSmokeManifest, sha256_json
 from .native_runner import StopBeforeEpisodeDispatch, run_native_activation_smoke
 from .phase0 import load_config
 from .phase0_run import _load_pinned_tasks
@@ -63,10 +64,34 @@ def run_from_config(
         task_selection=config["experiment"]["task_selection"],
         task_ids=manifest.evolution_task_ids + manifest.validation_task_ids,
     )
+    reflection_seed_signals = None
+    freeze_service = manifest.condition == "customer_representation_comparison"
+    if freeze_service:
+        reflection_relative = str(config["experiment"]["reflection_seed_path"])
+        reflection_current = project_root
+        for part in Path(reflection_relative).parts:
+            if part in {"", "."}:
+                continue
+            reflection_current = reflection_current / part
+            if reflection_current.is_symlink():
+                raise ValueError("reflection seed path cannot traverse symlinks")
+        reflection_path = reflection_current.resolve()
+        if not reflection_path.is_relative_to(project_root) or not reflection_path.is_file():
+            raise ValueError("reflection seed must be a regular file inside the project")
+        reflection_seed_signals = validate_reflection_seed_signals(
+            json.loads(reflection_path.read_text(encoding="utf-8")),
+        )
+        if sha256_json(reflection_seed_signals) != manifest.reflection_seed_sha256:
+            raise ValueError("reflection seed content differs from the frozen config fingerprint")
     bundle = load_provider_bundle(
         provider_plugin,
         config=config,
         manifest=manifest,
+        allow_frozen_service=freeze_service,
+    )
+    callbacks = (
+        {"audit_provider": bundle.callbacks["audit_provider"]}
+        if freeze_service else bundle.callbacks
     )
     run_native_activation_smoke(
         config_path=config_file,
@@ -74,7 +99,9 @@ def run_from_config(
         task_review_document=task_review_document,
         provider_provenance=bundle.provenance,
         stop_before_next_episode_file=stop_before_next_episode_file,
-        **bundle.callbacks,
+        freeze_service=freeze_service,
+        reflection_seed_signals=reflection_seed_signals,
+        **callbacks,
     )
     result_path = project_root / manifest.output_path / "activation-smoke-result.json"
     return json.loads(result_path.read_text(encoding="utf-8"))

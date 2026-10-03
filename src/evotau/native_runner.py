@@ -26,6 +26,12 @@ from .checkpoint import load_checkpoint, manifest_fingerprint
 from .communication import observe_communication_protocol
 from .customer_evolver import LLMCustomerEvolver, OperatorSelector
 from .customer_evolver_v2 import LLMCustomerStrategyEvolver, StrategyProposalProvider
+from .customer_skill_v3 import (
+    INVALIDITY_CATEGORIES,
+    CustomerSkill,
+    LLMCustomerSkillEvolver,
+    extract_forbidden_literals,
+)
 from .db_state_trace import (
     DBStateTraceError,
     replay_db_state_trace,
@@ -50,7 +56,7 @@ from .records import (
     customer_strategy_id,
     service_strategy_id,
 )
-from .strategies import CustomerStrategy, ServiceStrategy
+from .strategies import CustomerStrategy, ServiceStrategy, render_customer_strategy
 from .tau_adapter import build_phase0_orchestrator, run_with_budget
 
 
@@ -68,6 +74,7 @@ class IndependentEpisodeAudit:
     mistake_type: str | None = None
     workflow_stage: str | None = None
     evidence: tuple[EvidenceRef, ...] = ()
+    customer_invalidity_category: str | None = None
 
     def __post_init__(self) -> None:
         if not self.verifier_ref.strip():
@@ -80,6 +87,11 @@ class IndependentEpisodeAudit:
             raise ValueError("not_applicable strategy behavior must not be scored for adherence")
         if type(self.policy_violation) is not bool:
             raise ValueError("independent audit must explicitly judge policy violation")
+        if self.customer_invalidity_category is not None:
+            if self.customer_invalidity_category not in INVALIDITY_CATEGORIES:
+                raise ValueError("independent audit returned an unsupported Customer invalidity category")
+            if self.customer_valid:
+                raise ValueError("valid Customer audit cannot include an invalidity category")
         if (type(self.invalid_repeated_write_calls) is not int
                 or self.invalid_repeated_write_calls < 0):
             raise ValueError("independent audit must report a non-negative repeated-write count")
@@ -162,6 +174,9 @@ class TauBenchEpisodeRunner:
                 else (manifest.evolution_task_id, manifest.validation_task_id)
             ),
         )
+        # Used only by the deterministic V3 output validator. The literal task
+        # values are never placed in either proposal context.
+        self.customer_skill_forbidden_literals = extract_forbidden_literals(self.tasks)
         self.service_policy_text = (
             self.data_root / "tau2/domains/retail/policy.md"
         ).read_text(encoding="utf-8")
@@ -297,6 +312,33 @@ class TauBenchEpisodeRunner:
             prompt_hashes["customer"] = hashlib.sha256(
                 orchestrator.user.system_prompt.encode("utf-8")
             ).hexdigest()
+            # Test-only injected orchestrators may not model the native tau
+            # UserSimulator object. The concrete builder always provides
+            # `instructions` and the direct subclass property below.
+            if not hasattr(orchestrator.user, "instructions"):
+                return
+            native_user_class = type(orchestrator.user).__mro__[1]
+            native_property = getattr(native_user_class, "system_prompt", None)
+            if not isinstance(native_property, property) or native_property.fget is None:
+                raise TypeError("EvoTau Customer wrapper no longer directly subclasses the native UserSimulator")
+            native_prompt = native_property.fget(orchestrator.user)
+            skill_block = render_customer_strategy(customer)
+            expected_prompt = native_prompt if not skill_block else f"{native_prompt}\n\n{skill_block}"
+            if orchestrator.user.system_prompt != expected_prompt:
+                raise ValueError("EvoTau Customer overlay changed the native tau-bench system prompt")
+            source_scenario = str(task.user_scenario)
+            runtime_scenario = getattr(orchestrator.user, "instructions", None)
+            if runtime_scenario != source_scenario:
+                raise ValueError("EvoTau Customer wrapper changed the native task scenario")
+            prompt_hashes["customer_native_system_prompt"] = hashlib.sha256(
+                native_prompt.encode("utf-8")
+            ).hexdigest()
+            prompt_hashes["customer_scenario_source"] = hashlib.sha256(
+                source_scenario.encode("utf-8")
+            ).hexdigest()
+            prompt_hashes["customer_scenario_runtime"] = hashlib.sha256(
+                str(runtime_scenario).encode("utf-8")
+            ).hexdigest()
 
         def on_simulation(simulation: Any) -> None:
             nonlocal simulation_payload
@@ -312,6 +354,9 @@ class TauBenchEpisodeRunner:
             )
             if not isinstance(audit_result, IndependentEpisodeAudit):
                 raise TypeError("audit_provider must return IndependentEpisodeAudit")
+            if (getattr(customer, "is_skill_v3", False) and not audit_result.customer_valid
+                    and audit_result.customer_invalidity_category is None):
+                raise ValueError("skill_v3 invalid Customer audit requires a sanitized invalidity category")
 
         try:
             orchestrator = build_phase0_orchestrator(
@@ -395,6 +440,9 @@ class TauBenchEpisodeRunner:
                 native_reward=native_reward,
                 termination_reason=simulation_payload.get("termination_reason"),
                 customer_valid=None if audit_result is None else audit_result.customer_valid,
+                customer_invalidity_category=(
+                    None if audit_result is None else audit_result.customer_invalidity_category
+                ),
                 strategy_applicable=None if audit_result is None else audit_result.strategy_applicable,
                 customer_strategy_adherent=None if audit_result is None else audit_result.customer_strategy_adherent,
                 policy_violation=False if audit_result is None else audit_result.policy_violation,
@@ -682,8 +730,10 @@ def run_native_activation_smoke(
     service_proposal_provider: Callable[..., Any] | None = None,
     service_repair_audit_provider: Callable[..., Any] | None = None,
     stop_before_next_episode_file: str | Path | None = None,
+    freeze_service: bool = False,
+    reflection_seed_signals: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[Any, ...], BudgetSnapshot]:
-    """Run one reviewed ten-task generation with the existing gated repair path."""
+    """Run one reviewed ten-task activation, optionally isolating Customer representation."""
 
     from .archive import FailureArchive
     from .lifecycle import TwoGenerationSmoke
@@ -700,6 +750,18 @@ def run_native_activation_smoke(
         raise RuntimeError("activation smoke is disabled in the frozen manifest")
     if audit_provider is None:
         raise ValueError("activation smoke requires independent episode audit callbacks")
+    if type(freeze_service) is not bool:
+        raise TypeError("freeze_service must be boolean")
+    representation_comparison = manifest.condition == "customer_representation_comparison"
+    if freeze_service != representation_comparison:
+        raise ValueError("customer representation comparison must freeze the initial Service S0")
+    if representation_comparison:
+        if not isinstance(reflection_seed_signals, Mapping):
+            raise ValueError("representation comparison requires its frozen sanitized reflection seed")
+        if sha256_json(reflection_seed_signals) != manifest.reflection_seed_sha256:
+            raise ValueError("reflection seed content differs from its frozen manifest fingerprint")
+    elif reflection_seed_signals is not None:
+        raise ValueError("reflection seed is only supported for the representation comparison")
     if service_transition is not None and (
         service_proposal_provider is not None or service_repair_audit_provider is not None
     ):
@@ -729,40 +791,56 @@ def run_native_activation_smoke(
                 model=models["evolver"],
                 model_args=role_model_args_for_runtime(manifest.role_model_args)["evolver"],
             )
+    elif manifest.customer_evolver_schema == "skill_v3":
+        if not (customer.is_v2 or isinstance(customer, CustomerSkill)):
+            raise ValueError("skill_v3 activation requires a V2 baseline or explicit V3 skill")
+        if customer_proposal_provider is None:
+            customer_proposal_provider = LLMCustomerSkillEvolver(
+                model=models["evolver"],
+                model_args=role_model_args_for_runtime(manifest.role_model_args)["evolver"],
+            )
     from litellm import token_counter
 
     service_token_counter = lambda text: token_counter(model=models["agent"], text=text)
-    if service_transition is None:
-        if service_proposal_provider is None or service_repair_audit_provider is None:
-            raise ValueError(
-                "activation smoke requires the Service proposal and independent repair-audit providers"
+    if freeze_service:
+        if any(value is not None for value in (
+            service_transition, service_proposal_provider, service_repair_audit_provider,
+        )):
+            raise ValueError("frozen-Service representation comparison cannot load a repair callback")
+        service_transition = None
+    else:
+        if service_transition is None:
+            if service_proposal_provider is None or service_repair_audit_provider is None:
+                raise ValueError(
+                    "activation smoke requires the Service proposal and independent repair-audit providers"
+                )
+            service_transition = GatedServiceTransition(
+                evolution_task_id=manifest.evolution_task_ids[0],
+                validation_task_id=manifest.validation_task_ids[0],
+                evolution_task_ids=manifest.evolution_task_ids,
+                validation_task_ids=manifest.validation_task_ids,
+                seed=manifest.seed,
+                initial_service=service,
+                proposal_provider=service_proposal_provider,
+                audit_provider=service_repair_audit_provider,
+                token_counter=service_token_counter,
             )
-        service_transition = GatedServiceTransition(
-            evolution_task_id=manifest.evolution_task_ids[0],
-            validation_task_id=manifest.validation_task_ids[0],
-            evolution_task_ids=manifest.evolution_task_ids,
-            validation_task_ids=manifest.validation_task_ids,
-            seed=manifest.seed,
-            initial_service=service,
-            proposal_provider=service_proposal_provider,
-            audit_provider=service_repair_audit_provider,
-            token_counter=service_token_counter,
-        )
-    if not isinstance(service_transition, GatedServiceTransition):
-        raise TypeError("activation smoke requires the existing GatedServiceTransition")
-    if (
-        service_transition.e_tasks != manifest.evolution_task_ids
-        or service_transition.v_tasks != manifest.validation_task_ids
-        or service_transition.seed != manifest.seed
-        or service_transition.initial_service != service
-    ):
-        raise ValueError("Service repair gate panels or initial strategy differ from the frozen activation")
+        if not isinstance(service_transition, GatedServiceTransition):
+            raise TypeError("activation smoke requires the existing GatedServiceTransition")
+        if (
+            service_transition.e_tasks != manifest.evolution_task_ids
+            or service_transition.v_tasks != manifest.validation_task_ids
+            or service_transition.seed != manifest.seed
+            or service_transition.initial_service != service
+        ):
+            raise ValueError("Service repair gate panels or initial strategy differ from the frozen activation")
 
     callback_set: dict[str, Any] = {
         "audit_provider": audit_provider,
         "customer_proposal_provider": customer_proposal_provider,
-        "service_transition": service_transition,
     }
+    if service_transition is not None:
+        callback_set["service_transition"] = service_transition
     run_context = {
         "schema_version": 1,
         "activation_manifest_sha256": manifest.sha256,
@@ -778,9 +856,12 @@ def run_native_activation_smoke(
         ),
         "provider_response_policy": "retry-empty-successful-completion-until-nonempty",
         "phase0_parent": None,
+        "service_condition": "frozen_s0" if freeze_service else "gated_adaptation",
     }
-    if manifest.customer_evolver_schema == "strategy_v2":
-        run_context["customer_evolver_schema"] = "strategy_v2"
+    if manifest.customer_evolver_schema in {"strategy_v2", "skill_v3"}:
+        run_context["customer_evolver_schema"] = manifest.customer_evolver_schema
+    if representation_comparison:
+        run_context["proposal_reflection_seed_sha256"] = manifest.reflection_seed_sha256
     budget = RequestBudget(manifest.request_budget_cap)
     project_root = (
         config_file.parent.parent
@@ -831,10 +912,12 @@ def run_native_activation_smoke(
         service,
         service_transition=service_transition,
         customer_proposal_provider=customer_proposal_provider,
-        customer_proposal_mode=(
-            "strategy_v2" if manifest.customer_evolver_schema == "strategy_v2"
-            else "failure_conditioned"
-        ),
+        customer_proposal_mode=(manifest.customer_evolver_schema
+                                if manifest.customer_evolver_schema in {"strategy_v2", "skill_v3"}
+                                else "failure_conditioned"),
+        reflection_seed_signals=reflection_seed_signals,
+        enable_reflective_proposals=representation_comparison,
+        allow_frozen_service=freeze_service,
         candidates_per_generation=manifest.customer_candidates,
     )
     if len(commits) != 1 or commits[0].generation != 0:
@@ -855,6 +938,8 @@ def run_native_activation_smoke(
         "manifest_sha256": manifest.sha256,
         "run_context_sha256": hashlib.sha256(context_path.read_bytes()).hexdigest(),
         "task_review_sha256": manifest.task_semantic_review_sha256,
+        "customer_evolver_schema": manifest.customer_evolver_schema,
+        "service_frozen": freeze_service,
         "task_panels": {
             "E": list(manifest.evolution_task_ids),
             "V": list(manifest.validation_task_ids),
@@ -2055,6 +2140,7 @@ def _audit_dict(audit: IndependentEpisodeAudit) -> dict[str, Any]:
     return {
         "verifier_ref": audit.verifier_ref,
         "customer_valid": audit.customer_valid,
+        "customer_invalidity_category": audit.customer_invalidity_category,
         "strategy_applicable": audit.strategy_applicable,
         "customer_strategy_adherent": audit.customer_strategy_adherent,
         "policy_violation": audit.policy_violation,

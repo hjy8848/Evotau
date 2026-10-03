@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .customer_evolver import EvolutionFailureSignal
+from .customer_skill_v3 import _assert_sanitized_context
 from .manifest import sha256_json
 from .mutation import CustomerCandidate
 from .records import FailureRecord, customer_strategy_id
@@ -73,6 +74,12 @@ Return JSON only, with exactly this structure and no other fields or dialogue:
 The candidates array must have exactly K entries. changed_fields must list exactly the fields changed relative to the incumbent. A hypothesis describes an expected interaction effect, never a guaranteed failure. evidence_refs may contain only supplied verified failure IDs. Without supporting verified evidence, evidence_refs must be empty and the hypothesis must describe exploration. Do not add unsupported fields or natural-language Customer dialogue."""
 
 
+REFLECTIVE_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
+    "## Hard safety and scientific constraints",
+    "The optional sanitized reflection_feedback contains aggregate applicability, adherence, Customer validity, and task-completion counts plus disputed review categories. It is not task truth and never affects fitness. Use it to avoid procedures associated with Customer invalidity, especially unsupported factual detail, without repeating or reconstructing any literal fact.\n\n## Hard safety and scientific constraints",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class CustomerStrategyProposalInput:
     generation: int
@@ -82,6 +89,7 @@ class CustomerStrategyProposalInput:
     already_tested_strategies: tuple[CustomerStrategy, ...]
     already_tested_strategy_ids: tuple[str, ...]
     failure_signals: tuple[EvolutionFailureSignal, ...]
+    reflection_feedback: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.incumbent.is_v2 or any(not item.is_v2 for item in self.already_tested_strategies):
@@ -96,7 +104,7 @@ class CustomerStrategyProposalInput:
             raise ValueError("verified failure references must be unique")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": 2,
             "generation": self.generation,
             "K": self.candidate_count,
@@ -106,6 +114,10 @@ class CustomerStrategyProposalInput:
             "already_tested_strategy_ids": list(self.already_tested_strategy_ids),
             "verified_failure_summaries": [item.to_dict() for item in self.failure_signals],
         }
+        if self.reflection_feedback is not None:
+            _assert_sanitized_context(self.reflection_feedback)
+            payload["reflection_feedback"] = dict(self.reflection_feedback)
+        return payload
 
 
 StrategyProposalProvider = Callable[[CustomerStrategyProposalInput], Mapping[str, Any]]
@@ -129,6 +141,7 @@ def propose_customer_strategies(
     already_seen: Sequence[str],
     already_tested_strategies: Sequence[CustomerStrategy],
     evolution_task_ids: Sequence[str],
+    reflection_feedback: Mapping[str, Any] | None = None,
     proposal_provider: StrategyProposalProvider,
 ) -> tuple[CustomerCandidate, ...]:
     """Validate every model-supplied field before any candidate can run."""
@@ -163,6 +176,7 @@ def propose_customer_strategies(
         already_tested_strategies=tested,
         already_tested_strategy_ids=tuple(sorted(set(already_seen))),
         failure_signals=signals,
+        reflection_feedback=reflection_feedback,
     )
     result = proposal_provider(context)
     if not isinstance(result, Mapping) or set(result) != {"candidates"}:
@@ -244,7 +258,10 @@ class LLMCustomerStrategyEvolver:
         message = generate(
             model=self.model,
             messages=[
-                SystemMessage(role="system", content=SYSTEM_PROMPT),
+                SystemMessage(
+                    role="system",
+                    content=(REFLECTIVE_SYSTEM_PROMPT if context.reflection_feedback is not None else SYSTEM_PROMPT),
+                ),
                 UserMessage(role="user", content=json.dumps(
                     context.to_dict(), ensure_ascii=False, sort_keys=True,
                 )),
