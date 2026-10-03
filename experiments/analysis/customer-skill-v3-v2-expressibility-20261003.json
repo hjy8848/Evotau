@@ -1,0 +1,40 @@
+{
+  "experiment_id": "evotau-customer-skill-v3-v2-expressibility-20261003",
+  "fitness_effect": "none",
+  "method": "Compare each generated procedure with the exact seven V2 axes and their legal values. Exact expressibility requires the trigger, ordered procedure, and stopping rule to be encoded without residual behavior; partial expressibility means one or more axes approximate the behavior but leave procedure structure unrepresented; outside means no axis combination covers the central interaction behavior.",
+  "proposal_artifact_sha256": "3fad149fe5da0bb789e496af50a92247df7484e36c9861c3705a46fcd42b4bea",
+  "results": [
+    {
+      "candidate_id": "c584451eed5b28a9fb08fb59cccda02ba397d8ba9014e772e1d2981e6af4eddd",
+      "classification": "partially_expressible",
+      "closest_v2_axes": [
+        "request_decomposition=one_by_one",
+        "disclosure=minimal_on_request"
+      ],
+      "fitness_effect": "none; representation analysis is diagnostic only",
+      "rationale": "V2 can request one-by-one decomposition, but the skill adds a conditional trigger, an ordered response procedure, a turn-level stop condition, and an explicit resume cue that are not independently represented by those axes.",
+      "skill_name": "Incremental Clarification"
+    },
+    {
+      "candidate_id": "340ce25fdc2dd8ca6e19d45acc6658018d944787da6404c8cacf6f646dd10a77",
+      "classification": "partially_expressible",
+      "closest_v2_axes": [
+        "correction_behavior=correct_once",
+        "correction_behavior=correct_and_restate_constraint",
+        "challenge_behavior=ask_reason"
+      ],
+      "fitness_effect": "none; representation analysis is diagnostic only",
+      "rationale": "V2 can encode a bounded correction and a generic challenge, but it has no exact axis for detecting an inconsistent Service summary, neutrally restating a preference, asking for verification, and stopping after one confirmation round.",
+      "skill_name": "Polite Correction Check"
+    }
+  ],
+  "review_timing": "after provider-only candidate generation and before paired activation outcomes",
+  "reviewer": "Codex research architecture review; not an independent human reviewer",
+  "schema_version": 1,
+  "summary": {
+    "expressible_by_v2": 0,
+    "interpretation": "This K=2 proposal sample does not demonstrate a V3 skill clearly outside the seven-axis V2 space. The interface permits open-ended procedures; this smoke alone is no evidence that it discovered a novel representation.",
+    "outside_v2_representation": 0,
+    "partially_expressible_by_v2": 2
+  }
+}

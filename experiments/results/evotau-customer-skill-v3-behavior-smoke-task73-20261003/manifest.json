@@ -1,0 +1,633 @@
+{
+  "experiment_id": "evotau-customer-skill-v3-behavior-smoke-task73-20261003",
+  "phase": "3-multitask-service-repair-activation",
+  "condition": "customer_representation_comparison",
+  "upstream": {
+    "repository": "sierra-research/tau2-bench",
+    "commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+    "package_version": "1.0.1"
+  },
+  "evotau": {
+    "git_commit": "db2749dfda07fee13ab83c61a5515c65b3ff67c0",
+    "working_tree_clean": false,
+    "source_sha256": "3e89dda8fda462ebd7e7514f8835e2f4dca96c3ab509531ca2ab0f65ec96a688"
+  },
+  "domain": "retail",
+  "communication_mode": "half_duplex_text",
+  "enforce_communication_protocol": false,
+  "evaluation_type": "all",
+  "task_selection": {
+    "source_split": "train",
+    "evolution": [
+      "16",
+      "22",
+      "29",
+      "35",
+      "37",
+      "52",
+      "72",
+      "73",
+      "78",
+      "88"
+    ],
+    "validation": [
+      "93"
+    ],
+    "heldout": [],
+    "excluded": [
+      "46",
+      "47"
+    ]
+  },
+  "seed": 1,
+  "evolution_seeds": [
+    1
+  ],
+  "generations": 1,
+  "customer_candidates": 2,
+  "max_steps": 64,
+  "max_episodes": 100,
+  "request_budget_cap": 1800,
+  "unbounded_provider_budget": false,
+  "provider_retries": 0,
+  "max_concurrency": 4,
+  "real_provider_enabled": true,
+  "role_models": {
+    "agent": "openai/deepseek-v4-flash",
+    "customer": "openai/deepseek-v4-flash",
+    "reviewer": "openai/deepseek-v4-flash",
+    "evaluator": "openai/deepseek-v4-flash",
+    "evolver": "openai/deepseek-v4-flash"
+  },
+  "role_model_args": {
+    "agent": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
+    },
+    "customer": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
+    },
+    "reviewer": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
+    },
+    "evaluator": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
+    },
+    "evolver": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "thinking_mode": "disabled"
+    }
+  },
+  "runtime_arguments": {
+    "agent_llm_args": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "num_retries": 0
+    },
+    "customer_llm_args": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "num_retries": 0
+    },
+    "reviewer_llm_args": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "evaluator_llm_args": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    "provider_default_max_retries": 0,
+    "cache_enabled": false,
+    "review_mode": "full",
+    "evolver_llm_args": {
+      "api_base": "https://inferaiapi.com/v1",
+      "temperature": 0.0,
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    }
+  },
+  "source_blob_sha1": {
+    "data/tau2/domains/retail/db.json": "4d67b03b2d39ade5a7ab6facb2edd7ab3e013d48",
+    "data/tau2/domains/retail/policy.md": "d127e6b074654926f337d0d98b0e669ebe90d19e",
+    "data/tau2/domains/retail/split_tasks.json": "8b20704a17aa1940b1e58668f89dcef2ddaeeea3",
+    "data/tau2/domains/retail/tasks.json": "e95a9f898b2d1f6568ea8faec78edc3767ce747d",
+    "data/tau2/user_simulator/simulation_guidelines.md": "b55a28a1d5eaf81e72bdc263307d9f512fe49a99",
+    "src/tau2/agent/llm_agent.py": "652974ff98edb652c582453687977cff1742b7bd",
+    "src/tau2/data_model/simulation.py": "8c23c353ec48209d70554bcfe46c36e2415c7e85",
+    "src/tau2/domains/retail/tools.py": "eba01ab32dca0d4ef33328c22358b794d859f2b6",
+    "src/tau2/environment/environment.py": "0dce3d21826273e789eb25fa167b95ab148fa4f4",
+    "src/tau2/evaluator/evaluator.py": "76c95a83e9049d70a5570b93989797c0626974b6",
+    "src/tau2/evaluator/evaluator_nl_assertions.py": "1f5397c5b8f8b105bf3d76027518d3bc3eb3e0f7",
+    "src/tau2/evaluator/review_llm_judge.py": "b3e0d5d274b28cfc4449bd5f2b686754daac99fc",
+    "src/tau2/evaluator/reviewer.py": "086a4a4b12bde2c06eae329f078466ff30ba9ad2",
+    "src/tau2/orchestrator/orchestrator.py": "da030140af392038aef48b149cd22607e600269d",
+    "src/tau2/registry.py": "86a97a1deeea8a8e09cafeac4dfcff171b6454d4",
+    "src/tau2/runner/build.py": "d3e02b3e22281189a534e4f336daf5c88a50534b",
+    "src/tau2/runner/simulation.py": "25330c9d831f548b72edfd959757faefb901da9a",
+    "src/tau2/user/user_simulator.py": "51ef4bba88e2565532ce02da1f36ab3021028178",
+    "src/tau2/utils/llm_utils.py": "cc704825a14d1a81a791b9ca2a08aa2eb8989f8c"
+  },
+  "failure_taxonomy": [
+    {
+      "workflow_stage": "identity_verification",
+      "policy_rule_id": "retail.policy:identity_verification",
+      "mistake_type": "missing_identity_verification"
+    },
+    {
+      "workflow_stage": "pre_write",
+      "policy_rule_id": "retail.policy:explicit_confirmation",
+      "mistake_type": "missing_explicit_confirmation"
+    },
+    {
+      "workflow_stage": "pre_write",
+      "policy_rule_id": "retail.policy:complete_change_scope",
+      "mistake_type": "incomplete_write_scope"
+    }
+  ],
+  "failure_taxonomy_sha256": "28c626fa8feaa5ef990ec7bf2eb50fc8a9d654a77a47573331734d0e605a9dcd",
+  "strategy_sha256": {
+    "customer": "7b9ee6c76fe58a86a4934d7f96639c34021ed5182809978c4358562989a0879c",
+    "service": "da506c8a9c8a9f31aa00eaeef23d49764b9ace97158a1a0a7aa628e6d446b0fb"
+  },
+  "task_review_path": "experiments/task-panels/activation-smoke-review.json",
+  "task_semantic_review": {
+    "pairwise_reviews": [
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 22 is temporary default-address change, eligible order-address change, then profile rollback.",
+        "right_task_id": "22"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item.",
+        "right_task_id": "29"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch return, but Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 35 is delivered-speaker return plus laptop option change in a separate pending order; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "35"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 37 is budget-constrained, multi-item pending-order modification with price-information branch.",
+        "right_task_id": "37"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 52 is single delivered-camera exchange to maximize one product attribute.",
+        "right_task_id": "52"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 72 is address change plus item modification after payment and scope revisions before confirmation.",
+        "right_task_id": "72"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch return, but Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 73 is selective multi-item delivered-order return, excluding one item; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "73"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch cancel, but Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "78"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch cancel, but Task 16 is two pending cancellations plus a delivered watch return and total-refund calculation, while Task 88 is conditional variant change with whole-order cancellation fallback; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "16",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 16 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item.",
+        "right_task_id": "29"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 35 is delivered-speaker return plus laptop option change in a separate pending order.",
+        "right_task_id": "35"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 37 is budget-constrained, multi-item pending-order modification with price-information branch.",
+        "right_task_id": "37"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 52 is single delivered-camera exchange to maximize one product attribute.",
+        "right_task_id": "52"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch address, but Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 72 is address change plus item modification after payment and scope revisions before confirmation; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "72"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+        "right_task_id": "73"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch address, but Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "78"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 22 is temporary default-address change, eligible order-address change, then profile rollback, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "22",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 22 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "29",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 35 is delivered-speaker return plus laptop option change in a separate pending order.",
+        "right_task_id": "35"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "29",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 37 is budget-constrained, multi-item pending-order modification with price-information branch.",
+        "right_task_id": "37"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "29",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch exchange, but Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 52 is single delivered-camera exchange to maximize one product attribute; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "52"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "29",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 72 is address change plus item modification after payment and scope revisions before confirmation.",
+        "right_task_id": "72"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "29",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+        "right_task_id": "73"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "29",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 78 is pending-order address and item changes plus cancellation of a separate order.",
+        "right_task_id": "78"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "29",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 29 is two delivered exchanges, variant search/price comparison, and a pending-order reference item, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "29",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 29 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "35",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch item-modify, but Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 37 is budget-constrained, multi-item pending-order modification with price-information branch; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "37"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "35",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 52 is single delivered-camera exchange to maximize one product attribute.",
+        "right_task_id": "52"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "35",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch item-modify, but Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 72 is address change plus item modification after payment and scope revisions before confirmation; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "72"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "35",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch return, but Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 73 is selective multi-item delivered-order return, excluding one item; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "73"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "35",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch item-modify, but Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "78"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "35",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 35 is delivered-speaker return plus laptop option change in a separate pending order, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "35",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 35 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "37",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 52 is single delivered-camera exchange to maximize one product attribute.",
+        "right_task_id": "52"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "37",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch item-modify, but Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 72 is address change plus item modification after payment and scope revisions before confirmation; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "72"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "37",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+        "right_task_id": "73"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "37",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch item-modify, but Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "78"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "37",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 37 is budget-constrained, multi-item pending-order modification with price-information branch, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "37",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 37 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "52",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 52 is single delivered-camera exchange to maximize one product attribute, while Task 72 is address change plus item modification after payment and scope revisions before confirmation.",
+        "right_task_id": "72"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "52",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 52 is single delivered-camera exchange to maximize one product attribute, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+        "right_task_id": "73"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "52",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 52 is single delivered-camera exchange to maximize one product attribute, while Task 78 is pending-order address and item changes plus cancellation of a separate order.",
+        "right_task_id": "78"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "52",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 52 is single delivered-camera exchange to maximize one product attribute, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "52",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 52 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "72",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 72 is address change plus item modification after payment and scope revisions before confirmation, while Task 73 is selective multi-item delivered-order return, excluding one item.",
+        "right_task_id": "73"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "72",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch address, item-modify, but Task 72 is address change plus item modification after payment and scope revisions before confirmation, while Task 78 is pending-order address and item changes plus cancellation of a separate order; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "78"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "72",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 72 is address change plus item modification after payment and scope revisions before confirmation, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "72",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 72 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "73",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 73 is selective multi-item delivered-order return, excluding one item, while Task 78 is pending-order address and item changes plus cancellation of a separate order.",
+        "right_task_id": "78"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "73",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Different dominant workflows: Task 73 is selective multi-item delivered-order return, excluding one item, while Task 88 is conditional variant change with whole-order cancellation fallback.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "73",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 73 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "78",
+        "rationale": "AI pairwise pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Both touch cancel, but Task 78 is pending-order address and item changes plus cancellation of a separate order, while Task 88 is conditional variant change with whole-order cancellation fallback; the customer goal, order state, and/or required state transition differ materially.",
+        "right_task_id": "88"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "78",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 78 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      },
+      {
+        "distinct_scenario": true,
+        "left_task_id": "88",
+        "rationale": "Task 93 is validation-only and is not used to select E diversity. It tests a delivered laptop exchange to requested processor, memory, and storage specifications; Task 88 has a different customer goal, product workflow, or order-state transition. This cross-panel comparison is retained because the existing review schema requires every selected E/V pair.",
+        "right_task_id": "93"
+      }
+    ],
+    "review_id": "activation-smoke-researcher-confirmed-20260929",
+    "reviewed_at": "2026-09-29T14:41:25Z",
+    "reviewer_id": "Codex AI pre-review; researcher confirmed recommendations in Codex chat",
+    "schema_version": 1,
+    "task_reviews": [
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. The source provides name+ZIP for required authentication. In a fresh copy of the pinned Retail DB, all nine reference actions succeed, including two pending-order cancellations, the delivered watch return, and the refund calculation. The requested total $8,276.23 matches the listed arithmetic. This is a mixed cancel/return/refund-information workflow.",
+        "satisfiable": true,
+        "task_id": "16",
+        "task_sha256": "a46a7848d29777c7d6bb3beadea6d3cafa0da12158830a6a0c685f90fb08ca55"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Name+ZIP authenticates against the pinned DB. All seven reference actions succeed. The scenario explicitly asks to move the default address, update the one eligible pending order, then restore the original profile address; the original street address is retrievable from the profile. The service must confirm each write.",
+        "satisfiable": true,
+        "task_id": "22",
+        "task_sha256": "968d73ce2d67f42ca10f1fd2b4368ac05db7bdf842bfcc26ca1afe1fec221b7f"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Name+ZIP authentication succeeds. All six reference actions succeed, including two same-product delivered exchanges. The hidden item ID is a fact the customer is allowed to withhold while asking the agent to find the pending-order variant; this is not a false statement. The price comparison has explicit expected values.",
+        "satisfiable": true,
+        "task_id": "29",
+        "task_sha256": "c12c34a735c9ac2d54991ef3c0f90e85c301a16e4731511266712ccd88d9125d"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. The known user ID and the second listed email identify the same account. The first email lookup is an expected nonfatal miss; the second succeeds, and all later reference actions succeed. Multiple personal email addresses are possible, and the scenario does not claim both are registered on the retail account. This provides a return plus pending-laptop-modification workflow.",
+        "satisfiable": true,
+        "task_id": "35",
+        "task_sha256": "fb218ead70c72fc09b6f0f56ed75f821ab3a0d955b7c9852eab16694413f1a9a"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. The first email lookup is not linked to a Retail account, but the supplied name+ZIP lookup succeeds and the subsequent order modification reference action succeeds. The task can be completed using the policy-approved authentication path and does not require claiming the email is the account email. It covers a payment/price constraint and a multi-item pending-order change.",
+        "satisfiable": true,
+        "task_id": "37",
+        "task_sha256": "b53308048e5c833bd881a714ac3b1f78d66ffb3a5fd46059065368b1eb190c08"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Name+ZIP authenticates. All five reference actions succeed. The delivered-camera exchange specifies the source item, same-product variant constraint, maximum zoom, and payment method; the reference action confirms an available same-product target.",
+        "satisfiable": true,
+        "task_id": "52",
+        "task_sha256": "06bf80b755acbdedde2a6c963fa9e722316c1f2a18a24bfdfb513d00baff8e4f"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Name+ZIP is provided. Both reference writes succeed. The scope and payment preference change before confirmation; the final gold action modifies only the backpack, while the pending-order address update is separate. This is a valid, nondeceptive preference revision when the agent confirms the final details before acting.",
+        "satisfiable": true,
+        "task_id": "72",
+        "task_sha256": "99e4758d08f8bdcf019a9b52fa0badd218e632181c78d7aa953994f8b001f554"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Name+email are provided. The reference return succeeds for the four listed items and leaves the coffee machine out. The pinned Retail tool accepts the order, item set, and payment method. This candidate has already received a formal semantic review requirement in the plan; this AI review does not replace that sign-off.",
+        "satisfiable": true,
+        "task_id": "73",
+        "task_sha256": "4e0ddaf28df78e409757e29bb645f64565c9f31ac21c6058dd3b7d7b99b4c555"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Name+email authenticate. All three reference writes succeed on a pending order address, pending-order item modification, and a separate pending-order cancellation. Calling the item change an “exchange” colloquially is compatible with the pending-order modify tool; the reference action matches policy/tool semantics.",
+        "satisfiable": true,
+        "task_id": "78",
+        "task_sha256": "60d81c1582421ebca191d0e01d8ddc58ba382635bbfb3d1e4e66d212d74caa2e"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "evolution",
+        "policy_tool_compatible": true,
+        "rationale": "AI pre-review explicitly confirmed by the researcher in Codex chat on 2026-09-29. Name+email authenticate and the expected whole-order cancellation succeeds. The scenario itself supplies “ordered by mistake” as the cancellation reason and does not say that this would be false; treat it as truthful unless the researcher knows otherwise. The conditional “modify if available, otherwise cancel” adds a distinct product-availability branch. Confirm this reason remains truthful during manual sign-off.",
+        "satisfiable": true,
+        "task_id": "88",
+        "task_sha256": "613bd83dc956025a6a1c2e24e340e3655a02218ecdc271f2ee1f5db1824e80fa"
+      },
+      {
+        "no_deception_required": true,
+        "panel": "validation",
+        "policy_tool_compatible": true,
+        "rationale": "Task 93 remains the pre-existing validation task, not an E task. Its scenario gives Lei Wilson and ZIP 32255 and requests a delivered-laptop exchange to explicit specs; the pinned policy/tools support the exchange and the reference write replay succeeded. The researcher confirmed that V remains 93 in Codex chat on 2026-09-29.",
+        "satisfiable": true,
+        "task_id": "93",
+        "task_sha256": "8a7f70df613bd10c2ef253f9c8d7861d6bbec808df14c2998e8d94911f321c49"
+      }
+    ]
+  },
+  "task_semantic_review_sha256": "d3a3c758f70418acbcd85bc6ee8122e11a61f332b33a67dbe15ad437d6a05dd0",
+  "auditor_calibration_status": "role-separated_but_not_yet_human-calibrated",
+  "paths": {
+    "output": "experiments/results/evotau-customer-skill-v3-behavior-smoke-task73-20261003",
+    "checkpoint": "experiments/results/evotau-customer-skill-v3-behavior-smoke-task73-20261003/checkpoint"
+  },
+  "customer_evolver_schema": "skill_v3",
+  "reflection_seed_sha256": "d83162c8daf9d0e827e5725be717d7bd35ea58a4824c273fd4aeac951a1ee735",
+  "manifest_sha256": "2a62f119ec1a6358a7268b2fa4aadc395b588a42bc017b4cad652215a1f5914c"
+}
