@@ -126,7 +126,9 @@ def propose_customer_strategies(
     if not incumbent.is_v2:
         raise ValueError("direct Customer proposals require a v2 incumbent")
     task_ids = set(evolution_task_ids)
-    if not task_ids or any(item.task_id not in task_ids for item in recent_failures):
+    if recent_failures and (
+        not task_ids or any(item.task_id not in task_ids for item in recent_failures)
+    ):
         raise ValueError("Customer Evolver may receive only verified failures from frozen E tasks")
     signals = tuple(
         EvolutionFailureSignal(
