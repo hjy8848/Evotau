@@ -15,6 +15,7 @@ from typing import Any
 from .budget import RequestBudget
 from .customer_evolver_v2 import (
     SYSTEM_PROMPT,
+    CustomerEvolverResponseError,
     LLMCustomerStrategyEvolver,
     propose_customer_strategies,
 )
@@ -103,6 +104,12 @@ class CustomerEvolverSmokeFailed(RuntimeError):
     """A failed provider proposal with its immutable diagnostic artifact saved."""
 
 
+class _ProviderCallFailed(RuntimeError):
+    def __init__(self, error_type: str):
+        super().__init__(error_type)
+        self.error_type = error_type
+
+
 def run_from_config(
     config_path: str | Path,
     *,
@@ -131,23 +138,64 @@ def run_from_config(
     )
     budget = RequestBudget(cap=None)
     provenance = capture_code_provenance().to_dict()
-    stage = "provider_proposal"
+    response_metadata: dict[str, Any] = {}
+
+    def capture_response(context: Any) -> Any:
+        try:
+            response = provider(context)
+        except CustomerEvolverResponseError as exc:
+            response_metadata["response_sha256"] = exc.response_sha256
+            raise
+        except Exception as exc:  # noqa: BLE001 - never persist provider exception text
+            raise _ProviderCallFailed(type(exc).__name__) from None
+        response_metadata.update(_response_summary(response))
+        return response
+
     try:
         if proposal_provider is None:
             from tau2.utils import llm_utils
 
             with budget.instrument_tau_llm_utils(llm_utils, retry_empty_responses=False):
-                candidates = _propose(config, provider)
+                candidates = _propose(config, capture_response)
         else:
-            candidates = _propose(config, provider)
+            candidates = _propose(config, capture_response)
+    except _ProviderCallFailed as exc:
+        result = _base_result(config, raw_config, config_sha256, provenance, budget)
+        result.update({
+            "status": "failed",
+            "failure_stage": "provider_call",
+            "error_type": exc.error_type,
+            "candidate_proposals": [],
+        })
+        result.update(response_metadata)
+        _write_json_once(artifact_path, result)
+        raise CustomerEvolverSmokeFailed(
+            f"Customer Evolver provider call failed ({exc.error_type}); artifact: {artifact_path}"
+        ) from None
+    except CustomerEvolverResponseError as exc:
+        result = _base_result(config, raw_config, config_sha256, provenance, budget)
+        result.update({
+            "status": "failed",
+            "failure_stage": "response_format",
+            "error_type": type(exc).__name__,
+            "validation_error": str(exc),
+            "candidate_proposals": [],
+            "response_sha256": exc.response_sha256,
+        })
+        _write_json_once(artifact_path, result)
+        raise CustomerEvolverSmokeFailed(
+            f"Customer Evolver response was not valid JSON; artifact: {artifact_path}"
+        ) from None
     except Exception as exc:  # noqa: BLE001 - persist provider diagnostics without raw exception text
         result = _base_result(config, raw_config, config_sha256, provenance, budget)
         result.update({
             "status": "failed",
-            "failure_stage": stage,
+            "failure_stage": "candidate_validation",
             "error_type": type(exc).__name__,
+            "validation_error": _safe_diagnostic(str(exc)),
             "candidate_proposals": [],
         })
+        result.update(response_metadata)
         _write_json_once(artifact_path, result)
         raise CustomerEvolverSmokeFailed(
             f"Customer Evolver proposal failed ({type(exc).__name__}); artifact: {artifact_path}"
@@ -168,6 +216,7 @@ def run_from_config(
         ],
         "proposal_context_sha256": candidates[0].proposal_context_sha256,
     })
+    result.update(response_metadata)
     _write_json_once(artifact_path, result)
     return {**result, "artifact_path": str(artifact_path)}
 
@@ -187,6 +236,44 @@ def _propose(
         evolution_task_ids=(),
         proposal_provider=provider,
     )
+
+
+def _response_summary(value: Any) -> dict[str, Any]:
+    try:
+        encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        encoded = repr(type(value).__name__)
+    result: dict[str, Any] = {
+        "response_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        "response_type": type(value).__name__,
+    }
+    if isinstance(value, dict):
+        rows = value.get("candidates")
+        result["response_top_level_keys"] = sorted(str(key) for key in value)
+        result["response_candidate_count"] = len(rows) if isinstance(rows, list) else None
+        if isinstance(rows, list):
+            result["response_candidate_shapes"] = [
+                {
+                    "candidate_keys": sorted(str(key) for key in row) if isinstance(row, dict) else None,
+                    "strategy_keys": sorted(str(key) for key in row.get("strategy", {}))
+                    if isinstance(row, dict) and isinstance(row.get("strategy"), dict) else None,
+                    "changed_fields": row.get("changed_fields") if isinstance(row, dict) else None,
+                    "evidence_ref_count": len(row.get("evidence_refs", []))
+                    if isinstance(row, dict) and isinstance(row.get("evidence_refs"), list) else None,
+                    "hypothesis_length": len(row.get("hypothesis", ""))
+                    if isinstance(row, dict) and isinstance(row.get("hypothesis"), str) else None,
+                }
+                for row in rows[:8]
+            ]
+    return result
+
+
+def _safe_diagnostic(value: str) -> str:
+    # Validator messages are useful, but strip credential-shaped substrings defensively.
+    import re
+
+    cleaned = re.sub(r"(?i)bearer\s+\S+|sk-[A-Za-z0-9_-]{12,}", "[REDACTED]", value)
+    return cleaned[:400]
 
 
 def _base_result(

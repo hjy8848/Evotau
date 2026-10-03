@@ -80,6 +80,8 @@ def test_provider_only_smoke_saves_validated_candidates_without_task_or_episode_
     saved = json.loads(artifact.read_text(encoding="utf-8"))
     assert saved["candidate_proposals"] == result["candidate_proposals"]
     assert saved["provider_budget"]["attempts"] == 0
+    assert saved["response_candidate_count"] == 2
+    assert saved["response_sha256"]
 
 
 def test_provider_only_smoke_saves_failure_without_provider_error_text(tmp_path: Path) -> None:
@@ -95,6 +97,24 @@ def test_provider_only_smoke_saves_failure_without_provider_error_text(tmp_path:
     assert saved["status"] == "failed"
     assert saved["error_type"] == "RuntimeError"
     assert "secret-shaped" not in artifact_path.read_text(encoding="utf-8")
+
+
+def test_provider_only_smoke_records_safe_candidate_validation_diagnostics(tmp_path: Path) -> None:
+    config_path = _config(tmp_path)
+
+    def provider(context):
+        response = _response(context.incumbent)
+        response["candidates"][0]["changed_fields"] = ["disclosure"]
+        return response
+
+    with pytest.raises(CustomerEvolverSmokeFailed, match="ValueError"):
+        run_from_config(config_path, proposal_provider=provider)
+    artifact_path = tmp_path / "results/proposal-smoke-test/proposal-smoke.json"
+    saved = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert saved["failure_stage"] == "candidate_validation"
+    assert "changed_fields must exactly match" in saved["validation_error"]
+    assert saved["response_candidate_count"] == 2
+    assert len(saved["response_candidate_shapes"]) == 2
 
 
 def test_provider_only_smoke_requires_an_explicit_live_provider_config(tmp_path: Path) -> None:

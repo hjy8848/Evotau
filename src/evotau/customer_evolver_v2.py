@@ -107,6 +107,14 @@ class CustomerStrategyProposalInput:
 StrategyProposalProvider = Callable[[CustomerStrategyProposalInput], Mapping[str, Any]]
 
 
+class CustomerEvolverResponseError(ValueError):
+    """A malformed provider response, retaining only its content fingerprint."""
+
+    def __init__(self, message: str, *, response_sha256: str):
+        super().__init__(message)
+        self.response_sha256 = response_sha256
+
+
 def propose_customer_strategies(
     incumbent: CustomerStrategy,
     count: int,
@@ -244,7 +252,11 @@ class LLMCustomerStrategyEvolver:
         try:
             result = json.loads(message.content or "")
         except (TypeError, json.JSONDecodeError) as exc:
-            raise ValueError("Customer Evolver returned invalid JSON") from exc
+            content = message.content or ""
+            raise CustomerEvolverResponseError(
+                "Customer Evolver returned invalid JSON",
+                response_sha256=sha256_json(content),
+            ) from exc
         if not isinstance(result, dict):
             raise TypeError("Customer Evolver must return a JSON object")
         return result
