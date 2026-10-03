@@ -27,6 +27,14 @@ from .records import EpisodeRecord
 from .strategies import CustomerStrategy, ServiceStrategy
 
 
+def validate_behavior_smoke_task_id(task_id: str, reviewed_e_task_ids: tuple[str, ...]) -> str:
+    """Keep the tiny behavior check inside the already screened evolution panel."""
+    selected = str(task_id)
+    if selected not in {str(value) for value in reviewed_e_task_ids}:
+        raise ValueError("behavior-smoke task must belong to the reviewed E panel")
+    return selected
+
+
 def _project_file(root: Path, value: str) -> Path:
     relative = Path(value)
     if relative.is_absolute() or ".." in relative.parts:
@@ -49,6 +57,7 @@ def run_from_config(
     *,
     tau2_data_dir: str | Path,
     provider_plugin: str,
+    behavior_task_id: str = "22",
 ) -> dict[str, Any]:
     config_file = Path(config_path).expanduser().resolve()
     project_root = config_file.parent.parent if config_file.parent.name == "configs" else config_file.parent
@@ -63,6 +72,9 @@ def run_from_config(
     if (manifest.condition != "customer_representation_comparison"
             or manifest.customer_evolver_schema != "skill_v3"):
         raise ValueError("V3 behavior smoke requires the frozen skill_v3 representation-comparison config")
+    selected_task_id = validate_behavior_smoke_task_id(
+        behavior_task_id, manifest.evolution_task_ids,
+    )
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY is required; inject it from Keychain for this command")
 
@@ -145,7 +157,7 @@ def run_from_config(
         "provider_provenance": _provider_provenance_document(
             bundle.provenance, {"audit_provider": bundle.callbacks["audit_provider"]},
         ),
-        "behavior_smoke_task_id": "22",
+        "behavior_smoke_task_id": selected_task_id,
         "seed": 1,
         "paired_baseline_and_skill": True,
         "service_frozen": True,
@@ -169,7 +181,7 @@ def run_from_config(
     episodes = []
     for strategy, label in ((baseline, "behavior-smoke-v2-baseline"), (skill, "behavior-smoke-v3-skill")):
         episodes.append(runner(
-            task_id="22", seed=1, customer=strategy, service=service, panel_name=label,
+            task_id=selected_task_id, seed=1, customer=strategy, service=service, panel_name=label,
         ))
 
     def telemetry_for(record: EpisodeRecord) -> dict[str, Any]:
@@ -207,7 +219,7 @@ def run_from_config(
         "schema_version": 1,
         "status": "complete",
         "experiment_id": manifest.experiment_id,
-        "behavior_smoke_task": "22",
+        "behavior_smoke_task": selected_task_id,
         "seed": 1,
         "service_frozen": True,
         "customer_skill_id": skill.strategy_id,
@@ -256,11 +268,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--tau2-data-dir", type=Path, required=True)
     parser.add_argument("--provider-plugin", required=True)
+    parser.add_argument(
+        "--task-id", default="22",
+        help="reviewed E-panel task for the engineering smoke (defaults to diagnostic Task 22)",
+    )
     args = parser.parse_args(argv)
     try:
         result = run_from_config(
             args.config, tau2_data_dir=args.tau2_data_dir,
-            provider_plugin=args.provider_plugin,
+            provider_plugin=args.provider_plugin, behavior_task_id=args.task_id,
         )
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         print(f"V3 behavior smoke failed: {exc}", file=sys.stderr)

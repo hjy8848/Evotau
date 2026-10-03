@@ -72,7 +72,7 @@ The successful InferAI DeepSeek V4 Flash proposal-only smoke is archived at `exp
 
 `customer_evolver_schema: skill_v3` adds an opt-in Customer representation beside V2. V3 evolves one small, reusable natural-language interaction procedure with a fixed trigger, ordered steps, stop condition, hypothesis, and evidence references; the deterministic renderer supplies immutable factual-safety invariants and appends the skill inside `<evotau_customer_skill>` after τ-bench's native Customer prompt. The native system prompt, task scenario, policy, tools, and evaluator stay upstream-owned. V3's E-only reflection is sanitized, while candidate selection continues to use only independently reproduced and audited policy-attributable Service failures. A novel skill, a native task failure, or a Customer-invalid episode cannot increase fitness. V1/V2 artifacts and default behavior remain unchanged.
 
-The frozen InferAI DeepSeek V4 Flash configs for this mechanism are `configs/customer-skill-v3-proposal-smoke-inferai-deepseek-v4-flash-20261003.yaml`, `configs/customer-skill-v3-behavior-smoke-inferai-deepseek-v4-flash-20261003.yaml`, and the paired `configs/customer-representation-v2-inferai-deepseek-v4-flash-bounded-20261003.yaml` / `configs/customer-representation-v3-inferai-deepseek-v4-flash-bounded-20261003.yaml`. The proposal smoke asks for K=2 candidates in a single provider-only request, with no τ-bench episode. After it passes, the behavior smoke runs a matched Task 22 V2/V3 pair at seed 1, freezes Service S0, and verifies native prompt/scenario preservation. The paired activation arms then use the same reviewed E panel, baseline, S0, provider settings, seeds, evaluator, concurrency, retry policy, and 1,800-attempt ceiling per arm. The Task 22 reflection input contains only an abstract disputed `unsupported_factual_detail` signal, marked ineligible for fitness.
+The frozen InferAI DeepSeek V4 Flash configs for this mechanism are `configs/customer-skill-v3-proposal-smoke-inferai-deepseek-v4-flash-20261003.yaml`, `configs/customer-skill-v3-behavior-smoke-task73-inferai-deepseek-v4-flash-20261003.yaml`, and the paired `configs/customer-representation-v2-inferai-deepseek-v4-flash-bounded-20261003.yaml` / `configs/customer-representation-v3-inferai-deepseek-v4-flash-bounded-20261003.yaml`. The proposal smoke asks for K=2 candidates in a single provider-only request, with no τ-bench episode. The engineering behavior smoke runs a matched V2/V3 pair on reviewed E task 73 at seed 1, freezes Service S0, and verifies native prompt/scenario preservation. Task 22 remains the source of the abstract disputed `unsupported_factual_detail` reflection signal, marked ineligible for fitness; two earlier Task 22 behavior-smoke attempts were interrupted by the provider RPM error before a V3 episode completed. The primary paired activation arms still use the same reviewed 10-task E panel, baseline, S0, provider settings, seeds, evaluator, concurrency, retry policy, and 1,800-attempt ceiling per arm. The smoke-only task selection does not change that panel or either comparison arm.
 
 With pinned τ-bench data and `OPENAI_API_KEY` injected from the local secret store, run the stages in order:
 
@@ -82,9 +82,10 @@ python -m evotau.customer_skill_v3_smoke \
   --tau2-data-dir /path/to/pinned-tau2-bench/data
 
 python -m evotau.customer_skill_v3_behavior_smoke \
-  --config configs/customer-skill-v3-behavior-smoke-inferai-deepseek-v4-flash-20261003.yaml \
+  --config configs/customer-skill-v3-behavior-smoke-task73-inferai-deepseek-v4-flash-20261003.yaml \
   --tau2-data-dir /path/to/pinned-tau2-bench/data \
-  --provider-plugin evotau.provider_plugins.deepseek_v4_flash:build_callbacks
+  --provider-plugin evotau.provider_plugins.deepseek_v4_flash:build_callbacks \
+  --task-id 73
 
 python -m evotau.activation_smoke_run \
   --config configs/customer-representation-v2-inferai-deepseek-v4-flash-bounded-20261003.yaml \
@@ -97,7 +98,7 @@ python -m evotau.activation_smoke_run \
   --provider-plugin evotau.provider_plugins.deepseek_v4_flash:build_callbacks
 ```
 
-Each stage writes to its own immutable directory under `experiments/results/`; a retry needs a newly reviewed config and output path. The V2 comparison arm receives the same sanitized reflection seed, but reflection is opt-in so the existing V2 default is unchanged. V3 proposal attempts are accounted separately in run telemetry and checkpoint decisions. These bounded representation runs are mechanism evidence only and do not change Pilot or Formal.
+Each stage writes to its own immutable directory under `experiments/results/`; a retry needs a newly reviewed config and output path. The behavior smoke's `--task-id` must be in the screened E panel. The V2 comparison arm receives the same sanitized reflection seed, but reflection is opt-in so the existing V2 default is unchanged. V3 proposal attempts are accounted separately in run telemetry and checkpoint decisions. These bounded representation runs are mechanism evidence only and do not change Pilot or Formal.
 
 Independent episode audits separately record factual Customer validity, whether an EvoTau behavior had an opportunity to apply, adherence when applicable, and the count of invalid repeated write calls. `None` can run the native τ-bench Customer without a strategy overlay; Service clean-gate pairs require that mode, while adversarial target/history/validation pairs must have an applicable, adherent Customer strategy. A Service gate fails closed when repeated-write audit counts are missing or the candidate adds one. Cross-play reports the count and audit coverage so unknown observations stay visible; attribution rates use applicable, adherent episodes as their denominator.
 
