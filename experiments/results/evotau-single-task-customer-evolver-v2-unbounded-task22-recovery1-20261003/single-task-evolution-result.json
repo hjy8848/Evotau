@@ -1,0 +1,438 @@
+{
+  "caveat": "One task is diagnostic; task-level strategy selection does not establish cross-task effectiveness.",
+  "episode_count": 3,
+  "episodes": [
+    {
+      "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+      "customer_strategy_adherent": true,
+      "customer_strategy_id": "a7409c7abae7b8bc",
+      "customer_valid": true,
+      "episode_id": "evotau-phase0-32ae5403-b058-4666-beb3-18a48a85e03e",
+      "mistake_type": null,
+      "native_reward": 0.0,
+      "policy_rule_id": null,
+      "policy_violation": false,
+      "seed": 1,
+      "status": "complete",
+      "strategy_applicable": true,
+      "task_id": "22",
+      "task_success": false,
+      "workflow_stage": null
+    },
+    {
+      "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+      "customer_strategy_adherent": true,
+      "customer_strategy_id": "03aa23cdd0f44170",
+      "customer_valid": true,
+      "episode_id": "evotau-phase0-6ca2b10e-54b6-411d-b6bc-5ec18e7f953f",
+      "mistake_type": null,
+      "native_reward": 1.0,
+      "policy_rule_id": null,
+      "policy_violation": false,
+      "seed": 1,
+      "status": "complete",
+      "strategy_applicable": true,
+      "task_id": "22",
+      "task_success": true,
+      "workflow_stage": null
+    },
+    {
+      "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+      "customer_strategy_adherent": true,
+      "customer_strategy_id": "7b9ee6c76fe58a86",
+      "customer_valid": true,
+      "episode_id": "evotau-phase0-d1623294-9267-4c83-b748-2b5f55e97fce",
+      "mistake_type": null,
+      "native_reward": 1.0,
+      "policy_rule_id": null,
+      "policy_violation": false,
+      "seed": 1,
+      "status": "complete",
+      "strategy_applicable": true,
+      "task_id": "22",
+      "task_success": true,
+      "workflow_stage": null
+    }
+  ],
+  "generation_commit": {
+    "completed": true,
+    "customer_evolved": false,
+    "customer_id": "7b9ee6c76fe58a86",
+    "decision_record": {
+      "active_replay_coverage": {
+        "active_signatures": 0,
+        "coverage_rate": 1.0,
+        "replayed_signatures": 0,
+        "uncovered_signatures": 0
+      },
+      "customer": {
+        "evaluations": [
+          {
+            "episodes": [
+              {
+                "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+                "customer_strategy_adherent": true,
+                "customer_strategy_id": "7b9ee6c76fe58a86",
+                "customer_valid": true,
+                "enforce_communication_protocol": false,
+                "episode_id": "evotau-phase0-d1623294-9267-4c83-b748-2b5f55e97fce",
+                "evidence": [],
+                "invalid_repeated_write_calls": 0,
+                "mistake_type": null,
+                "mixed_text_tool_call_messages": 2,
+                "native_reward": 1.0,
+                "notes": "",
+                "policy_rule_id": null,
+                "policy_violation": false,
+                "raw_review": {
+                  "auth_classification": null,
+                  "native_review": null
+                },
+                "seed": 1,
+                "service_strategy_id": "da506c8a9c8a9f31",
+                "status": "complete",
+                "strategy_applicable": true,
+                "task_id": "22",
+                "task_success": true,
+                "termination_reason": "user_stop",
+                "tool_calls": 8,
+                "trajectory_ref": "episodes/recovered-baseline/native-simulation.json",
+                "workflow_stage": null
+              }
+            ],
+            "failure_audit_refs": [],
+            "failure_ids": [],
+            "fitness": 0,
+            "invalid_episode_count": 0,
+            "panel_name": "discovery",
+            "provisional_failure_count": 0,
+            "provisional_failure_events": [],
+            "replication_episodes": [],
+            "signature_count": 0,
+            "strategy_adherence_rate": 1.0,
+            "strategy_adherent_count": 1,
+            "strategy_id": "7b9ee6c76fe58a86",
+            "strategy_not_applicable_count": 0,
+            "strategy_opportunity_count": 1,
+            "uncertain_episode_count": 0,
+            "valid_episode_count": 1
+          },
+          {
+            "episodes": [
+              {
+                "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+                "customer_strategy_adherent": true,
+                "customer_strategy_id": "03aa23cdd0f44170",
+                "customer_valid": true,
+                "enforce_communication_protocol": false,
+                "episode_id": "evotau-phase0-6ca2b10e-54b6-411d-b6bc-5ec18e7f953f",
+                "evidence": [],
+                "invalid_repeated_write_calls": 0,
+                "mistake_type": null,
+                "mixed_text_tool_call_messages": 3,
+                "native_reward": 1.0,
+                "notes": "",
+                "policy_rule_id": null,
+                "policy_violation": false,
+                "raw_review": {
+                  "auth_classification": {
+                    "cost": 0.0,
+                    "reasoning": "The agent attempted to authenticate the user by asking first for an email, then using name and zip code instead. The user provided the requested details (Ethan Garcia, 80280) and the agent successfully found the matching account (ethan_garcia_1261), confirming the user's identity before proceeding with account and order updates.",
+                    "status": "succeeded"
+                  },
+                  "native_review": {
+                    "agent_error": true,
+                    "cost": 0.0,
+                    "critical_user_error": false,
+                    "errors": [
+                      {
+                        "correct_behavior": "The agent should have made one get_order_details tool call, waited for the tool response, then made the next call, one at a time.",
+                        "error_tags": [
+                          "guideline_violation"
+                        ],
+                        "error_type": null,
+                        "reasoning": "The agent made three get_order_details tool calls in a single assistant turn. This violates the policy that states the agent should make at most one tool call at a time. The calls were valid and returned successfully, so the outcome was not negatively affected, but the procedural rule was broken.",
+                        "severity": "minor",
+                        "source": "agent",
+                        "tick_end": null,
+                        "tick_start": null,
+                        "turn_idx": 12
+                      },
+                      {
+                        "correct_behavior": "The agent should have made one tool call, waited for its response, then made the other tool call in a subsequent turn.",
+                        "error_tags": [
+                          "guideline_violation"
+                        ],
+                        "error_type": null,
+                        "reasoning": "The agent issued two database-modifying tool calls (modify_user_address and modify_pending_order_address) simultaneously in one turn. Policy requires at most one tool call at a time. Both updates were properly confirmed by the user and succeeded, so this is a procedural violation without a negative effect on the task outcome.",
+                        "severity": "minor",
+                        "source": "agent",
+                        "tick_end": null,
+                        "tick_start": null,
+                        "turn_idx": 18
+                      }
+                    ],
+                    "has_errors": true,
+                    "summary": "The conversation progressed correctly overall: the agent authenticated Ethan Garcia via name and zip code, updated his default account address and the pending order's shipping address to the requested new address after obtaining explicit confirmation, and later reverted the default account address back to the original when the user changed their mind. The only errors were procedural: the agent violated the 'at most one tool call at a time' policy by making multiple tool calls in single turns (three get_order_details calls in turn 12, and two address-modification calls in turn 18). These did not affect the final outcome and are considered minor. No user errors were found.",
+                    "user_error": false
+                  }
+                },
+                "seed": 1,
+                "service_strategy_id": "da506c8a9c8a9f31",
+                "status": "complete",
+                "strategy_applicable": true,
+                "task_id": "22",
+                "task_success": true,
+                "termination_reason": "user_stop",
+                "tool_calls": 8,
+                "trajectory_ref": "episodes/7061d43b579a4f57adc33589cd9caaad/native-simulation.json",
+                "workflow_stage": null
+              }
+            ],
+            "failure_audit_refs": [],
+            "failure_ids": [],
+            "fitness": 0,
+            "invalid_episode_count": 0,
+            "panel_name": "discovery",
+            "provisional_failure_count": 0,
+            "provisional_failure_events": [],
+            "replication_episodes": [],
+            "signature_count": 0,
+            "strategy_adherence_rate": 1.0,
+            "strategy_adherent_count": 1,
+            "strategy_id": "03aa23cdd0f44170",
+            "strategy_not_applicable_count": 0,
+            "strategy_opportunity_count": 1,
+            "uncertain_episode_count": 0,
+            "valid_episode_count": 1
+          },
+          {
+            "episodes": [
+              {
+                "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+                "customer_strategy_adherent": true,
+                "customer_strategy_id": "a7409c7abae7b8bc",
+                "customer_valid": true,
+                "enforce_communication_protocol": false,
+                "episode_id": "evotau-phase0-32ae5403-b058-4666-beb3-18a48a85e03e",
+                "evidence": [],
+                "invalid_repeated_write_calls": 0,
+                "mistake_type": null,
+                "mixed_text_tool_call_messages": 1,
+                "native_reward": 0.0,
+                "notes": "",
+                "policy_rule_id": null,
+                "policy_violation": false,
+                "raw_review": {
+                  "auth_classification": {
+                    "cost": 0.0,
+                    "reasoning": "The agent requested identity verification before making account changes. The user provided their name and zip code, and the agent successfully looked up the matching account (ethan_garcia_1261), confirming the user's identity before proceeding with address updates.",
+                    "status": "succeeded"
+                  },
+                  "native_review": {
+                    "agent_error": true,
+                    "cost": 0.0,
+                    "critical_user_error": false,
+                    "errors": [
+                      {
+                        "correct_behavior": "The user should not have provided a country, or should have said they don't know the country if asked.",
+                        "error_tags": [
+                          "hallucination"
+                        ],
+                        "error_type": null,
+                        "reasoning": "The user provided the country 'US' for the new address, but the User Instructions only specify '101 Highway, New York, 10001' without a country. This is a factual detail not grounded in the instructions, violating the simulation guideline to never make up information.",
+                        "severity": "minor",
+                        "source": "user",
+                        "tick_end": null,
+                        "tick_start": null,
+                        "turn_idx": 9
+                      },
+                      {
+                        "correct_behavior": "The agent should have made one tool call at a time, waiting for each response before proceeding, and should not have sent a user message in the same turn as a tool call.",
+                        "error_tags": [
+                          "guideline_violation"
+                        ],
+                        "error_type": null,
+                        "reasoning": "The agent made three tool calls (get_order_details for three orders) in a single turn and also sent a message to the user in the same turn. The policy states 'You should at most make one tool call at a time, and if you take a tool call, you should not respond to the user at the same time.' This violates the one-tool-call-at-a-time rule and the rule against responding while making tool calls.",
+                        "severity": "minor",
+                        "source": "agent",
+                        "tick_end": null,
+                        "tick_start": null,
+                        "turn_idx": 18
+                      }
+                    ],
+                    "has_errors": true,
+                    "summary": "The conversation proceeded correctly overall. The agent authenticated the user, updated the default address to 101 Highway, New York, NY 10001, updated the pending order #W9911714's shipping address, and then reverted the default address back to the original as requested. The only errors were a minor user hallucination (providing country 'US' not in the instructions) and a minor agent policy violation (making multiple tool calls and responding to the user in the same turn). Neither error affected the final outcome.",
+                    "user_error": true
+                  }
+                },
+                "seed": 1,
+                "service_strategy_id": "da506c8a9c8a9f31",
+                "status": "complete",
+                "strategy_applicable": true,
+                "task_id": "22",
+                "task_success": false,
+                "termination_reason": "user_stop",
+                "tool_calls": 8,
+                "trajectory_ref": "episodes/0ce0a5710a024e26a6cad9c753aec2f1/native-simulation.json",
+                "workflow_stage": null
+              }
+            ],
+            "failure_audit_refs": [],
+            "failure_ids": [],
+            "fitness": 0,
+            "invalid_episode_count": 0,
+            "panel_name": "discovery",
+            "provisional_failure_count": 0,
+            "provisional_failure_events": [],
+            "replication_episodes": [],
+            "signature_count": 0,
+            "strategy_adherence_rate": 1.0,
+            "strategy_adherent_count": 1,
+            "strategy_id": "a7409c7abae7b8bc",
+            "strategy_not_applicable_count": 0,
+            "strategy_opportunity_count": 1,
+            "uncertain_episode_count": 0,
+            "valid_episode_count": 1
+          }
+        ],
+        "incumbent_after": {
+          "challenge_behavior": "none",
+          "challenge_budget": 0,
+          "correction_behavior": "accept_if_correct",
+          "disclosure": "minimal_on_request",
+          "preference_revision": "fixed",
+          "request_decomposition": "bundled",
+          "request_order": "scenario_order"
+        },
+        "incumbent_before": {
+          "challenge_behavior": "none",
+          "challenge_budget": 0,
+          "correction_behavior": "accept_if_correct",
+          "disclosure": "minimal_on_request",
+          "preference_revision": "fixed",
+          "request_decomposition": "bundled",
+          "request_order": "scenario_order"
+        },
+        "proposal_mode": "strategy_v2",
+        "proposals": [
+          {
+            "changed_fields": [
+              "disclosure"
+            ],
+            "expected_behavioral_effect": "Exploration: Progressively disclosing related details only after the Service has acted on earlier ones may expose whether the Service prematurely commits to a partial solution or fails to integrate newly revealed constraints, while remaining factually valid.",
+            "operator": "strategy_v2",
+            "parent_id": "7b9ee6c76fe58a86",
+            "proposal_context_sha256": "60e67dba2ff7882bc1f5c55b39f100678785d929eebea02523ef97ab8c6faf2d",
+            "rationale": "exploration",
+            "strategy": {
+              "challenge_behavior": "none",
+              "challenge_budget": 0,
+              "correction_behavior": "accept_if_correct",
+              "disclosure": "progressive",
+              "preference_revision": "fixed",
+              "request_decomposition": "bundled",
+              "request_order": "scenario_order"
+            },
+            "strategy_id": "03aa23cdd0f44170",
+            "supporting_failure_ids": []
+          },
+          {
+            "changed_fields": [
+              "request_order",
+              "request_decomposition"
+            ],
+            "expected_behavioral_effect": "Exploration: Reversing the order of independent requests and handling them one at a time may reveal whether the Service loses track of earlier commitments or applies context from a later request to an earlier one, testing state management without altering any facts.",
+            "operator": "strategy_v2",
+            "parent_id": "7b9ee6c76fe58a86",
+            "proposal_context_sha256": "60e67dba2ff7882bc1f5c55b39f100678785d929eebea02523ef97ab8c6faf2d",
+            "rationale": "exploration",
+            "strategy": {
+              "challenge_behavior": "none",
+              "challenge_budget": 0,
+              "correction_behavior": "accept_if_correct",
+              "disclosure": "minimal_on_request",
+              "preference_revision": "fixed",
+              "request_decomposition": "one_by_one",
+              "request_order": "reverse_independent"
+            },
+            "strategy_id": "a7409c7abae7b8bc",
+            "supporting_failure_ids": []
+          }
+        ],
+        "selection": {
+          "confirmation_scores": [],
+          "discovery_scores": [
+            [
+              "7b9ee6c76fe58a86",
+              0
+            ],
+            [
+              "03aa23cdd0f44170",
+              0
+            ],
+            [
+              "a7409c7abae7b8bc",
+              0
+            ]
+          ],
+          "evolved": false,
+          "incumbent_id": "7b9ee6c76fe58a86",
+          "reason": "no strict discovery improvement; incumbent retained",
+          "selected_id": "7b9ee6c76fe58a86"
+        }
+      },
+      "generation": 0,
+      "service": {
+        "failure_ids": [],
+        "gate": null,
+        "incumbent_after": {
+          "rules": []
+        },
+        "incumbent_before": {
+          "rules": []
+        },
+        "note": "no strict discovery improvement; incumbent retained",
+        "transition_ran": false
+      },
+      "verified_failures": []
+    },
+    "generation": 0,
+    "selection_reason": "no strict discovery improvement; incumbent retained",
+    "service_evolved": false
+  },
+  "provider_usage": {
+    "attempts": 80,
+    "cache_hits": 0,
+    "cap": null,
+    "completion_tokens": 22813,
+    "denied": 0,
+    "failures": 1,
+    "in_flight": 0,
+    "model_usage": [
+      {
+        "attempts": 80,
+        "cache_hits": 0,
+        "completion_tokens": 22813,
+        "denied": 0,
+        "failures": 1,
+        "in_flight": 0,
+        "model_id": "openai/deepseek-v4-flash",
+        "prompt_tokens": 366342,
+        "successes": 79,
+        "usage_responses": 79,
+        "usage_unavailable": 1
+      }
+    ],
+    "prompt_tokens": 366342,
+    "reserved": 0,
+    "successes": 79,
+    "usage_responses": 79,
+    "usage_unavailable": 1
+  },
+  "run_id": "evotau-single-task-customer-evolver-v2-unbounded-task22-recovery1-20261003",
+  "run_kind": "single_task_customer_evolution_diagnostic_recovered_audit",
+  "schema_version": 1,
+  "status": "complete",
+  "task_id": "22"
+}

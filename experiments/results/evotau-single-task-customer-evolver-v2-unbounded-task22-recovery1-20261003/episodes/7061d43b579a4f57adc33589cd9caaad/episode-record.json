@@ -1,0 +1,69 @@
+{
+  "episode_id": "evotau-phase0-6ca2b10e-54b6-411d-b6bc-5ec18e7f953f",
+  "task_id": "22",
+  "seed": 1,
+  "customer_strategy_id": "03aa23cdd0f44170",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/7061d43b579a4f57adc33589cd9caaad/native-simulation.json",
+  "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+  "tool_calls": 8,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 3,
+  "raw_review": {
+    "native_review": {
+      "summary": "The conversation progressed correctly overall: the agent authenticated Ethan Garcia via name and zip code, updated his default account address and the pending order's shipping address to the requested new address after obtaining explicit confirmation, and later reverted the default account address back to the original when the user changed their mind. The only errors were procedural: the agent violated the 'at most one tool call at a time' policy by making multiple tool calls in single turns (three get_order_details calls in turn 12, and two address-modification calls in turn 18). These did not affect the final outcome and are considered minor. No user errors were found.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 12,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made three get_order_details tool calls in a single assistant turn. This violates the policy that states the agent should make at most one tool call at a time. The calls were valid and returned successfully, so the outcome was not negatively affected, but the procedural rule was broken.",
+          "correct_behavior": "The agent should have made one get_order_details tool call, waited for the tool response, then made the next call, one at a time."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 18,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent issued two database-modifying tool calls (modify_user_address and modify_pending_order_address) simultaneously in one turn. Policy requires at most one tool call at a time. Both updates were properly confirmed by the user and succeeded, so this is a procedural violation without a negative effect on the task outcome.",
+          "correct_behavior": "The agent should have made one tool call, waited for its response, then made the other tool call in a subsequent turn."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent attempted to authenticate the user by asking first for an email, then using name and zip code instead. The user provided the requested details (Ethan Garcia, 80280) and the agent successfully found the matching account (ethan_garcia_1261), confirming the user's identity before proceeding with account and order updates.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

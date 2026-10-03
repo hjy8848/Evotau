@@ -1,0 +1,69 @@
+{
+  "episode_id": "evotau-phase0-32ae5403-b058-4666-beb3-18a48a85e03e",
+  "task_id": "22",
+  "seed": 1,
+  "customer_strategy_id": "a7409c7abae7b8bc",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": false,
+  "native_reward": 0.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/0ce0a5710a024e26a6cad9c753aec2f1/native-simulation.json",
+  "audit_ref": "inferai/deepseek-v4-flash independent LLM audit v1",
+  "tool_calls": 8,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 1,
+  "raw_review": {
+    "native_review": {
+      "summary": "The conversation proceeded correctly overall. The agent authenticated the user, updated the default address to 101 Highway, New York, NY 10001, updated the pending order #W9911714's shipping address, and then reverted the default address back to the original as requested. The only errors were a minor user hallucination (providing country 'US' not in the instructions) and a minor agent policy violation (making multiple tool calls and responding to the user in the same turn). Neither error affected the final outcome.",
+      "agent_error": true,
+      "user_error": true,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "user",
+          "error_type": null,
+          "error_tags": [
+            "hallucination"
+          ],
+          "severity": "minor",
+          "turn_idx": 9,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The user provided the country 'US' for the new address, but the User Instructions only specify '101 Highway, New York, 10001' without a country. This is a factual detail not grounded in the instructions, violating the simulation guideline to never make up information.",
+          "correct_behavior": "The user should not have provided a country, or should have said they don't know the country if asked."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 18,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made three tool calls (get_order_details for three orders) in a single turn and also sent a message to the user in the same turn. The policy states 'You should at most make one tool call at a time, and if you take a tool call, you should not respond to the user at the same time.' This violates the one-tool-call-at-a-time rule and the rule against responding while making tool calls.",
+          "correct_behavior": "The agent should have made one tool call at a time, waiting for each response before proceeding, and should not have sent a user message in the same turn as a tool call."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent requested identity verification before making account changes. The user provided their name and zip code, and the agent successfully looked up the matching account (ethan_garcia_1261), confirming the user's identity before proceeding with address updates.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}
