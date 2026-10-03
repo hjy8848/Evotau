@@ -20,6 +20,10 @@ STRATEGY_FIELDS = (
 )
 CANDIDATE_FIELDS = frozenset({"strategy", "changed_fields", "hypothesis", "evidence_refs"})
 _TASK_REFERENCE = re.compile(r"\btask\s*(?:id\s*)?#?\s*[\w-]*\d[\w-]*\b", re.IGNORECASE)
+_EXPLORATION_TERMS = (
+    "explor", "test", "probe", "assess", "examin", "evaluat", "investigat",
+    "observ", "vary", "try", "探索", "测试", "考察", "评估", "观察", "检验",
+)
 _GUARANTEED_FAILURE = re.compile(
     r"\b(?:guaranteed?|certain(?:ly)?|will\s+fail|must\s+fail|ensure\s+(?:a\s+)?failure)\b|"
     r"(?:保证失败|必然失败|确保失败|导致失败)",
@@ -55,7 +59,7 @@ A preference revision may only change a preference the original task legitimatel
 
 Return exactly K candidate strategies. Each candidate should normally change 1 or 2 strategy fields relative to the incumbent. Change 3 fields only when supplied verified failure evidence clearly motivates the combination. Do not return the incumbent or any already_tested_strategies. Prefer meaningful behavioral diversity over superficial parameter changes.
 
-Use only supplied abstract verified failure summaries to form hypotheses. Stale state after a preference change may motivate preference_revision or correction_behavior. Premature execution before confirmation may motivate request decomposition, correction, or a bounded challenge. Information-gathering failures may motivate disclosure, decomposition, or ordering. If there are no verified failures, explore novel legal regions. Do not invent failures.
+Use only supplied abstract verified failure summaries to form hypotheses. Stale state after a preference change may motivate preference_revision or correction_behavior. Premature execution before confirmation may motivate request decomposition, correction, or a bounded challenge. Information-gathering failures may motivate disclosure, decomposition, or ordering. If there are no verified failures, explore novel legal regions. In this no-evidence case, change exactly 1 or 2 fields per candidate, never 3 or more; use empty evidence_refs; and begin each hypothesis with "Exploration:". Count challenge_budget as its own changed field. Before responding, count each candidate's changed fields against the incumbent and verify the list exactly matches. Do not invent failures.
 
 ## Hard safety and scientific constraints
 
@@ -205,7 +209,7 @@ def propose_customer_strategies(
             raise ValueError("Customer candidate hypothesis must describe an interaction effect")
         if _TASK_REFERENCE.search(hypothesis) or _GUARANTEED_FAILURE.search(hypothesis):
             raise ValueError("Customer candidate hypothesis cannot expose a task ID or guarantee failure")
-        if not refs and not any(word in hypothesis.casefold() for word in ("explor", "探索")):
+        if not refs and not any(term in hypothesis.casefold() for term in _EXPLORATION_TERMS):
             raise ValueError("unsupported Customer candidate hypothesis must describe exploration")
         candidates.append(CustomerCandidate(
             strategy=strategy,

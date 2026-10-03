@@ -262,6 +262,8 @@ def _response_summary(value: Any) -> dict[str, Any]:
                     if isinstance(row, dict) and isinstance(row.get("evidence_refs"), list) else None,
                     "hypothesis_length": len(row.get("hypothesis", ""))
                     if isinstance(row, dict) and isinstance(row.get("hypothesis"), str) else None,
+                    "hypothesis_preview": _safe_diagnostic(row.get("hypothesis", ""))
+                    if isinstance(row, dict) and isinstance(row.get("hypothesis"), str) else None,
                 }
                 for row in rows[:8]
             ]
@@ -341,7 +343,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("configs/customer-evolver-proposal-smoke-inferai-deepseek-v4-flash.yaml"),
+        required=True,
+        help="one-time provider and output configuration; use a fresh output path for each attempt",
     )
     return parser
 

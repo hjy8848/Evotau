@@ -139,6 +139,12 @@ def test_v2_evolver_rejects_unreviewed_or_invalid_output_before_episode_dispatch
     with pytest.raises(ValueError, match="guarantee failure"):
         call(guaranteed_failure)
 
+    clear_exploration_hypothesis = _proposals(incumbent)
+    clear_exploration_hypothesis["candidates"][0]["hypothesis"] = (
+        "Testing whether a different request sequence changes clarification behavior."
+    )
+    assert len(call(clear_exploration_hypothesis)) == 2
+
 
 def test_legacy_mutation_operators_fail_closed_for_v2_strategies() -> None:
     incumbent = CustomerStrategy.v2_baseline()
