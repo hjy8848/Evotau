@@ -38,6 +38,8 @@ def mutate_customer(
 ) -> CustomerCandidate:
     """Change exactly one behavior axis; invalid/no-op mutations are rejected."""
 
+    if incumbent.is_v2:
+        raise ValueError("legacy mutation operators cannot mutate v2 Customer strategies")
     parent_id = sha256_json(incumbent.to_dict())[:16]
     values = incumbent.to_dict()
     if operator == "disclosure":
@@ -89,6 +91,8 @@ def propose_customer_candidates(
 ) -> tuple[CustomerCandidate, ...]:
     """Choose distinct mutations reproducibly, biasing only exploration order by evidence."""
 
+    if incumbent.is_v2:
+        raise ValueError("legacy mutation operators cannot propose v2 Customer strategies")
     if count < 0:
         raise ValueError("candidate count must be non-negative")
     if count > len(MUTATION_OPERATORS):

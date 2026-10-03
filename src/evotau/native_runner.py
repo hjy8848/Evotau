@@ -25,6 +25,7 @@ from .budget import (
 from .checkpoint import load_checkpoint, manifest_fingerprint
 from .communication import observe_communication_protocol
 from .customer_evolver import LLMCustomerEvolver, OperatorSelector
+from .customer_evolver_v2 import LLMCustomerStrategyEvolver, StrategyProposalProvider
 from .db_state_trace import (
     DBStateTraceError,
     replay_db_state_trace,
@@ -675,7 +676,7 @@ def run_native_activation_smoke(
     data_dir: str | Path,
     task_review_document: Mapping[str, Any],
     audit_provider: AuditProvider,
-    customer_proposal_provider: OperatorSelector | None = None,
+    customer_proposal_provider: OperatorSelector | StrategyProposalProvider | None = None,
     provider_provenance: Mapping[str, Any] | None = None,
     service_transition: Callable[..., Any] | None = None,
     service_proposal_provider: Callable[..., Any] | None = None,
@@ -720,6 +721,14 @@ def run_native_activation_smoke(
         raise ValueError("initial Service strategy differs from the frozen activation manifest")
 
     models = dict(manifest.role_models)
+    if manifest.customer_evolver_schema == "strategy_v2":
+        if not customer.is_v2:
+            raise ValueError("strategy_v2 activation requires a seven-field Customer incumbent")
+        if customer_proposal_provider is None:
+            customer_proposal_provider = LLMCustomerStrategyEvolver(
+                model=models["evolver"],
+                model_args=role_model_args_for_runtime(manifest.role_model_args)["evolver"],
+            )
     from litellm import token_counter
 
     service_token_counter = lambda text: token_counter(model=models["agent"], text=text)
@@ -770,6 +779,8 @@ def run_native_activation_smoke(
         "provider_response_policy": "retry-empty-successful-completion-until-nonempty",
         "phase0_parent": None,
     }
+    if manifest.customer_evolver_schema == "strategy_v2":
+        run_context["customer_evolver_schema"] = "strategy_v2"
     budget = RequestBudget(manifest.request_budget_cap)
     project_root = (
         config_file.parent.parent
@@ -820,6 +831,10 @@ def run_native_activation_smoke(
         service,
         service_transition=service_transition,
         customer_proposal_provider=customer_proposal_provider,
+        customer_proposal_mode=(
+            "strategy_v2" if manifest.customer_evolver_schema == "strategy_v2"
+            else "failure_conditioned"
+        ),
         candidates_per_generation=manifest.customer_candidates,
     )
     if len(commits) != 1 or commits[0].generation != 0:

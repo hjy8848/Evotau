@@ -6,15 +6,34 @@ from typing import Any
 
 _DISCLOSURE = {
     "minimal_on_request": "按客服询问逐步提供必要信息",
+    "progressive": "随对话进展逐步披露已知信息",
     "related_on_request": "回答具体问题，并补充相关信息",
 }
 _REQUEST_ORDER = {
     "scenario_order": "按任务给定顺序提出独立请求",
     "reverse_independent": "反向提出独立请求（保留必要依赖顺序）",
+    "dependency_first": "先提出依赖事项，再提出后续请求",
+    "high_risk_first": "独立请求中优先提出需核验或承诺的事项",
+}
+_DECOMPOSITION = {
+    "bundled": "关联请求一并提出",
+    "one_by_one": "独立请求逐个提出",
+    "dependency_grouped": "按依赖关系分组提出",
+}
+_PREFERENCE_REVISION = {
+    "fixed": "保持原有偏好",
+    "revise_before_commit": "承诺前仅调整任务允许变动的偏好",
+    "narrow_after_options": "了解选项后仅收窄任务允许变动的偏好",
+}
+_CORRECTION = {
+    "accept_if_correct": "理解准确时接受；必要时如实纠正",
+    "correct_once": "对实质误解如实纠正一次",
+    "correct_and_restate_constraint": "如实纠正并重申原有约束",
 }
 _CHALLENGE = {
     "none": "不额外追问",
     "ask_reason": "遇到拒绝或验证要求时询问原因",
+    "ask_policy_boundary": "询问适用的政策边界",
     "rephrase_request": "遇到阻碍时重述一次相同请求",
 }
 
@@ -29,9 +48,26 @@ def customer_strategy_view(strategy: Any) -> dict[str, Any]:
     if not isinstance(strategy, dict):
         return {"available": False, "native": False, "summary": "Customer 策略定义不可用。", "technical": strategy}
     challenge_budget = strategy.get("challenge_budget")
+    if "request_decomposition" in strategy:
+        fields = {
+            "disclosure": _DISCLOSURE.get(str(strategy.get("disclosure")), "未知设置"),
+            "request_order": _REQUEST_ORDER.get(str(strategy.get("request_order")), "未知设置"),
+            "request_decomposition": _DECOMPOSITION.get(str(strategy.get("request_decomposition")), "未知设置"),
+            "preference_revision": _PREFERENCE_REVISION.get(str(strategy.get("preference_revision")), "未知设置"),
+            "correction_behavior": _CORRECTION.get(str(strategy.get("correction_behavior")), "未知设置"),
+            "challenge_behavior": _CHALLENGE.get(str(strategy.get("challenge_behavior")), "未知设置"),
+        }
+        return {
+            "available": True, "native": False, "version": 2,
+            **fields,
+            "challenge_budget": challenge_budget if type(challenge_budget) is int else None,
+            "summary": "；".join(fields.values()),
+            "technical": strategy,
+        }
     return {
         "available": True,
         "native": False,
+        "version": 1,
         "disclosure": _DISCLOSURE.get(str(strategy.get("disclosure")), "未知设置"),
         "request_order": _REQUEST_ORDER.get(str(strategy.get("request_order")), "未知设置"),
         "challenge_style": _CHALLENGE.get(str(strategy.get("challenge_style")), "未知设置"),
@@ -229,6 +265,12 @@ _CUSTOMER_FIELDS = (
     ("disclosure", "信息披露"), ("request_order", "请求顺序"),
     ("challenge_style", "挑战方式"), ("challenge_budget", "挑战次数"),
 )
+_CUSTOMER_FIELDS_V2 = (
+    ("disclosure", "信息披露"), ("request_order", "请求顺序"),
+    ("request_decomposition", "请求拆分"), ("preference_revision", "偏好调整"),
+    ("correction_behavior", "纠正方式"), ("challenge_behavior", "追问方式"),
+    ("challenge_budget", "追问次数"),
+)
 
 
 def strategy_diff_rows(before: Any, after: Any, side: str) -> dict[str, Any]:
@@ -238,17 +280,17 @@ def strategy_diff_rows(before: Any, after: Any, side: str) -> dict[str, Any]:
     if side == "customer":
         before_view = customer_strategy_view(before)
         after_view = customer_strategy_view(after)
-        values = {
-            "disclosure": (before_view.get("disclosure"), after_view.get("disclosure")),
-            "request_order": (before_view.get("request_order"), after_view.get("request_order")),
-            "challenge_style": (before_view.get("challenge_style"), after_view.get("challenge_style")),
-            "challenge_budget": (
-                before.get("challenge_budget", "Unavailable"), after.get("challenge_budget", "Unavailable"),
-            ),
-        }
-        rows = tuple({"field": label, "before": values[key][0], "after": values[key][1],
-                      "changed": values[key][0] != values[key][1]}
-                     for key, label in _CUSTOMER_FIELDS)
+        fields = (
+            _CUSTOMER_FIELDS_V2
+            if before_view.get("version") == 2 or after_view.get("version") == 2
+            else _CUSTOMER_FIELDS
+        )
+        rows = tuple({
+            "field": label,
+            "before": before_view.get(key, "Unavailable"),
+            "after": after_view.get(key, "Unavailable"),
+            "changed": before_view.get(key) != after_view.get(key),
+        } for key, label in fields)
         return {"available": True, "rows": rows, "added": (), "removed": ()}
 
     before_rules = before.get("rules", [])

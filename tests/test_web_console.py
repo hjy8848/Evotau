@@ -33,6 +33,7 @@ from evotau.web.event_stream import EventJournal
 from evotau.web.run_manager import RunManager, RunManagerError
 from evotau.web.view_models import (
     budget_view,
+    customer_strategy_view,
     failure_status,
     gate_status,
     strategy_diff_rows,
@@ -817,6 +818,17 @@ def test_strategy_diff_is_display_only_and_marks_changed_fields():
         "挑战方式",
         "挑战次数",
     }
+
+
+def test_v2_customer_strategy_view_explains_all_interaction_axes():
+    incumbent = CustomerStrategy.v2_baseline().to_dict()
+    candidate = {**incumbent, "request_decomposition": "one_by_one"}
+    view = customer_strategy_view(candidate)
+    assert view["version"] == 2
+    assert view["request_decomposition"] == "独立请求逐个提出"
+    diff = strategy_diff_rows(incumbent, candidate, "customer")
+    assert len(diff["rows"]) == 7
+    assert [row["field"] for row in diff["rows"] if row["changed"]] == ["请求拆分"]
 
 
 def test_run_manager_refuses_provider_off_and_binds_launch_inputs_without_spawning(

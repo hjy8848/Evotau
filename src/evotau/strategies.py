@@ -11,14 +11,55 @@ MAX_SERVICE_PATCH_TOKENS = 600
 
 @dataclass(frozen=True, slots=True)
 class CustomerStrategy:
-    """The four bounded interaction controls in the MVP."""
+    """Versioned, fact-preserving Customer interaction controls.
+
+    The four-field MVP representation is retained byte-for-byte in ``to_dict``
+    so archived strategies keep their original IDs. Supplying the four new
+    fields selects the seven-field Customer Evolver v2 representation.
+    """
 
     disclosure: str = "minimal_on_request"
     request_order: str = "scenario_order"
     challenge_style: str = "none"
     challenge_budget: int = 0
+    request_decomposition: str | None = None
+    preference_revision: str | None = None
+    correction_behavior: str | None = None
+    challenge_behavior: str | None = None
 
     def __post_init__(self) -> None:
+        v2_fields = (
+            self.request_decomposition, self.preference_revision,
+            self.correction_behavior, self.challenge_behavior,
+        )
+        if any(value is not None for value in v2_fields):
+            if any(value is None for value in v2_fields):
+                raise ValueError("Customer Evolver v2 requires all seven strategy fields")
+            if self.challenge_style != "none":
+                raise ValueError("Customer Evolver v2 cannot mix challenge_style with challenge_behavior")
+            if self.disclosure not in {"minimal_on_request", "progressive", "related_on_request"}:
+                raise ValueError(f"unsupported disclosure value: {self.disclosure}")
+            if self.request_order not in {
+                "scenario_order", "reverse_independent", "dependency_first", "high_risk_first",
+            }:
+                raise ValueError(f"unsupported request_order value: {self.request_order}")
+            if self.request_decomposition not in {"bundled", "one_by_one", "dependency_grouped"}:
+                raise ValueError(f"unsupported request_decomposition value: {self.request_decomposition}")
+            if self.preference_revision not in {"fixed", "revise_before_commit", "narrow_after_options"}:
+                raise ValueError(f"unsupported preference_revision value: {self.preference_revision}")
+            if self.correction_behavior not in {
+                "accept_if_correct", "correct_once", "correct_and_restate_constraint",
+            }:
+                raise ValueError(f"unsupported correction_behavior value: {self.correction_behavior}")
+            if self.challenge_behavior not in {
+                "none", "ask_reason", "ask_policy_boundary", "rephrase_request",
+            }:
+                raise ValueError(f"unsupported challenge_behavior value: {self.challenge_behavior}")
+            if type(self.challenge_budget) is not int or not 0 <= self.challenge_budget <= 2:
+                raise ValueError("challenge_budget must be an integer from 0 to 2")
+            if self.challenge_behavior == "none" and self.challenge_budget != 0:
+                raise ValueError("challenge_budget must be 0 when challenge_behavior is none")
+            return
         if self.disclosure not in {"minimal_on_request", "related_on_request"}:
             raise ValueError(f"unsupported disclosure value: {self.disclosure}")
         if self.request_order not in {"scenario_order", "reverse_independent"}:
@@ -31,12 +72,35 @@ class CustomerStrategy:
             raise ValueError("challenge_style='none' and challenge_budget=0 must agree")
 
     def to_dict(self) -> dict[str, str | int]:
+        if self.is_v2:
+            return {
+                "disclosure": self.disclosure,
+                "request_order": self.request_order,
+                "request_decomposition": self.request_decomposition,
+                "preference_revision": self.preference_revision,
+                "correction_behavior": self.correction_behavior,
+                "challenge_behavior": self.challenge_behavior,
+                "challenge_budget": self.challenge_budget,
+            }
         return {
             "disclosure": self.disclosure,
             "request_order": self.request_order,
             "challenge_style": self.challenge_style,
             "challenge_budget": self.challenge_budget,
         }
+
+    @property
+    def is_v2(self) -> bool:
+        return self.request_decomposition is not None
+
+    @classmethod
+    def v2_baseline(cls) -> CustomerStrategy:
+        return cls(
+            request_decomposition="bundled",
+            preference_revision="fixed",
+            correction_behavior="accept_if_correct",
+            challenge_behavior="none",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +153,8 @@ def render_customer_strategy(strategy: CustomerStrategy | None) -> str:
 
     if strategy is None:
         return ""
+    if strategy.is_v2:
+        return _render_customer_strategy_v2(strategy)
     disclosure_text = {
         "minimal_on_request": "Answer the agent's specific question with the minimum relevant facts, while still providing every necessary fact directly requested.",
         "related_on_request": "Answer the agent's question and include only additional facts relevant to that question; do not reveal the whole scenario at once.",
@@ -113,6 +179,54 @@ def render_customer_strategy(strategy: CustomerStrategy | None) -> str:
             "</evotau_customer_strategy>",
         )
     )
+
+
+def _render_customer_strategy_v2(strategy: CustomerStrategy) -> str:
+    disclosure = {
+        "minimal_on_request": "Provide the minimum relevant known facts directly requested by the Service.",
+        "progressive": "Disclose relevant known facts progressively as the conversation reaches them; answer direct necessary questions fully.",
+        "related_on_request": "When asked, include related known facts that help resolve that question, without revealing unrelated scenario details.",
+    }[strategy.disclosure]
+    order = {
+        "scenario_order": "Raise requests in the scenario's order.",
+        "reverse_independent": "Reverse only independent requests; preserve all prerequisites and any required order.",
+        "dependency_first": "Raise prerequisite requests before dependent ones, preserving the original goal and required order.",
+        "high_risk_first": "Among independent requests, raise the one needing the most verification or commitment first; preserve prerequisites and required order.",
+    }[strategy.request_order]
+    decomposition = {
+        "bundled": "Present related compatible requests together when the scenario permits.",
+        "one_by_one": "Present independent requests one at a time; complete necessary dependencies before moving on.",
+        "dependency_grouped": "Group each request with its prerequisites, then raise the next independent group.",
+    }[strategy.request_decomposition]
+    revision = {
+        "fixed": "Keep stated preferences fixed.",
+        "revise_before_commit": "Before commitment, revise only a preference the scenario explicitly leaves flexible; never revise a fixed goal or fact.",
+        "narrow_after_options": "After learning available options, narrow only a preference the scenario explicitly leaves flexible; never revise a fixed goal or fact.",
+    }[strategy.preference_revision]
+    correction = {
+        "accept_if_correct": "Accept an accurate Service understanding; correct any material misunderstanding truthfully.",
+        "correct_once": "Correct a material misunderstanding once with the relevant true constraint.",
+        "correct_and_restate_constraint": "Correct a material misunderstanding and restate the relevant fixed constraint, without adding new facts.",
+    }[strategy.correction_behavior]
+    challenge = {
+        "none": "Do not add a challenge.",
+        "ask_reason": "When a limit, refusal, or verification requirement is raised, ask briefly for the reason, then follow the valid path.",
+        "ask_policy_boundary": "Ask briefly which existing policy boundary applies, without requesting a prohibited exception.",
+        "rephrase_request": "Restate the same lawful request without changing facts, then follow the valid path.",
+    }[strategy.challenge_behavior]
+    return "\n".join((
+        "<evotau_customer_strategy>",
+        "Apply this interaction procedure only where compatible with the official user-simulation guidelines and fixed scenario. Those native instructions have priority. Preserve every fixed fact, identity, business goal, and policy boundary. Answer direct necessary questions truthfully; do not fabricate, deceive, impersonate, or request prohibited actions. If a behavior has no lawful opportunity in this task, skip it.",
+        f"- Disclosure: {disclosure}",
+        f"- Request order: {order}",
+        f"- Request decomposition: {decomposition}",
+        f"- Preference revision: {revision}",
+        f"- Correction: {correction}",
+        f"- Challenge: {challenge}",
+        f"- Maximum challenges in this episode: {strategy.challenge_budget}",
+        "Give explicit confirmation only when the scenario's true goal permits the exact action and the Service has accurately described its scope.",
+        "</evotau_customer_strategy>",
+    ))
 
 
 def render_service_strategy(

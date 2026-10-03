@@ -10,6 +10,7 @@ from evotau.eligibility import validate_activation_selection
 from evotau.lifecycle import TwoGenerationSmoke
 from evotau.manifest import ActivationSmokeManifest
 from evotau.phase0 import load_config
+from evotau.strategies import CustomerStrategy
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,6 +68,22 @@ def test_activation_manifest_freezes_independent_e10_g1_seed1_design() -> None:
     assert payload["task_selection"]["heldout"] == []
     assert payload["task_selection"]["evolution"] == list(manifest.evolution_task_ids)
     assert payload["task_semantic_review_sha256"] == manifest.task_semantic_review_sha256
+    assert "customer_evolver_schema" not in payload
+
+
+def test_activation_can_freeze_v2_strategy_proposals_without_changing_legacy_protocol() -> None:
+    config = activation_config()
+    config["experiment"]["customer_evolver_schema"] = "strategy_v2"
+    config["experiment"]["customer_strategy"] = CustomerStrategy.v2_baseline().to_dict()
+    manifest = ActivationSmokeManifest.from_mapping(
+        config, task_review_document=reviewed_panel(),
+    )
+    assert manifest.customer_evolver_schema == "strategy_v2"
+    assert manifest.to_payload()["customer_evolver_schema"] == "strategy_v2"
+
+    config["experiment"]["customer_strategy"] = None
+    with pytest.raises(ValueError, match="explicit seven-field"):
+        ActivationSmokeManifest.from_mapping(config, task_review_document=reviewed_panel())
 
 
 def test_uncapped_request_budget_is_only_enabled_for_explicit_diagnostic_config() -> None:

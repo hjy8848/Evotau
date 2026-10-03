@@ -27,6 +27,11 @@ from .customer_evolver import (
     OperatorSelector,
     propose_customer_candidates_with_selector,
 )
+from .customer_evolver_v2 import (
+    STRATEGY_FIELDS,
+    StrategyProposalProvider,
+    propose_customer_strategies,
+)
 from .episode_execution import (
     EpisodeSpec,
     StopBeforeEpisodeDispatch,
@@ -251,6 +256,7 @@ def run_customer_round(
     verification_refs: dict[str, str] | None = None,
     failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
     already_seen: tuple[str, ...] | frozenset[str] = (),
+    already_tested_strategies: tuple[CustomerStrategy, ...] = (),
     prior_failures: tuple[FailureRecord, ...] = (),
     confirmation_task_ids: tuple[str, ...] = (),
     confirmation_seeds: tuple[int, ...] = (),
@@ -262,9 +268,11 @@ def run_customer_round(
     should_pause: Callable[[], bool] | None = None,
     episode_finished: Callable[[EpisodeSpec], None] | None = None,
     batch_finished: Callable[[], None] | None = None,
-    proposal_provider: OperatorSelector | None = None,
+    proposal_provider: OperatorSelector | StrategyProposalProvider | None = None,
     proposal_mode: str = "failure_conditioned",
     allow_strategy_revisit: bool = False,
+    frozen_proposals: tuple[CustomerCandidate, ...] | None = None,
+    proposals_ready: Callable[[tuple[CustomerCandidate, ...]], None] | None = None,
 ) -> CustomerRound:
     """Evaluate a shared panel, then replay audited signals before scoring failures."""
     if (not task_ids or not seeds or len(set(task_ids)) != len(task_ids)
@@ -297,29 +305,84 @@ def run_customer_round(
         failure_verifier=failure_verifier,
         **execution_options,
     )
-    if proposal_mode not in {"failure_conditioned", "random_mutation"}:
-        raise ValueError("Customer proposal mode must be failure_conditioned or random_mutation")
+    if proposal_mode not in {"failure_conditioned", "random_mutation", "strategy_v2"}:
+        raise ValueError("unsupported Customer proposal mode")
     if type(allow_strategy_revisit) is not bool:
         raise TypeError("allow_strategy_revisit must be boolean")
     seen_for_proposal = () if allow_strategy_revisit else already_seen
-    if proposal_mode == "random_mutation":
+    if proposal_mode == "strategy_v2":
+        if frozen_proposals is not None:
+            candidates = frozen_proposals
+            parent_id = customer_strategy_id(incumbent)
+            seen_ids = set(seen_for_proposal)
+            verified_ids = {item.failure_id for item in prior_failures}
+            incumbent_fields = incumbent.to_dict()
+            if (len(candidates) != count
+                    or len({item.strategy_id for item in candidates}) != count
+                    or any(
+                        item.parent_id != parent_id or item.operator != "strategy_v2"
+                        or not item.strategy.is_v2 or item.strategy_id == parent_id
+                        or item.strategy_id in seen_ids
+                        or not item.proposal_context_sha256
+                        or item.changed_fields != tuple(
+                            field for field in STRATEGY_FIELDS
+                            if item.strategy.to_dict()[field] != incumbent_fields[field]
+                        )
+                        or not 1 <= len(item.changed_fields) <= 3
+                        or not set(item.supporting_failure_ids) <= verified_ids
+                        or (len(item.changed_fields) == 3 and not item.supporting_failure_ids)
+                        for item in candidates
+                    )):
+                raise ValueError("frozen v2 Customer proposals differ from the incumbent or seen set")
+        else:
+            if proposal_provider is None:
+                raise ValueError("v2 Customer evolution requires a strategy proposal provider")
+            proposal_kwargs = {
+                "generation": generation,
+                "seed": proposal_seed,
+                "recent_failures": prior_failures,
+                "already_seen": tuple(seen_for_proposal),
+                "already_tested_strategies": already_tested_strategies,
+                "evolution_task_ids": task_ids,
+                "proposal_provider": proposal_provider,
+            }
+            if request_budget is None:
+                candidates = propose_customer_strategies(incumbent, count, **proposal_kwargs)
+            else:
+                from tau2.utils import llm_utils
+
+                with request_budget.instrument_tau_llm_utils(
+                    llm_utils, retry_empty_responses=True,
+                ):
+                    candidates = propose_customer_strategies(incumbent, count, **proposal_kwargs)
+            if proposals_ready is not None:
+                proposals_ready(candidates)
+    elif proposal_mode == "random_mutation":
+        if frozen_proposals is not None or proposals_ready is not None:
+            raise ValueError("frozen strategy proposals require strategy_v2 mode")
         if proposal_provider is not None:
             raise ValueError("random-mutation control cannot use a failure-aware proposal provider")
         candidates = propose_random_mutation_candidates(
             incumbent, count, seed=proposal_seed, already_seen=seen_for_proposal,
         )
     elif proposal_provider is None:
+        if frozen_proposals is not None or proposals_ready is not None:
+            raise ValueError("frozen strategy proposals require strategy_v2 mode")
         candidates = propose_customer_candidates(
             incumbent, count, seed=proposal_seed, recent_failures=prior_failures,
             already_seen=seen_for_proposal,
         )
     elif request_budget is None:
+        if frozen_proposals is not None or proposals_ready is not None:
+            raise ValueError("frozen strategy proposals require strategy_v2 mode")
         candidates = propose_customer_candidates_with_selector(
             incumbent, count, generation=generation, seed=proposal_seed,
             recent_failures=prior_failures, already_seen=tuple(seen_for_proposal),
             evolution_task_ids=task_ids, operator_selector=proposal_provider,
         )
     else:
+        if frozen_proposals is not None or proposals_ready is not None:
+            raise ValueError("frozen strategy proposals require strategy_v2 mode")
         from tau2.utils import llm_utils
 
         with request_budget.instrument_tau_llm_utils(llm_utils):
@@ -707,6 +770,8 @@ class TwoGenerationSmoke:
             "episodes": {key: episode.to_dict() for key, episode in self._progress["episodes"].items()},
             "prepared_generation": self._progress.get("prepared_generation"),
         }
+        if "customer_proposals" in self._progress:
+            progress["customer_proposals"] = self._progress["customer_proposals"]
         state = {
             "customer": customer.to_dict(), "service": service.to_dict(),
             "commits": list(self._commit_records), "seed": self.seed,
@@ -790,7 +855,7 @@ class TwoGenerationSmoke:
             verification_refs: dict[str, str] | None = None,
             failure_verifier: Callable[[EpisodeRecord], str | None] | None = None,
             service_transition: ServiceTransition | None = None,
-            customer_proposal_provider: OperatorSelector | None = None,
+            customer_proposal_provider: OperatorSelector | StrategyProposalProvider | None = None,
             customer_proposal_mode: str = "failure_conditioned",
             allow_frozen_service: bool = False,
             freeze_customer: bool = False,
@@ -807,8 +872,8 @@ class TwoGenerationSmoke:
         """
         if candidates_per_generation != 2:
             raise ValueError("minimal smoke freezes K=2 Customer candidates per generation")
-        if customer_proposal_mode not in {"failure_conditioned", "random_mutation"}:
-            raise ValueError("Customer proposal mode must be failure_conditioned or random_mutation")
+        if customer_proposal_mode not in {"failure_conditioned", "random_mutation", "strategy_v2"}:
+            raise ValueError("unsupported Customer proposal mode")
         if type(allow_frozen_service) is not bool:
             raise TypeError("allow_frozen_service must be boolean")
         if type(freeze_customer) is not bool:
@@ -840,6 +905,13 @@ class TwoGenerationSmoke:
                 raise ValueError("Pilot frozen-Customer condition and Customer update differ")
             if self.manifest.condition == "static_customer" and allow_strategy_revisit:
                 raise ValueError("static_customer Pilot does not use adaptive proposal revisits")
+        if isinstance(self.manifest, Mapping) and self.manifest.get("phase") == "3-multitask-service-repair-activation":
+            expected_mode = (
+                "strategy_v2" if self.manifest.get("customer_evolver_schema") == "strategy_v2"
+                else "failure_conditioned"
+            )
+            if customer_proposal_mode != expected_mode:
+                raise ValueError("activation Customer proposal mode differs from the frozen manifest")
         commits: list[GenerationCommit] = []
         start_generation = 0
         if self._last_customer is None:
@@ -875,6 +947,8 @@ class TwoGenerationSmoke:
                                  for key, value in progress["episodes"].items()},
                     "prepared_generation": progress.get("prepared_generation"),
                 }
+                if "customer_proposals" in progress:
+                    self._progress["customer_proposals"] = progress["customer_proposals"]
                 customer = CustomerStrategy(**self._progress["customer"])
                 service = _service_from_dict(self._progress["service"])
                 start_generation = self._progress["generation"]
@@ -932,6 +1006,19 @@ class TwoGenerationSmoke:
                     **panel_execution,
                 )
             else:
+                def persist_v2_proposals(proposals: tuple[CustomerCandidate, ...]) -> None:
+                    if self._progress is None:
+                        raise RuntimeError("Customer proposal checkpoint has no active generation")
+                    self._progress["customer_proposals"] = [
+                        _customer_candidate_to_dict(item) for item in proposals
+                    ]
+                    self._persist_progress()
+
+                frozen_v2 = (
+                    tuple(_customer_candidate_from_dict(item) for item in self._progress["customer_proposals"])
+                    if customer_proposal_mode == "strategy_v2" and "customer_proposals" in self._progress
+                    else None
+                )
                 round_result = run_customer_round(
                     self._run_episode, incumbent=customer, service=service,
                     task_ids=self.evolution_task_ids, seeds=(seed,), generation=generation,
@@ -939,6 +1026,14 @@ class TwoGenerationSmoke:
                     verification_refs=verification_refs,
                     failure_verifier=failure_verifier,
                     already_seen=self._progress["seen_strategy_ids"],
+                    already_tested_strategies=(
+                        () if self.failure_archive is None else tuple(
+                            CustomerStrategy(**item)
+                            for item in self.failure_archive.customer_strategies(
+                                limit=len(self._progress["seen_strategy_ids"]),
+                            )
+                        )
+                    ),
                     prior_failures=(
                         () if self.failure_archive is None
                         else self.failure_archive.active_representatives(current_generation=generation)
@@ -949,6 +1044,10 @@ class TwoGenerationSmoke:
                     proposal_provider=customer_proposal_provider,
                     proposal_mode=customer_proposal_mode,
                     allow_strategy_revisit=allow_strategy_revisit,
+                    frozen_proposals=frozen_v2,
+                    proposals_ready=(
+                        persist_v2_proposals if customer_proposal_mode == "strategy_v2" else None
+                    ),
                     **panel_execution,
                 )
             old_customer = customer
@@ -1096,6 +1195,42 @@ def _commit_to_dict(commit: GenerationCommit) -> dict[str, Any]:
         "note": commit.note,
         "decision_record": commit.decision_record,
     }
+
+
+def _customer_candidate_to_dict(candidate: CustomerCandidate) -> dict[str, Any]:
+    return {
+        "strategy_id": candidate.strategy_id,
+        "strategy": candidate.strategy.to_dict(),
+        "parent_id": candidate.parent_id,
+        "operator": candidate.operator,
+        "rationale": candidate.rationale,
+        "changed_fields": list(candidate.changed_fields),
+        "expected_behavioral_effect": candidate.expected_behavioral_effect,
+        "supporting_failure_ids": list(candidate.supporting_failure_ids),
+        "proposal_context_sha256": candidate.proposal_context_sha256,
+    }
+
+
+def _customer_candidate_from_dict(value: dict[str, Any]) -> CustomerCandidate:
+    if not isinstance(value, dict) or set(value) != {
+        "strategy_id", "strategy", "parent_id", "operator", "rationale",
+        "changed_fields", "expected_behavioral_effect", "supporting_failure_ids",
+        "proposal_context_sha256",
+    }:
+        raise ValueError("saved Customer proposal has an invalid checkpoint schema")
+    candidate = CustomerCandidate(
+        strategy=CustomerStrategy(**value["strategy"]),
+        parent_id=value["parent_id"],
+        operator=value["operator"],
+        rationale=value["rationale"],
+        changed_fields=tuple(value["changed_fields"]),
+        expected_behavioral_effect=value["expected_behavioral_effect"],
+        supporting_failure_ids=tuple(value["supporting_failure_ids"]),
+        proposal_context_sha256=value["proposal_context_sha256"],
+    )
+    if value["strategy_id"] != candidate.strategy_id:
+        raise ValueError("saved Customer proposal strategy ID differs from its fields")
+    return candidate
 
 
 def _generation_decision_record(

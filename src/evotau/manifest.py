@@ -1044,6 +1044,7 @@ class ActivationSmokeManifest:
     output_path: str = "experiments/runs/evotau-activation-smoke"
     checkpoint_path: str = "experiments/checkpoints/evotau-activation-smoke"
     unbounded_provider_budget: bool = False
+    customer_evolver_schema: str = "operator_v1"
 
     def __post_init__(self) -> None:
         _validate_code_provenance(self.evotau_git_commit, self.evotau_source_sha256)
@@ -1061,6 +1062,8 @@ class ActivationSmokeManifest:
             raise ValueError("activation smoke records communication protocol without enforcement")
         if self.condition != "adaptive_coevolution":
             raise ValueError("activation smoke freezes the existing adaptive co-evolution condition")
+        if self.customer_evolver_schema not in {"operator_v1", "strategy_v2"}:
+            raise ValueError("activation Customer Evolver schema must be operator_v1 or strategy_v2")
         if len(self.evolution_task_ids) != 10 or len(set(self.evolution_task_ids)) != 10:
             raise ValueError("activation smoke requires exactly ten unique E tasks")
         if not self.validation_task_ids or len(set(self.validation_task_ids)) != len(self.validation_task_ids):
@@ -1187,6 +1190,17 @@ class ActivationSmokeManifest:
         if unbounded_provider_budget and request_budget_cap is not None:
             raise ValueError("unbounded provider configuration must set request_budget_cap to null")
         customer = experiment.get("customer_strategy")
+        customer_evolver_schema = experiment.get("customer_evolver_schema", "operator_v1")
+        if customer_evolver_schema not in {"operator_v1", "strategy_v2"}:
+            raise ValueError("unsupported activation Customer Evolver schema")
+        if customer_evolver_schema == "strategy_v2" and not isinstance(customer, Mapping):
+            raise ValueError("strategy_v2 requires an explicit seven-field Customer incumbent")
+        if customer is not None:
+            from .strategies import CustomerStrategy
+
+            parsed_customer = CustomerStrategy(**customer)
+            if parsed_customer.is_v2 != (customer_evolver_schema == "strategy_v2"):
+                raise ValueError("activation Customer strategy and Evolver schema differ")
         service = experiment.get("service_strategy") or {"rules": []}
         code = capture_code_provenance()
         return cls(
@@ -1233,10 +1247,11 @@ class ActivationSmokeManifest:
             output_path=_relative_path(str(experiment["output_path"]), "output_path"),
             checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
             unbounded_provider_budget=unbounded_provider_budget,
+            customer_evolver_schema=customer_evolver_schema,
         )
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "experiment_id": self.experiment_id,
             "phase": "3-multitask-service-repair-activation",
             "condition": self.condition,
@@ -1291,6 +1306,9 @@ class ActivationSmokeManifest:
             "auditor_calibration_status": "role-separated_but_not_yet_human-calibrated",
             "paths": {"output": self.output_path, "checkpoint": self.checkpoint_path},
         }
+        if self.customer_evolver_schema == "strategy_v2":
+            payload["customer_evolver_schema"] = "strategy_v2"
+        return payload
 
     @property
     def sha256(self) -> str:
