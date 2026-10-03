@@ -19,8 +19,6 @@ from ..service_evolution import RepairAudit, RepairProposal
 from ..service_transition import ServiceRepairInput
 from ..strategies import ServiceRule
 
-_AUDIT_VERIFIER = "inferai/deepseek-v4-flash independent LLM audit v1"
-_REPAIR_VERIFIER = "inferai/deepseek-v4-flash independent Service audit v1"
 _ALLOWED_EVIDENCE_SOURCES = {"user", "assistant", "tool", "evaluator", "reviewer"}
 
 
@@ -29,12 +27,31 @@ def build_callbacks(
 ) -> dict[str, Any]:
     """Build the Phase 3 callbacks from the frozen role models and pinned tau data."""
 
+    return _build_callbacks_for_model(
+        config=config,
+        manifest=manifest,
+        expected_model="openai/deepseek-v4-flash",
+        verifier_model_label="deepseek-v4-flash",
+    )
+
+
+def _build_callbacks_for_model(
+    *,
+    config: Mapping[str, Any],
+    manifest: MechanismManifest,
+    expected_model: str,
+    verifier_model_label: str,
+) -> dict[str, Any]:
+    """Build callbacks for one frozen OpenAI-compatible model across all roles."""
+
     role_models = dict(manifest.role_models)
     role_args = role_model_args_for_runtime(manifest.role_model_args)
-    if set(role_models.values()) != {"openai/deepseek-v4-flash"}:
+    if set(role_models.values()) != {expected_model}:
         raise ValueError(
-            "DeepSeek V4 Flash callbacks require every frozen role to use that model"
+            f"{expected_model} callbacks require every frozen role to use that model"
         )
+    audit_verifier = f"inferai/{verifier_model_label} independent LLM audit v1"
+    repair_verifier = f"inferai/{verifier_model_label} independent Service audit v1"
     configured_data_root = os.environ.get("TAU2_DATA_DIR")
     if not configured_data_root:
         raise ValueError(
@@ -206,7 +223,7 @@ def build_callbacks(
             }:
                 raise ValueError("Customer invalidity category is outside the fixed taxonomy")
         return IndependentEpisodeAudit(
-            verifier_ref=_AUDIT_VERIFIER,
+            verifier_ref=audit_verifier,
             customer_valid=customer_valid,
             strategy_applicable=strategy_applicable,
             customer_strategy_adherent=adherent,
@@ -327,7 +344,7 @@ def build_callbacks(
             raise ValueError("approved_policy_refs must be an array of strings")
         return RepairAudit(
             approved=_strict_bool(result["approved"], "approved"),
-            verifier_ref=_REPAIR_VERIFIER,
+            verifier_ref=repair_verifier,
             approved_policy_refs=frozenset(references),
             permission_delta=_strict_bool(
                 result["permission_delta"], "permission_delta"

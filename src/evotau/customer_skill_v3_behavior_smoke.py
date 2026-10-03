@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,13 @@ def validate_behavior_smoke_task_id(task_id: str, reviewed_e_task_ids: tuple[str
     return selected
 
 
+def validate_inter_arm_cooldown_seconds(value: int) -> int:
+    """Allow an operational gap between paired arms to respect provider RPM limits."""
+    if type(value) is not int or not 0 <= value <= 300:
+        raise ValueError("inter-arm cooldown must be an integer from 0 to 300 seconds")
+    return value
+
+
 def _project_file(root: Path, value: str) -> Path:
     relative = Path(value)
     if relative.is_absolute() or ".." in relative.parts:
@@ -58,6 +66,7 @@ def run_from_config(
     tau2_data_dir: str | Path,
     provider_plugin: str,
     behavior_task_id: str = "22",
+    inter_arm_cooldown_seconds: int = 0,
 ) -> dict[str, Any]:
     config_file = Path(config_path).expanduser().resolve()
     project_root = config_file.parent.parent if config_file.parent.name == "configs" else config_file.parent
@@ -75,6 +84,7 @@ def run_from_config(
     selected_task_id = validate_behavior_smoke_task_id(
         behavior_task_id, manifest.evolution_task_ids,
     )
+    cooldown_seconds = validate_inter_arm_cooldown_seconds(inter_arm_cooldown_seconds)
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY is required; inject it from Keychain for this command")
 
@@ -161,6 +171,7 @@ def run_from_config(
         "seed": 1,
         "paired_baseline_and_skill": True,
         "service_frozen": True,
+        "inter_arm_cooldown_seconds": cooldown_seconds,
     }
     context_path = output_dir / "run-context.json"
     if (context_path.exists()
@@ -179,7 +190,12 @@ def run_from_config(
         _write_json_once(context_path, context)
     service = ServiceStrategy()
     episodes = []
-    for strategy, label in ((baseline, "behavior-smoke-v2-baseline"), (skill, "behavior-smoke-v3-skill")):
+    for index, (strategy, label) in enumerate((
+        (baseline, "behavior-smoke-v2-baseline"),
+        (skill, "behavior-smoke-v3-skill"),
+    )):
+        if index and cooldown_seconds:
+            time.sleep(cooldown_seconds)
         episodes.append(runner(
             task_id=selected_task_id, seed=1, customer=strategy, service=service, panel_name=label,
         ))
@@ -272,11 +288,16 @@ def main(argv: list[str] | None = None) -> int:
         "--task-id", default="22",
         help="reviewed E-panel task for the engineering smoke (defaults to diagnostic Task 22)",
     )
+    parser.add_argument(
+        "--inter-arm-cooldown-seconds", type=int, default=0,
+        help="optional recorded delay between the matched V2 and V3 episodes",
+    )
     args = parser.parse_args(argv)
     try:
         result = run_from_config(
             args.config, tau2_data_dir=args.tau2_data_dir,
             provider_plugin=args.provider_plugin, behavior_task_id=args.task_id,
+            inter_arm_cooldown_seconds=args.inter_arm_cooldown_seconds,
         )
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         print(f"V3 behavior smoke failed: {exc}", file=sys.stderr)

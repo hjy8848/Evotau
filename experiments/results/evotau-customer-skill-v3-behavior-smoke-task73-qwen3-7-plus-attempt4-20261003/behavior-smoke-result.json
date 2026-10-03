@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "experiment_id": "evotau-customer-skill-v3-behavior-smoke-task73-qwen3-7-plus-attempt4-20261003",
+  "behavior_smoke_task": "73",
+  "seed": 1,
+  "service_frozen": true,
+  "customer_skill_id": "88601d773393e311ad950bf02b4de726125f29114fac65cb12b20ffb4969a0f9",
+  "rendered_skill_sha256": "db7dabd1ddb797d117a5d4324953a52664006b40cbf3a79df22a1cc34387b94a",
+  "episodes": [
+    {
+      "arm": "V2-baseline",
+      "episode": {
+        "episode_id": "evotau-phase0-cef7e6db-38b1-41bf-9439-e9174084e37b",
+        "task_id": "73",
+        "seed": 1,
+        "customer_strategy_id": "7b9ee6c76fe58a86",
+        "service_strategy_id": "da506c8a9c8a9f31",
+        "status": "complete",
+        "task_success": true,
+        "native_reward": 1.0,
+        "termination_reason": "user_stop",
+        "customer_valid": true,
+        "customer_invalidity_category": null,
+        "strategy_applicable": true,
+        "customer_strategy_adherent": true,
+        "policy_violation": false,
+        "invalid_repeated_write_calls": 0,
+        "policy_rule_id": null,
+        "mistake_type": null,
+        "workflow_stage": null,
+        "evidence": [],
+        "trajectory_ref": "episodes/7b2d14a5059f4a55a15ea1c6a2c73c1e/native-simulation.json",
+        "audit_ref": "inferai/qwen3.7-plus independent LLM audit v1",
+        "tool_calls": 4,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 1,
+        "raw_review": {
+          "native_review": {
+            "summary": "The conversation proceeded correctly. The user requested to return all items except the espresso machine (coffee machine) from a delivered order. The agent authenticated the user via email, retrieved order details, listed the items to be returned and the refund method, obtained explicit confirmation, and executed the return tool call. The user confirmed and ended the conversation appropriately. No errors were found in either the user simulator's or the agent's behavior.",
+            "agent_error": false,
+            "user_error": false,
+            "critical_user_error": false,
+            "has_errors": false,
+            "errors": [],
+            "cost": 0.0
+          },
+          "auth_classification": {
+            "status": "succeeded",
+            "reasoning": "The agent requested the user's email address for identity verification, the user provided it, and the agent successfully looked up the account and confirmed the user's details before proceeding with the return.",
+            "cost": 0.0
+          }
+        },
+        "notes": ""
+      },
+      "prompt_hashes": {
+        "agent": "4cf6e44236a35dda69511c196e882c7465b547e942bd9d26984ab6eb4d28ef83",
+        "customer": "dde4b774b0c71d6ce55383c82236a93c5b8f86e95836e87834154795bed2b69d",
+        "customer_native_system_prompt": "42a02fc8568bc2a5a33359aa2841471ab6239e7e2f550d0ae55946614cef0fd0",
+        "customer_scenario_source": "83b687ed3e78824c0dbce03b1a747c014fa832b3957decde2ee56f7801b97358",
+        "customer_scenario_runtime": "83b687ed3e78824c0dbce03b1a747c014fa832b3957decde2ee56f7801b97358"
+      },
+      "customer_turn_sha256": "825f7d7d7c7acd4aff7743a965ee4cfe53eb44b8cf6cbd9ddb98aa17fe05f8aa",
+      "customer_turn_count": 4
+    },
+    {
+      "arm": "V3-skill",
+      "episode": {
+        "episode_id": "evotau-phase0-c834b015-efa2-4178-bfb1-b6e4133bae95",
+        "task_id": "73",
+        "seed": 1,
+        "customer_strategy_id": "88601d773393e311ad950bf02b4de726125f29114fac65cb12b20ffb4969a0f9",
+        "service_strategy_id": "da506c8a9c8a9f31",
+        "status": "complete",
+        "task_success": true,
+        "native_reward": 1.0,
+        "termination_reason": "user_stop",
+        "customer_valid": true,
+        "customer_invalidity_category": null,
+        "strategy_applicable": true,
+        "customer_strategy_adherent": true,
+        "policy_violation": false,
+        "invalid_repeated_write_calls": 0,
+        "policy_rule_id": null,
+        "mistake_type": null,
+        "workflow_stage": null,
+        "evidence": [],
+        "trajectory_ref": "episodes/9ddec4caa8d4403781781ffdeb42ca18/native-simulation.json",
+        "audit_ref": "inferai/qwen3.7-plus independent LLM audit v1",
+        "tool_calls": 4,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 1,
+        "raw_review": {
+          "native_review": {
+            "summary": "The agent correctly authenticated Fatima Wilson via email, retrieved her order details, identified the four items to return while excluding the Espresso Machine, obtained explicit confirmation from the user, and executed return_delivered_order_items with the correct arguments. The user followed the simulation instructions accurately and confirmed all required details. The only issue found was a minor policy violation at turn 8, where the agent combined a user-facing message with a tool call in the same turn; this did not affect the final outcome.",
+            "agent_error": true,
+            "user_error": false,
+            "critical_user_error": false,
+            "has_errors": true,
+            "errors": [
+              {
+                "source": "agent",
+                "error_type": null,
+                "error_tags": [
+                  "guideline_violation"
+                ],
+                "severity": "minor",
+                "turn_idx": 8,
+                "tick_start": null,
+                "tick_end": null,
+                "reasoning": "The agent sent a user-facing message ('Thanks, Fatima! I've located your account...') and simultaneously made a tool call (get_order_details) in the same turn. The policy states that if a tool call is made, the agent should not respond to the user at the same time, and vice versa.",
+                "correct_behavior": "The agent should have either made the get_order_details tool call without any accompanying user-facing message, or sent a message first and waited for the next turn before making the tool call."
+              }
+            ],
+            "cost": 0.0
+          },
+          "auth_classification": {
+            "status": "succeeded",
+            "reasoning": "The agent explicitly requested the user's email address for identity verification, used it to look up the user ID, then retrieved and confirmed the account details before proceeding with the return.",
+            "cost": 0.0
+          }
+        },
+        "notes": ""
+      },
+      "prompt_hashes": {
+        "agent": "4cf6e44236a35dda69511c196e882c7465b547e942bd9d26984ab6eb4d28ef83",
+        "customer": "d82a1d5331158a2227babdc3a17b3e34c1a26ac47b4c4237b855fc669896f385",
+        "customer_native_system_prompt": "42a02fc8568bc2a5a33359aa2841471ab6239e7e2f550d0ae55946614cef0fd0",
+        "customer_scenario_source": "83b687ed3e78824c0dbce03b1a747c014fa832b3957decde2ee56f7801b97358",
+        "customer_scenario_runtime": "83b687ed3e78824c0dbce03b1a747c014fa832b3957decde2ee56f7801b97358"
+      },
+      "customer_turn_sha256": "816289e194b7b2301782357b317fa9b99f4cc2d4ba0b067f357be68c6e43599f",
+      "customer_turn_count": 4
+    }
+  ],
+  "customer_utterances_changed": true,
+  "customer_system_prompt_changed": true,
+  "skill_applicable": true,
+  "skill_adherent": true,
+  "customer_valid": true,
+  "customer_invalidity_category": null,
+  "native_scenario_preserved": true,
+  "native_system_prompt_extension_verified": true,
+  "provider_budget": {
+    "cap": 1800,
+    "attempts": 28,
+    "successes": 28,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 115386,
+    "completion_tokens": 8968,
+    "usage_responses": 28,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/qwen3.7-plus",
+        "attempts": 28,
+        "successes": 28,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 115386,
+        "completion_tokens": 8968,
+        "usage_responses": 28,
+        "usage_unavailable": 0,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  },
+  "run_context_sha256": "00d798d85c8fe55211b71cf35500825135f780bcfc9ef4801f34a0099aaa9e31"
+}

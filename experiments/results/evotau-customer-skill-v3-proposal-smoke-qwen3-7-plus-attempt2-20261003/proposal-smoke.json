@@ -1,0 +1,268 @@
+{
+  "activation_manifest_sha256": "476096e2bae7bb82d1280dd8865ac28f940ebadca4b336dd3fd79b028d3bc109",
+  "candidate_count_expected": 2,
+  "candidate_count_validated": 2,
+  "candidates": [
+    {
+      "candidate": {
+        "candidate_schema": "skill_v3",
+        "changed_fields": [
+          "skill"
+        ],
+        "expected_behavioral_effect": "Exploration: When a customer asks for a bundled request spanning multiple distinct intents, explicitly decomposing the request into named sub-requests and confirming the order of handling will reduce the need for mid-task clarification and improve task-completion rate compared to handling the request as a single bundled unit.",
+        "generation": 0,
+        "operator": "create",
+        "parent_id": "7b9ee6c76fe58a86",
+        "proposal_context_sha256": "39c4ccfe2647706144eac89213708ac9a0f9db8b046bc9512858b8318aa9be85",
+        "proposal_response_sha256": "d05e50441c04890a1844c64c239fd66b3a49f74abb3e54220cdd68e329c4851a",
+        "rationale": "exploration",
+        "rendered_skill_sha256": "db7dabd1ddb797d117a5d4324953a52664006b40cbf3a79df22a1cc34387b94a",
+        "strategy": {
+          "schema_version": 3,
+          "skill": {
+            "evidence_refs": [],
+            "hypothesis": "Exploration: When a customer asks for a bundled request spanning multiple distinct intents, explicitly decomposing the request into named sub-requests and confirming the order of handling will reduce the need for mid-task clarification and improve task-completion rate compared to handling the request as a single bundled unit.",
+            "name": "explicit_request_decomposition",
+            "procedure": [
+              "Restate the customer's request in your own words, splitting it into distinct sub-requests (e.g., 'You have two parts: X and Y').",
+              "Ask the customer to confirm the decomposition and the order in which they want the sub-requests handled.",
+              "Handle each sub-request sequentially, explicitly marking completion of each before moving to the next.",
+              "If the customer adds a new sub-request mid-task, pause, re-confirm the updated decomposition and order, then continue."
+            ],
+            "stop_conditions": "Stop when all confirmed sub-requests have been completed and the customer has acknowledged the final summary, or when the customer explicitly cancels the interaction.",
+            "trigger": "Whenever the customer's initial request contains two or more distinct intents that could be handled separately."
+          }
+        },
+        "strategy_id": "88601d773393e311ad950bf02b4de726125f29114fac65cb12b20ffb4969a0f9",
+        "supporting_failure_ids": []
+      },
+      "task_literal_leakage_detected": false,
+      "validation": "passed"
+    },
+    {
+      "candidate": {
+        "candidate_schema": "skill_v3",
+        "changed_fields": [
+          "skill"
+        ],
+        "expected_behavioral_effect": "Exploration: When a customer asks for a change to a previously stated preference or detail, explicitly acknowledging the change and confirming the new preference before proceeding will reduce the risk of acting on outdated information and improve alignment with the customer's current intent.",
+        "generation": 0,
+        "operator": "create",
+        "parent_id": "7b9ee6c76fe58a86",
+        "proposal_context_sha256": "39c4ccfe2647706144eac89213708ac9a0f9db8b046bc9512858b8318aa9be85",
+        "proposal_response_sha256": "d05e50441c04890a1844c64c239fd66b3a49f74abb3e54220cdd68e329c4851a",
+        "rationale": "exploration",
+        "rendered_skill_sha256": "756054355fd7d618cc7b3fa7330863557d64186579e193aadd45fb7b6a577899",
+        "strategy": {
+          "schema_version": 3,
+          "skill": {
+            "evidence_refs": [],
+            "hypothesis": "Exploration: When a customer asks for a change to a previously stated preference or detail, explicitly acknowledging the change and confirming the new preference before proceeding will reduce the risk of acting on outdated information and improve alignment with the customer's current intent.",
+            "name": "preference_change_confirmation",
+            "procedure": [
+              "When the customer revises a previously stated preference or detail, explicitly acknowledge the change (e.g., 'I understand you now want X instead of Y').",
+              "Ask the customer to confirm that the new preference is correct and that the old preference should be discarded.",
+              "After confirmation, proceed using only the new preference, and avoid referencing the old preference unless the customer brings it up again.",
+              "If the customer later reverts to the old preference, repeat the confirmation cycle."
+            ],
+            "stop_conditions": "Stop when the customer confirms the revised preference and the interaction proceeds without further preference changes, or when the customer cancels the interaction.",
+            "trigger": "Whenever the customer changes a previously stated preference, detail, or requirement during the same interaction."
+          }
+        },
+        "strategy_id": "fca502a6c7b28ddc76e0dd47932677cc8edd0af64d158c5433a5d0a0d74d6374",
+        "supporting_failure_ids": []
+      },
+      "task_literal_leakage_detected": false,
+      "validation": "passed"
+    }
+  ],
+  "code_provenance": {
+    "git_commit": "a9271c0bfaadd6318cd958d05459f81d3ac21458",
+    "source_sha256": "d43d2c3494541c70fb90ca1ba6a217ac65632092caa3f1f0b899fb87d204f321",
+    "working_tree_clean": false
+  },
+  "comparison_frozen_inputs": {
+    "customer_candidates": 2,
+    "customer_strategy_sha256": "7b9ee6c76fe58a86a4934d7f96639c34021ed5182809978c4358562989a0879c",
+    "evolution_task_ids": [
+      "16",
+      "22",
+      "29",
+      "35",
+      "37",
+      "52",
+      "72",
+      "73",
+      "78",
+      "88"
+    ],
+    "generations": 1,
+    "max_concurrency": 4,
+    "max_episodes": 100,
+    "provider_retries": 0,
+    "reflection_seed_sha256": "d83162c8daf9d0e827e5725be717d7bd35ea58a4824c273fd4aeac951a1ee735",
+    "request_budget_cap": 1800,
+    "role_model_args": {
+      "agent": {
+        "api_base": "https://inferaiapi.com/v1",
+        "temperature": 0.0,
+        "thinking_mode": "disabled"
+      },
+      "customer": {
+        "api_base": "https://inferaiapi.com/v1",
+        "temperature": 0.0,
+        "thinking_mode": "disabled"
+      },
+      "evaluator": {
+        "api_base": "https://inferaiapi.com/v1",
+        "temperature": 0.0,
+        "thinking_mode": "disabled"
+      },
+      "evolver": {
+        "api_base": "https://inferaiapi.com/v1",
+        "temperature": 0.0,
+        "thinking_mode": "disabled"
+      },
+      "reviewer": {
+        "api_base": "https://inferaiapi.com/v1",
+        "temperature": 0.0,
+        "thinking_mode": "disabled"
+      }
+    },
+    "role_models": {
+      "agent": "openai/qwen3.7-plus",
+      "customer": "openai/qwen3.7-plus",
+      "evaluator": "openai/qwen3.7-plus",
+      "evolver": "openai/qwen3.7-plus",
+      "reviewer": "openai/qwen3.7-plus"
+    },
+    "seed": 1,
+    "service_strategy_sha256": "da506c8a9c8a9f31aa00eaeef23d49764b9ace97158a1a0a7aa628e6d446b0fb",
+    "task_review_sha256": "d3a3c758f70418acbcd85bc6ee8122e11a61f332b33a67dbe15ad437d6a05dd0",
+    "validation_task_ids": [
+      "93"
+    ]
+  },
+  "experiment_id": "evotau-customer-skill-v3-proposal-smoke-qwen3-7-plus-attempt2-20261003",
+  "failure_type": null,
+  "forbidden_literal_check_count": 37,
+  "proposal_config_sha256": "acc1edb3481225be65b7950402fd0e93ba2dad35b827cc02940599acdd6deaa1",
+  "proposal_context": {
+    "K": 2,
+    "generation": 0,
+    "incumbent": {
+      "challenge_behavior": "none",
+      "challenge_budget": 0,
+      "correction_behavior": "accept_if_correct",
+      "disclosure": "minimal_on_request",
+      "preference_revision": "fixed",
+      "request_decomposition": "bundled",
+      "request_order": "scenario_order"
+    },
+    "proposal_seed": 1,
+    "reflection_feedback": {
+      "aggregate": {
+        "adherent_count": 0,
+        "applicable_count": 0,
+        "customer_valid_count": 0,
+        "episode_count": 0,
+        "invalidity_category_counts": {
+          "deception_or_impersonation": 0,
+          "failure_to_answer_necessary_fact": 0,
+          "goal_alteration": 0,
+          "identity_inconsistency": 0,
+          "policy_boundary_violation": 0,
+          "unknown": 0,
+          "unsupported_factual_detail": 0
+        },
+        "provisional_service_failure_count": 0,
+        "service_completed_count": 0
+      },
+      "prior_review_disagreements": [
+        {
+          "adjudication": "disputed",
+          "category": "unsupported_factual_detail",
+          "count": 1,
+          "fitness_eligible": false
+        }
+      ],
+      "schema_version": 1,
+      "verified_failure_summaries": []
+    },
+    "response_schema": {
+      "candidates": [
+        {
+          "operation": "create|refine|replace",
+          "skill": {
+            "evidence_refs": [],
+            "hypothesis": "Exploration: falsifiable behavior-level prediction",
+            "name": "short reusable label",
+            "procedure": [
+              "ordered step 1",
+              "ordered step 2"
+            ],
+            "stop_conditions": "when the reusable procedure ends",
+            "trigger": "general interaction condition"
+          }
+        }
+      ]
+    },
+    "schema_version": 3,
+    "tested_skill_fingerprints": [],
+    "tested_skill_memory": [],
+    "tested_skills": [],
+    "verified_failure_summaries": []
+  },
+  "proposal_context_sha256": "39c4ccfe2647706144eac89213708ac9a0f9db8b046bc9512858b8318aa9be85",
+  "proposal_response_sha256": "d05e50441c04890a1844c64c239fd66b3a49f74abb3e54220cdd68e329c4851a",
+  "provider_calls_are_episode_free": true,
+  "provider_model": "openai/qwen3.7-plus",
+  "provider_model_args": [
+    [
+      "api_base",
+      "https://inferaiapi.com/v1"
+    ],
+    [
+      "temperature",
+      0.0
+    ],
+    [
+      "thinking_mode",
+      "disabled"
+    ]
+  ],
+  "provider_usage": {
+    "attempts": 1,
+    "cache_hits": 0,
+    "cap": 8,
+    "completion_tokens": 535,
+    "denied": 0,
+    "failures": 0,
+    "in_flight": 0,
+    "model_usage": [
+      {
+        "attempts": 1,
+        "cache_hits": 0,
+        "completion_tokens": 535,
+        "denied": 0,
+        "failures": 0,
+        "in_flight": 0,
+        "model_id": "openai/qwen3.7-plus",
+        "prompt_tokens": 712,
+        "successes": 1,
+        "usage_responses": 1,
+        "usage_unavailable": 0
+      }
+    ],
+    "prompt_tokens": 712,
+    "reserved": 0,
+    "successes": 1,
+    "usage_responses": 1,
+    "usage_unavailable": 0
+  },
+  "reflection_seed_sha256": "d83162c8daf9d0e827e5725be717d7bd35ea58a4824c273fd4aeac951a1ee735",
+  "schema_version": 1,
+  "status": "complete",
+  "task_review_sha256": "d3a3c758f70418acbcd85bc6ee8122e11a61f332b33a67dbe15ad437d6a05dd0",
+  "validation_error": null
+}

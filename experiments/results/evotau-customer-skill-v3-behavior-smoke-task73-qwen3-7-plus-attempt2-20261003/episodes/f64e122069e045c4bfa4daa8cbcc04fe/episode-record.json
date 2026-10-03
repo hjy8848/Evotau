@@ -1,0 +1,57 @@
+{
+  "episode_id": "evotau-phase0-00b993d8-b074-4ec1-894e-7bdc4ea89443",
+  "task_id": "73",
+  "seed": 1,
+  "customer_strategy_id": "7b9ee6c76fe58a86",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "customer_invalidity_category": null,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/f64e122069e045c4bfa4daa8cbcc04fe/native-simulation.json",
+  "audit_ref": "inferai/qwen3.7-plus independent LLM audit v1",
+  "tool_calls": 4,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 1,
+  "raw_review": {
+    "native_review": {
+      "summary": "The conversation successfully handled the user's return request: the agent authenticated Fatima Wilson, retrieved her delivered order, confirmed the four items to return while keeping the espresso machine, obtained explicit confirmation, and processed the return to the original credit card. No user errors were found. One minor agent policy violation occurred at turn 8, where the agent combined a user message with a tool call in the same turn.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent sent a user-facing message and made a tool call (get_order_details) in the same turn. The policy states that the agent should not respond to the user and make a tool call at the same time; one action should occur at a time.",
+          "correct_behavior": "The agent should have either sent the message without the tool call, or made the tool call first and then responded to the user after receiving the tool result."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent requested the user's email address to authenticate, and after receiving it, successfully looked up the account (user found via email lookup and account details were retrieved). The conversation then proceeded with account-specific actions.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

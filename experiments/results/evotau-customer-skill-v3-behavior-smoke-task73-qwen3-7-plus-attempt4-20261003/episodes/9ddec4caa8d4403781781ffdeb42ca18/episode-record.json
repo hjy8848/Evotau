@@ -1,0 +1,57 @@
+{
+  "episode_id": "evotau-phase0-c834b015-efa2-4178-bfb1-b6e4133bae95",
+  "task_id": "73",
+  "seed": 1,
+  "customer_strategy_id": "88601d773393e311ad950bf02b4de726125f29114fac65cb12b20ffb4969a0f9",
+  "service_strategy_id": "da506c8a9c8a9f31",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "customer_valid": true,
+  "customer_invalidity_category": null,
+  "strategy_applicable": true,
+  "customer_strategy_adherent": true,
+  "policy_violation": false,
+  "invalid_repeated_write_calls": 0,
+  "policy_rule_id": null,
+  "mistake_type": null,
+  "workflow_stage": null,
+  "evidence": [],
+  "trajectory_ref": "episodes/9ddec4caa8d4403781781ffdeb42ca18/native-simulation.json",
+  "audit_ref": "inferai/qwen3.7-plus independent LLM audit v1",
+  "tool_calls": 4,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 1,
+  "raw_review": {
+    "native_review": {
+      "summary": "The agent correctly authenticated Fatima Wilson via email, retrieved her order details, identified the four items to return while excluding the Espresso Machine, obtained explicit confirmation from the user, and executed return_delivered_order_items with the correct arguments. The user followed the simulation instructions accurately and confirmed all required details. The only issue found was a minor policy violation at turn 8, where the agent combined a user-facing message with a tool call in the same turn; this did not affect the final outcome.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent sent a user-facing message ('Thanks, Fatima! I've located your account...') and simultaneously made a tool call (get_order_details) in the same turn. The policy states that if a tool call is made, the agent should not respond to the user at the same time, and vice versa.",
+          "correct_behavior": "The agent should have either made the get_order_details tool call without any accompanying user-facing message, or sent a message first and waited for the next turn before making the tool call."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent explicitly requested the user's email address for identity verification, used it to look up the user ID, then retrieved and confirmed the account details before proceeding with the return.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}
