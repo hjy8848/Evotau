@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from .budget import RequestBudget
@@ -17,6 +19,7 @@ from .tau_provenance import sha256_json
 CustomerEvolver = Callable[[Mapping[str, Any], int], Sequence[str]]
 ServiceEvolver = Callable[[Mapping[str, Any]], Mapping[str, str]]
 EpisodeRunner = Callable[..., EpisodeRecord]
+MAX_PARALLEL_EPISODES = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +139,7 @@ def run_alternating_evolution(
     generations: int,
     customer_candidate_count: int,
     clean_panel_size: int,
+    max_parallel_episodes: int = MAX_PARALLEL_EPISODES,
     initial_customer: PromptStrategy,
     initial_service: PromptStrategy,
     runner: EpisodeRunner,
@@ -158,6 +162,7 @@ def run_alternating_evolution(
         raise ValueError(f"task loader is missing E/V tasks: {sorted(missing)}")
     if generations < 1 or customer_candidate_count < 1 or seed < 0:
         raise ValueError("seed, generation count, and candidate count must be non-negative")
+    _validate_max_parallel_episodes(max_parallel_episodes)
 
     output_root = None if output_directory is None else Path(output_directory)
     if output_root is not None:
@@ -194,6 +199,9 @@ def run_alternating_evolution(
             raise ValueError("alternating checkpoint generation is outside the frozen run")
 
     for generation in range(start_generation, generations):
+        generation_started = perf_counter()
+        customer_phase_started = generation_started
+        validation_elapsed = 0.0
         generation_seed = seed + generation
         customer_before = customer
         service_before = service
@@ -207,6 +215,7 @@ def run_alternating_evolution(
             customer=customer,
             service=service,
             panel_name=f"generation-{generation}-customer-incumbent",
+            max_parallel_episodes=max_parallel_episodes,
         )
         incumbent_accuracy = _accuracy(incumbent_runs)
         proposal_context = {
@@ -231,6 +240,7 @@ def run_alternating_evolution(
                 customer=candidate,
                 service=service,
                 panel_name=f"generation-{generation}-customer-candidate-{index}",
+                max_parallel_episodes=max_parallel_episodes,
             )
             for index, candidate in enumerate(candidates)
         )
@@ -250,8 +260,10 @@ def run_alternating_evolution(
                 selected_runs = runs
                 selected_accuracy = accuracy
 
+        customer_phase_elapsed = perf_counter() - customer_phase_started
         old_service = service
         old_accuracy = selected_accuracy
+        service_phase_started = perf_counter()
         service_context = {
             "generation": generation,
             "task_interactions": _service_context_episodes(selected_runs, runner, tasks),
@@ -286,6 +298,7 @@ def run_alternating_evolution(
                 customer=customer,
                 service=proposed_service,
                 panel_name=f"generation-{generation}-service-candidate",
+                max_parallel_episodes=max_parallel_episodes,
             )
             proposed_accuracy = _accuracy(proposed_runs)
             improved_on_e = proposed_accuracy > old_accuracy
@@ -295,6 +308,7 @@ def run_alternating_evolution(
                     "the old Service accuracy."
                 )
             else:
+                validation_started = perf_counter()
                 validation_old_runs = _run_panel(
                     runner,
                     task_ids=v_tasks,
@@ -303,6 +317,7 @@ def run_alternating_evolution(
                     customer=None,
                     service=old_service,
                     panel_name=f"generation-{generation}-validation-old-native-customer",
+                    max_parallel_episodes=max_parallel_episodes,
                 )
                 validation_new_runs = _run_panel(
                     runner,
@@ -312,7 +327,9 @@ def run_alternating_evolution(
                     customer=None,
                     service=proposed_service,
                     panel_name=f"generation-{generation}-validation-proposed-native-customer",
+                    max_parallel_episodes=max_parallel_episodes,
                 )
+                validation_elapsed = perf_counter() - validation_started
                 validation_old_accuracy = _accuracy(validation_old_runs)
                 validation_new_accuracy = _accuracy(validation_new_runs)
                 if validation_new_accuracy >= validation_old_accuracy:
@@ -378,6 +395,18 @@ def run_alternating_evolution(
             "service_after": _strategy_document("service", service),
             "customer_phase": customer_phase,
             "service_phase": service_phase,
+            "timing": {
+                "customer_phase_wall_clock_seconds": round(customer_phase_elapsed, 6),
+                "service_phase_wall_clock_seconds": round(
+                    perf_counter() - service_phase_started, 6,
+                ),
+                "validation_wall_clock_seconds": round(
+                    validation_elapsed, 6,
+                ),
+                "generation_wall_clock_seconds": round(
+                    perf_counter() - generation_started, 6,
+                ),
+            },
             "provider_budget": _budget_delta(
                 budget_before,
                 None if request_budget is None else request_budget.snapshot().to_dict(),
@@ -464,11 +493,13 @@ def run_final_endpoint_evaluation(
     final_service: PromptStrategy,
     fresh_customer: PromptStrategy,
     runner: EpisodeRunner,
+    max_parallel_episodes: int = MAX_PARALLEL_EPISODES,
     output_path: str | Path | None = None,
 ) -> Mapping[str, Any]:
     """Compare S0 and ST endpoints without rerunning identical Service cells."""
 
     task_ids = tuple(str(item) for item in heldout_task_ids)
+    _validate_max_parallel_episodes(max_parallel_episodes)
     if not task_ids or set(task_ids) - set(heldout_tasks):
         raise ValueError("final endpoint evaluation requires loaded H tasks")
     identical_services = final_service.text == initial_service.text
@@ -487,12 +518,14 @@ def run_final_endpoint_evaluation(
             customer=customer,
             service=initial_service,
             panel_name=f"heldout-{customer_label}-S0",
+            max_parallel_episodes=max_parallel_episodes,
         )
         s0_episodes_by_customer[customer_label] = episodes
         rows.append({
             "customer_condition": customer_label,
             "service_endpoint": "S0",
             "identical_to_S0": False,
+            "accuracy": _accuracy(episodes),
             "episodes": [_episode_ref(item) for item in episodes],
         })
         if identical_services:
@@ -500,6 +533,7 @@ def run_final_endpoint_evaluation(
                 "customer_condition": customer_label,
                 "service_endpoint": "ST",
                 "identical_to_S0": True,
+                "accuracy": _accuracy(episodes),
                 "episodes": [_episode_ref(item) for item in episodes],
             })
         else:
@@ -511,11 +545,13 @@ def run_final_endpoint_evaluation(
                 customer=customer,
                 service=final_service,
                 panel_name=f"heldout-{customer_label}-ST",
+                max_parallel_episodes=max_parallel_episodes,
             )
             rows.append({
                 "customer_condition": customer_label,
                 "service_endpoint": "ST",
                 "identical_to_S0": False,
+                "accuracy": _accuracy(updated_episodes),
                 "episodes": [_episode_ref(item) for item in updated_episodes],
             })
     result = {
@@ -542,13 +578,18 @@ def _run_panel(
     customer: PromptStrategy | None,
     service: PromptStrategy,
     panel_name: str,
+    max_parallel_episodes: int = MAX_PARALLEL_EPISODES,
 ) -> tuple[EpisodeRecord, ...]:
-    episodes = []
-    for task_id in task_ids:
+    _validate_max_parallel_episodes(max_parallel_episodes)
+    ordered_task_ids = tuple(str(task_id) for task_id in task_ids)
+    if len(set(ordered_task_ids)) != len(ordered_task_ids):
+        raise ValueError(f"{panel_name} task IDs must be unique")
+
+    def run_one(task_id: str) -> EpisodeRecord:
         if task_id not in tasks:
             raise ValueError(f"task {task_id!r} was not loaded for {panel_name}")
         episode = runner(
-            task_id=str(task_id),
+            task_id=task_id,
             seed=seed,
             customer=customer,
             service=service,
@@ -556,10 +597,39 @@ def _run_panel(
         )
         if not isinstance(episode, EpisodeRecord):
             raise TypeError("τ-bench runner must return an EpisodeRecord")
-        if episode.task_id != str(task_id) or episode.seed != seed:
+        if episode.task_id != task_id or episode.seed != seed:
             raise ValueError("τ-bench runner returned a different task or seed")
-        episodes.append(episode)
-    return tuple(episodes)
+        return episode
+
+    if len(ordered_task_ids) <= 1 or max_parallel_episodes == 1:
+        return tuple(run_one(task_id) for task_id in ordered_task_ids)
+
+    completed: dict[int, EpisodeRecord] = {}
+    executor = ThreadPoolExecutor(
+        max_workers=min(max_parallel_episodes, len(ordered_task_ids)),
+        thread_name_prefix="evotau-episode",
+    )
+    futures = {
+        executor.submit(run_one, task_id): index
+        for index, task_id in enumerate(ordered_task_ids)
+    }
+    try:
+        for future in as_completed(futures):
+            completed[futures[future]] = future.result()
+    except BaseException:
+        for future in futures:
+            future.cancel()
+        raise
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+    return tuple(completed[index] for index in range(len(ordered_task_ids)))
+
+
+def _validate_max_parallel_episodes(value: int) -> None:
+    if type(value) is not int or not 1 <= value <= MAX_PARALLEL_EPISODES:
+        raise ValueError(
+            f"max_parallel_episodes must be an integer from 1 to {MAX_PARALLEL_EPISODES}"
+        )
 
 
 def _context_episodes(

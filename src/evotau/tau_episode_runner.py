@@ -114,14 +114,16 @@ class TauBenchEpisodeRunner:
         panel_name: str,
     ) -> EpisodeRecord:
         with self.request_budget.track_episode_usage() as episode_usage:
-            return self._run_episode(
-                task_id=task_id,
-                seed=seed,
-                customer=customer,
-                service=service,
-                panel_name=panel_name,
-                episode_usage=episode_usage,
-            )
+            reservation = self.request_budget.reserve_episode_dispatch()
+            with self.request_budget.use_episode_reservation(reservation):
+                return self._run_episode(
+                    task_id=task_id,
+                    seed=seed,
+                    customer=customer,
+                    service=service,
+                    panel_name=panel_name,
+                    episode_usage=episode_usage,
+                )
 
     def has_completed_episode(
         self, *, task_id: str, seed: int, customer: PromptStrategy | None,

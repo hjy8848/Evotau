@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import Barrier, Lock
+from time import sleep
 
 from evotau.alternating import (
     LLMAlternatingEvolvers,
+    _run_panel,
     propose_fresh_customer_challenge,
     run_alternating_evolution,
     run_final_endpoint_evaluation,
@@ -188,6 +191,39 @@ def test_customer_accuracy_tie_keeps_incumbent_without_selection_judge() -> None
     assert len(runner.calls) == 2
 
 
+def test_customer_selection_keeps_lowest_accuracy_when_last_candidate_is_easier() -> None:
+    tasks = {
+        "e": FakeTask("e", "Evolution task", "Original customer goal."),
+        "v": FakeTask("v", "Validation task", "Native validation request."),
+    }
+
+    def success(_task_id: str, customer: str, _service: str) -> bool:
+        return customer != "hard candidate"
+
+    runner = FakeRunner(success)
+    result = run_alternating_evolution(
+        tasks=tasks,
+        evolution_task_ids=("e",),
+        validation_task_ids=("v",),
+        seed=5,
+        generations=1,
+        customer_candidate_count=2,
+        clean_panel_size=1,
+        initial_customer=PromptStrategy("incumbent"),
+        initial_service=PromptStrategy("service"),
+        runner=runner,
+        customer_evolver=lambda _context, _count: ["hard candidate", "easy candidate"],
+        service_evolver=lambda _context: {"analysis": "keep", "strategy": "service"},
+        domain_policy=runner.service_policy_text,
+    )
+
+    phase = result.generations[0]["customer_phase"]
+    assert phase["candidate_accuracies"] == [0.0, 1.0]
+    assert phase["selected_customer"] == 0
+    assert phase["selected_accuracy"] == 0.0
+    assert result.customer.text == "hard candidate"
+
+
 def test_service_e_gain_is_rejected_when_native_validation_accuracy_decreases() -> None:
     tasks = {
         "e": FakeTask("e", "Evolution task", "Original customer goal."),
@@ -283,6 +319,7 @@ def test_heldout_aliases_st_when_service_is_identical_to_s0() -> None:
                   if row["customer_condition"] == condition and row["service_endpoint"] == "ST")
         assert st["identical_to_S0"] is True
         assert st["episodes"] == s0["episodes"]
+        assert st["accuracy"] == s0["accuracy"]
 
 
 def test_heldout_runs_st_when_final_service_differs() -> None:
@@ -300,3 +337,93 @@ def test_heldout_runs_st_when_final_service_differs() -> None:
     assert len(runner.calls) == 4
     assert evaluation["services_identical"] is False
     assert all(not cell["identical_to_S0"] for cell in evaluation["cells"])
+    assert all("accuracy" in cell for cell in evaluation["cells"])
+
+
+def test_run_panel_is_bounded_parallel_and_keeps_input_order() -> None:
+    task_ids = ("t0", "t1", "t2", "t3", "t4")
+    tasks = {task_id: object() for task_id in task_ids}
+    first_wave = Barrier(3)
+    lock = Lock()
+    active = 0
+    maximum_active = 0
+    completion_order: list[str] = []
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        try:
+            if task_id in task_ids[:3]:
+                first_wave.wait(timeout=3)
+            sleep({"t0": 0.15, "t1": 0.08, "t2": 0.01}.get(task_id, 0.01))
+            record = EpisodeRecord(
+                episode_id=f"episode-{task_id}",
+                task_id=task_id,
+                seed=seed,
+                customer_strategy_id="native" if customer is None else customer.text,
+                service_strategy_id=service.text,
+                status=EpisodeStatus.COMPLETE,
+                task_success=True,
+                native_reward=1.0,
+                termination_reason="user_stop",
+                trajectory_ref=None,
+                raw_review={},
+            )
+            with lock:
+                completion_order.append(task_id)
+            return record
+        finally:
+            with lock:
+                active -= 1
+
+    records = _run_panel(
+        runner,
+        task_ids=task_ids,
+        tasks=tasks,
+        seed=7,
+        customer=PromptStrategy("customer"),
+        service=PromptStrategy("service"),
+        panel_name="parallel-test",
+        max_parallel_episodes=3,
+    )
+
+    assert maximum_active == 3
+    assert completion_order[0] == "t2"
+    assert tuple(record.task_id for record in records) == task_ids
+
+
+def test_run_panel_single_task_stays_single_and_accepts_default_cap() -> None:
+    task_ids = ("only",)
+    calls: list[str] = []
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        calls.append(task_id)
+        return EpisodeRecord(
+            episode_id="single",
+            task_id=task_id,
+            seed=seed,
+            customer_strategy_id="native" if customer is None else customer.text,
+            service_strategy_id=service.text,
+            status=EpisodeStatus.COMPLETE,
+            task_success=True,
+            native_reward=1.0,
+            termination_reason="user_stop",
+            trajectory_ref=None,
+            raw_review={},
+        )
+
+    episodes = _run_panel(
+        runner,
+        task_ids=task_ids,
+        tasks={"only": object()},
+        seed=1,
+        customer=None,
+        service=PromptStrategy("service"),
+        panel_name="single-test",
+    )
+
+    assert calls == ["only"]
+    assert len(episodes) == 1
+    assert episodes[0].task_id == "only"

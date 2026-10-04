@@ -35,6 +35,7 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
     config = yaml.safe_load(source_config.read_text(encoding="utf-8"))
     experiment = config["experiment"]
     assert experiment["max_steps"] == 32
+    assert experiment["max_parallel_episodes"] == 4
     assert "reviewer" not in experiment["models"]
     experiment["id"] = "offline-native-alternating-smoke"
     experiment["generations"] = 1
@@ -142,4 +143,6 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
     assert result["api_usage_by_role"]["customer_judge"]["calls"] == 0
     assert result["api_usage_by_role"]["service_judge"]["calls"] == 0
     assert "agent_response" in result["api_usage_by_call_name"]
+    assert result["generations"][0]["timing"]["generation_wall_clock_seconds"] >= 0
+    assert result["timing"]["total_wall_clock_seconds"] >= 0
     assert (output / "alternating-result.json").is_file()

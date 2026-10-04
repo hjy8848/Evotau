@@ -8,6 +8,7 @@ import os
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import yaml
@@ -40,6 +41,7 @@ def run_from_config(
     tau2_data_dir: str | Path | None = None,
     stop_before_next_episode_file: str | Path | None = None,
 ) -> tuple[Path, dict[str, Any]]:
+    run_started = perf_counter()
     config_file = Path(config_path).expanduser().resolve()
     config = load_config(config_file)
     manifest = AlternatingManifest.from_mapping(config)
@@ -88,11 +90,13 @@ def run_from_config(
         },
         "heldout_policy": "H task content is loaded only after evolution and fresh challenge generation.",
         "reviewer_enabled": False,
+        "max_parallel_episodes": manifest.max_parallel_episodes,
     }
     _write_or_verify_context(output_directory / "run-context.json", run_context)
 
     initial_customer = PromptStrategy(manifest.initial_customer_strategy)
     initial_service = PromptStrategy(manifest.initial_service_strategy)
+    evolution_started = perf_counter()
     evolved = run_alternating_evolution(
         tasks=runner.tasks,
         evolution_task_ids=manifest.evolution_task_ids,
@@ -101,6 +105,7 @@ def run_from_config(
         generations=manifest.generations,
         customer_candidate_count=manifest.customer_candidates,
         clean_panel_size=manifest.clean_panel_size,
+        max_parallel_episodes=manifest.max_parallel_episodes,
         initial_customer=initial_customer,
         initial_service=initial_service,
         runner=runner,
@@ -123,6 +128,12 @@ def run_from_config(
         domain_policy=runner.service_policy_text,
         request_budget=budget,
     )
+    evolution_wall_clock_seconds = perf_counter() - evolution_started
+    validation_wall_clock_seconds = sum(
+        float(item.get("timing", {}).get("validation_wall_clock_seconds", 0.0))
+        for item in evolved.generations
+    )
+    heldout_started = perf_counter()
     heldout_tasks = load_alternating_tasks(manifest, data_dir, include_heldout=True)
     heldout_runner = TauBenchEpisodeRunner(
         manifest=manifest,
@@ -143,8 +154,10 @@ def run_from_config(
         final_service=evolved.service,
         fresh_customer=fresh_customer,
         runner=heldout_runner,
+        max_parallel_episodes=manifest.max_parallel_episodes,
         output_path=output_directory / "heldout-endpoint-evaluation.json",
     )
+    heldout_wall_clock_seconds = perf_counter() - heldout_started
     api_usage_by_call_name = budget.api_usage_by_call_name()
     final_result = {
         "schema_version": 2,
@@ -162,6 +175,12 @@ def run_from_config(
         "provider_usage": budget.snapshot().to_dict(),
         "api_usage_by_call_name": api_usage_by_call_name,
         "api_usage_by_role": _api_usage_by_role(api_usage_by_call_name),
+        "timing": {
+            "evolution_wall_clock_seconds": round(evolution_wall_clock_seconds, 6),
+            "validation_wall_clock_seconds": round(validation_wall_clock_seconds, 6),
+            "heldout_wall_clock_seconds": round(heldout_wall_clock_seconds, 6),
+            "total_wall_clock_seconds": round(perf_counter() - run_started, 6),
+        },
     }
     _write_json_atomic(output_directory / "alternating-result.json", final_result)
     return output_directory, final_result

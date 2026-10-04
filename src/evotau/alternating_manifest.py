@@ -42,6 +42,7 @@ class AlternatingManifest:
     customer_candidates: int
     clean_panel_size: int
     max_steps: int
+    max_parallel_episodes: int
     request_budget_cap: int | None
     real_provider_enabled: bool
     role_models: tuple[tuple[str, str | None], ...]
@@ -80,6 +81,9 @@ class AlternatingManifest:
             raise ValueError("clean_panel_size must select tasks from the V panel")
         if self.max_steps < 1:
             raise ValueError("max_steps must be positive")
+        if (type(self.max_parallel_episodes) is not int
+                or not 1 <= self.max_parallel_episodes <= 4):
+            raise ValueError("max_parallel_episodes must be an integer from 1 to 4")
         if self.request_budget_cap is not None and self.request_budget_cap < 1:
             raise ValueError("request budget cap must be positive or null")
         if not isinstance(self.initial_customer_strategy, str) or not isinstance(
@@ -149,6 +153,7 @@ class AlternatingManifest:
             customer_candidates=int(experiment.get("customer_candidates", 2)),
             clean_panel_size=int(experiment.get("clean_panel_size", 1)),
             max_steps=int(experiment.get("max_steps", 64)),
+            max_parallel_episodes=experiment.get("max_parallel_episodes", 4),
             request_budget_cap=None if cap is None else int(cap),
             real_provider_enabled=enabled,
             role_models=role_models,
@@ -206,6 +211,7 @@ class AlternatingManifest:
             "customer_candidates": self.customer_candidates,
             "clean_panel_size": self.clean_panel_size,
             "max_steps": self.max_steps,
+            "max_parallel_episodes": self.max_parallel_episodes,
             "request_budget_cap": self.request_budget_cap,
             "real_provider_enabled": self.real_provider_enabled,
             "role_models": dict(self.role_models),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -87,3 +89,35 @@ def test_request_budget_records_call_name_success_failure_tokens_and_latency() -
     assert usage["user_simulator_response"]["average_elapsed_seconds"] >= 0
     assert usage["agent_response"]["failures"] == 1
     assert usage["agent_response"]["usage_unavailable"] == 1
+
+
+def test_episode_reservations_prevent_parallel_budget_oversubscription() -> None:
+    calls: list[str] = []
+    calls_lock = Lock()
+    provider_barrier = Barrier(2)
+
+    def provider(*, model: str):
+        with calls_lock:
+            calls.append(model)
+        provider_barrier.wait(timeout=3)
+        return {"usage": {"prompt_tokens": 5, "completion_tokens": 2}}
+
+    module = SimpleNamespace(completion=provider, DEFAULT_MAX_RETRIES=0)
+    budget = RequestBudget(cap=2)
+
+    def dispatch_episode() -> bool:
+        reservation = budget.reserve_episode_dispatch()
+        if reservation is None:
+            return False
+        with budget.use_episode_reservation(reservation):
+            module.completion(model="model-a")
+        return True
+
+    with budget.instrument_tau_llm_utils(module), ThreadPoolExecutor(max_workers=8) as executor:
+        dispatched = list(executor.map(lambda _index: dispatch_episode(), range(8)))
+
+    snapshot = budget.snapshot()
+    assert sum(dispatched) == len(calls) == 2
+    assert (snapshot.attempts, snapshot.successes, snapshot.failures) == (2, 2, 0)
+    assert (snapshot.in_flight, snapshot.reserved, snapshot.denied) == (0, 0, 0)
+    assert snapshot.remaining == 0
