@@ -13,7 +13,7 @@ from evotau.db_state_trace import (
     capture_mutation_events,
     write_trace_once,
 )
-from evotau.manifest import canonical_json
+from evotau.tau_provenance import canonical_json
 from evotau.web.view_models import db_state_trace_view
 
 
@@ -227,7 +227,6 @@ def test_actual_db_mismatch_is_displayed_without_becoming_service_failure():
     )
     assert view["available"] is True
     assert view["summary"]["db_match"] is False
-    assert "verified_failure" not in view
     difference = view["summary"]["final_comparison"]["differences"][0]
     assert difference["simple_entity_label"] == "Order"
     assert difference["simple_field_label"] == "Status"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -33,18 +34,11 @@ from .view_models import (
     current_strategy_for_episode,
     customer_strategy_view,
     db_state_trace_view,
-    failure_status,
     generation_view,
     service_strategy_view,
 )
 
 _WEB_ROOT = Path(__file__).resolve().parent
-_METRIC_LABELS = {
-    "verified_failure_rate": "经过验证的客服错误率",
-    "native_success_rate": "原生任务成功率",
-    "policy_violation_rate": "策略违规率",
-    "recurrent_verified_failure_rate": "已修复错误的复发率",
-}
 
 
 def create_app(
@@ -118,7 +112,9 @@ def create_app(
         }
         run["current_customer_view"] = customer_strategy_view(run.get("current_customer_strategy"))
         run["current_service_view"] = service_strategy_view(run.get("current_service_strategy"))
-        protocol_mode = run["manifest"].get("enforce_communication_protocol")
+        protocol_mode = run["manifest"].get(
+            "enforce_communication_protocol", run["manifest"].get("communication_enforcement"),
+        )
         run["communication_mode_label"] = (
             "Strict diagnostic" if protocol_mode is True else
             "Upstream default" if protocol_mode is False else "Unknown (legacy artifact)"
@@ -157,8 +153,7 @@ def create_app(
             "runs": runs,
             "tau2_data_dir": str(tau2_data_dir or os.environ.get("TAU2_DATA_DIR", "")),
             "config_phase0": "configs/mvp.yaml",
-            "config_phase3": "configs/phase3-mechanism.yaml",
-            "config_pilot": "",
+            "config_alternating": "configs/alternating-evolution.yaml",
             "csrf_token": issue_csrf_token(),
             "command_index": _command_index_for_summaries(runs),
         })
@@ -171,8 +166,6 @@ def create_app(
         phase = form.get("phase", "")
         config_path = form.get("config_path", "")
         tau2_data_dir = form.get("tau2_data_dir", "")
-        phase0_result_path = form.get("phase0_result_path", "")
-        provider_plugin = form.get("provider_plugin", "")
         csrf_token = form.get("csrf_token", "")
         if not await consume_csrf_token(csrf_token):
             raise HTTPException(status_code=403, detail="form token expired; reload the dashboard")
@@ -181,8 +174,6 @@ def create_app(
                 phase=phase,
                 config_path=config_path,
                 tau2_data_dir=tau2_data_dir or None,
-                phase0_result_path=phase0_result_path or None,
-                provider_plugin=provider_plugin or None,
             )
         except RunManagerError as exc:
             return page(request, "error.html", {
@@ -192,8 +183,6 @@ def create_app(
             "preview": preview.to_view(),
             "config_path": config_path,
             "tau2_data_dir": tau2_data_dir,
-            "phase0_result_path": phase0_result_path,
-            "provider_plugin": provider_plugin,
             "csrf_token": issue_csrf_token(),
         })
 
@@ -206,8 +195,6 @@ def create_app(
         config_path = form.get("config_path", "")
         confirmed_manifest_sha256 = form.get("confirmed_manifest_sha256", "")
         tau2_data_dir = form.get("tau2_data_dir", "")
-        phase0_result_path = form.get("phase0_result_path", "")
-        provider_plugin = form.get("provider_plugin", "")
         confirm_experiment_id = form.get("confirm_experiment_id", "")
         csrf_token = form.get("csrf_token", "")
         if not await consume_csrf_token(csrf_token):
@@ -216,8 +203,6 @@ def create_app(
             preview = run_manager.preview(
                 phase=phase, config_path=config_path,
                 tau2_data_dir=tau2_data_dir or None,
-                phase0_result_path=phase0_result_path or None,
-                provider_plugin=provider_plugin or None,
             )
             if not hmac.compare_digest(confirm_experiment_id, preview.experiment_id):
                 raise RunManagerError("请准确输入预览中的 Experiment ID 后再启动。")
@@ -227,8 +212,6 @@ def create_app(
                 confirmed_manifest_sha256=confirmed_manifest_sha256,
                 confirmed_launch_sha256=form.get("confirmed_launch_sha256", ""),
                 tau2_data_dir=tau2_data_dir or None,
-                phase0_result_path=phase0_result_path or None,
-                provider_plugin=provider_plugin or None,
             )
         except RunManagerError as exc:
             return page(request, "error.html", {
@@ -308,7 +291,6 @@ def create_app(
     async def episode_explorer(
         request: Request, run_id: str, generation: str = "", panel: str = "",
         customer: str = "", service: str = "", task: str = "", seed: str = "",
-        failure: str = "", adherence: str = "",
     ):
         try:
             run = load_run(run_id)
@@ -318,7 +300,6 @@ def create_app(
         supplied = {
             "generation": generation, "panel": panel, "customer": customer,
             "service": service, "task": task, "seed": seed,
-            "failure": failure, "adherence": adherence,
         }
         def matches(item: dict[str, Any]) -> bool:
             for key, value in supplied.items():
@@ -335,16 +316,6 @@ def create_app(
                 if key == "task" and str(item.get("task_id") or "") != value:
                     return False
                 if key == "seed" and str(item.get("seed")) != value:
-                    return False
-                if key == "failure" and (
-                    "verified" if item.get("verified_failure") else
-                    "provisional" if item.get("policy_violation") else "none"
-                ) != value:
-                    return False
-                if key == "adherence" and (
-                    "yes" if item.get("customer_strategy_adherent") is True else
-                    "no" if item.get("customer_strategy_adherent") is False else "unknown"
-                ) != value:
                     return False
             return True
         filtered = [item for item in episode_rows if matches(item)]
@@ -381,40 +352,6 @@ def create_app(
             "service_strategy": service_strategy_view(service),
         })
 
-    @app.get("/runs/{run_id}/failures/{failure_id}", response_class=HTMLResponse)
-    async def failure_page(request: Request, run_id: str, failure_id: str):
-        try:
-            run = load_run(run_id)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="failure unavailable") from None
-        failure = next((item for item in run["verified_failures"]
-                        if item["failure_id"] == failure_id), None)
-        provisional = False
-        if failure is None and failure_id.startswith("candidate-"):
-            episode_id = failure_id.removeprefix("candidate-")
-            failure = next((item for item in run["provisional_failures"]
-                            if item["episode_id"] == episode_id), None)
-            provisional = failure is not None
-        if failure is None:
-            raise HTTPException(status_code=404, detail="failure unavailable")
-        state = failure_status({"verified": not provisional, "provisional": provisional})
-        source_episode = None
-        reproduction_episode = None
-        if provisional:
-            source_episode = failure
-        else:
-            try:
-                source_episode = reader.episode(run_id, failure["episode_id"])
-                reproduction_episode = reader.episode(run_id, failure["reproduction_episode_id"])
-            except FileNotFoundError:
-                pass
-        repair_view = _failure_repair_view(run, failure, source_episode) if not provisional else None
-        return page(request, "failure.html", {
-            "run": run, "failure": failure, "provisional": provisional, "state": state,
-            "source_episode": source_episode, "reproduction_episode": reproduction_episode,
-            "repair_view": repair_view,
-        })
-
     @app.get("/runs/{run_id}/strategies/{strategy_id}", response_class=HTMLResponse)
     async def strategy_page(request: Request, run_id: str, strategy_id: str, side: str = "customer"):
         if side not in {"customer", "service"}:
@@ -430,43 +367,6 @@ def create_app(
         return page(request, "strategy.html", {
             "run": run, "strategy_id": strategy_id, "side": side,
             "strategy": strategy, "view": view,
-        })
-
-    @app.get("/runs/{run_id}/cross-play", response_class=HTMLResponse)
-    async def crossplay_page(request: Request, run_id: str, metric: str = "verified_failure_rate", cell: str = ""):
-        if metric not in _METRIC_LABELS:
-            raise HTTPException(status_code=400, detail="unsupported cross-play metric")
-        try:
-            view = reader.crossplay(run_id, cell or None)
-        except FileNotFoundError:
-            try:
-                run = load_run(run_id)
-            except FileNotFoundError:
-                raise HTTPException(status_code=404, detail="cross-play unavailable") from None
-            return page(request, "crossplay.html", {
-                "run": run, "matrices": [], "selected": None,
-                "metric": metric, "metric_label": _METRIC_LABELS[metric],
-            })
-        except ArtifactReadError:
-            raise HTTPException(status_code=422, detail="cross-play artifact is invalid") from None
-        matrix = view["selected"]["matrix"]
-        page_run = load_run(run_id)
-        cells = _crossplay_cells(matrix, metric)
-        for cell_view in cells:
-            cell_view["diagonal"] = (
-                matrix["customer_strategy_ids"].index(cell_view["customer_strategy_id"])
-                == matrix["service_strategy_ids"].index(cell_view["service_strategy_id"])
-            )
-            cell_view["episode_ids"] = [
-                episode["episode_id"] for episode in page_run["episodes"]
-                if episode.get("customer_strategy_id") == cell_view["customer_strategy_id"]
-                and episode.get("service_strategy_id") == cell_view["service_strategy_id"]
-            ]
-        return page(request, "crossplay.html", {
-            "run": page_run, "matrices": view["matrices"], "selected": view["selected"],
-            "metric": metric, "metric_label": _METRIC_LABELS[metric],
-            "cells": cells, "services": matrix["service_strategy_ids"],
-            "customers": matrix["customer_strategy_ids"],
         })
 
     @app.get("/compare", response_class=HTMLResponse)
@@ -509,61 +409,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="run unavailable") from None
         return page(request, "heldout.html", {"run": run})
 
-    @app.get("/runs/{run_id}/task-review", response_class=HTMLResponse)
-    async def task_review_page(request: Request, run_id: str):
-        try:
-            run = load_run(run_id)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="run unavailable") from None
-        review = run["manifest"].get("task_semantic_review")
-        if run["heldout_sealed"]:
-            review_view = {"sealed": True, "label": "Review details sealed", "tasks": None,
-                           "pairs": None, "reviewer": None, "timestamp": None, "digest": None}
-        elif isinstance(review, dict):
-            review_view = {
-                "sealed": False, "label": run["task_review"]["label"],
-                "tasks": len(review.get("task_reviews", ())),
-                "pairs": len(review.get("pairwise_reviews", ())),
-                "reviewer": review.get("reviewer_id"), "timestamp": review.get("reviewed_at"),
-                "digest": run["manifest"].get("task_semantic_review_sha256"),
-            }
-        else:
-            review_view = {"sealed": False, "label": "未提供", "tasks": 0, "pairs": 0,
-                           "reviewer": None, "timestamp": None, "digest": None}
-        return page(request, "task_review.html", {"run": run, "review": review_view})
-
     return app
-
-
-def _crossplay_cells(matrix: dict[str, Any], metric: str) -> list[dict[str, Any]]:
-    rows = []
-    components = {
-        "verified_failure_rate": ("verified_failure_episodes", "strategy_adherent_episodes", "Verified failures", "Strategy-adherent episodes"),
-        "native_success_rate": ("successful_episodes", "valid_episodes", "Native successes", "Valid episodes"),
-        "policy_violation_rate": ("policy_violation_episodes", "valid_episodes", "Policy violations", "Valid episodes"),
-        "recurrent_verified_failure_rate": ("recurrent_verified_failure_episodes", "strategy_adherent_episodes", "Recurrent verified failures", "Strategy-adherent episodes"),
-    }
-    numerator_key, denominator_key, numerator_label, denominator_label = components[metric]
-    for cell in matrix["cells"]:
-        value = cell.get(metric)
-        if value is None:
-            style = "unknown"
-        elif value < 0.25:
-            style = "low"
-        elif value < 0.60:
-            style = "mid"
-        else:
-            style = "high"
-        rows.append({
-            **cell,
-            "metric_value": value,
-            "style": style,
-            "metric_numerator": cell.get(numerator_key),
-            "metric_denominator": cell.get(denominator_key),
-            "numerator_label": numerator_label,
-            "denominator_label": denominator_label,
-        })
-    return rows
 
 
 def _command_index(run: dict[str, Any]) -> list[dict[str, str]]:
@@ -579,16 +425,6 @@ def _command_index(run: dict[str, Any]) -> list[dict[str, str]]:
         if episode.get("task_id") is not None:
             items.append({"title": f"Task {episode['task_id']}", "kind": "Task", "url": url,
                           "summary": title})
-    for failure in run.get("verified_failures", ()):
-        failure_id = quote(str(failure["failure_id"]), safe="")
-        items.append({"title": str(failure["failure_id"]), "kind": "Verified failure",
-                      "url": f"/runs/{run_id}/failures/{failure_id}",
-                      "summary": str((failure.get("signature") or {}).get("mistake_type", ""))})
-    for episode in run.get("provisional_failures", ()):
-        episode_id = quote(str(episode["episode_id"]), safe="")
-        items.append({"title": f"Candidate {episode.get('failure_category') or episode_id}",
-                      "kind": "Provisional", "url": f"/runs/{run_id}/failures/candidate-{episode_id}",
-                      "summary": "尚未验证，不计入 fitness"})
     for side in ("customer", "service"):
         for strategy_id in run.get("strategies", {}).get(side, {}):
             encoded = quote(str(strategy_id), safe="")
@@ -609,35 +445,16 @@ def _command_index_for_summaries(runs: list[dict[str, Any]]) -> list[dict[str, s
 
 def _health_view(run: dict[str, Any]) -> list[dict[str, str]]:
     budget = run.get("budget", {})
-    observations = [
-        (episode.get("telemetry") or {}).get("communication_protocol_observation")
-        for episode in run.get("episodes", ())
-    ]
-    counts = [item.get("mixed_text_tool_call_message_count") for item in observations if isinstance(item, dict)]
-    mixed_label = (
-        f"{sum(counts)} mixed text/tool messages observed"
-        if counts else "Unavailable"
-    )
     provider = (
         f"{budget['successes']} successful / {budget['attempts']} attempts"
         if type(budget.get("successes")) is int and type(budget.get("attempts")) is int
         else "Unavailable"
     )
-    cache = budget.get("cache_hits")
-    cache_label = str(cache) if type(cache) is int else "Unavailable"
-    retry = run.get("manifest", {}).get("provider_retries")
-    retry_label = str(retry) if type(retry) is int else "Unavailable"
-    progress = budget.get("progress")
-    remaining = f"{max(0, 100 - progress * 100):.1f}% remaining" if isinstance(progress, (int, float)) else "Unavailable"
     return [
         {"label": "Provider success", "value": provider, "state": "ok" if provider != "Unavailable" and budget.get("failures") == 0 else "neutral"},
-        {"label": "Retry policy", "value": f"{retry_label} configured", "state": "neutral"},
-        {"label": "Cache hits", "value": cache_label, "state": "neutral"},
         {"label": "Heldout", "value": "Sealed" if run.get("heldout_sealed") else "Open / none", "state": "sealed" if run.get("heldout_sealed") else "neutral"},
         {"label": "Artifacts", "value": "Validated for display", "state": "ok"},
         {"label": "Communication mode", "value": run.get("communication_mode_label", "Unknown"), "state": "neutral"},
-        {"label": "Mixed text/tool messages", "value": mixed_label, "state": "neutral"},
-        {"label": "Budget remaining", "value": remaining, "state": "neutral"},
     ]
 
 
@@ -647,9 +464,8 @@ def _human_events(run: dict[str, Any]) -> list[dict[str, str]]:
         "generation_committed": "Generation 已提交", "episode_started": "Episode 开始",
         "episode_finished": "Episode 完成", "evaluation_finished": "τ-bench 任务评估完成",
         "tool_call": "Service 调用工具", "tool_result": "工具返回结果",
-        "failure_verified": "Service failure 已验证", "service_repair_proposed": "提出 Service repair",
-        "service_gate_finished": "Repair gate 完成", "service_repair_accepted": "Repair 已接受",
-        "service_repair_rejected": "Repair 被拒绝", "service_repair_inconclusive": "Repair 证据不足",
+        "service_strategy_proposed": "Service strategy proposal 已生成",
+        "service_strategy_selected": "Service strategy 已比较",
         "budget_updated": "Provider budget 更新", "customer_message": "Customer 发言",
         "agent_message": "Service 回复",
     }
@@ -664,13 +480,8 @@ def _human_events(run: dict[str, Any]) -> list[dict[str, str]]:
             title = f"Episode 开始 · {event.get('episode_id') or '当前 episode'}"
         elif kind == "episode_finished":
             title = f"Episode 完成 · Task {payload.get('task_id', 'Unavailable')}"
-        elif kind == "failure_verified":
-            title = f"{payload.get('failure_id', 'Failure')} 已验证为 Service failure"
-        elif kind == "service_gate_finished":
-            gate_label = {"accepted": "通过", "rejected": "未通过", "inconclusive": "证据不足"}.get(
-                payload.get("status"), "状态不可用",
-            )
-            title = f"Repair gate：{gate_label}"
+        elif kind == "service_strategy_selected":
+            title = f"Service proposal {'accepted' if payload.get('accepted') else 'not accepted'}"
         elif kind == "tool_call":
             title = f"调用工具 · {payload.get('name') or payload.get('tool_name') or 'tool'}"
         elif kind == "tool_result":
@@ -701,6 +512,9 @@ def _human_events(run: dict[str, Any]) -> list[dict[str, str]]:
 
 def _compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any]:
     def panel(manifest: dict[str, Any]):
+        panels = manifest.get("task_panels")
+        if isinstance(panels, dict):
+            return {key: panels.get(key) for key in ("E", "V", "H") if key in panels}
         selection = manifest.get("task_selection")
         if isinstance(selection, dict):
             if isinstance(selection.get("heldout"), str):
@@ -710,11 +524,6 @@ def _compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any
         value = {key: manifest.get(key) for key in keys if manifest.get(key) is not None}
         return value or None
 
-    def seed_schedule(manifest: dict[str, Any]):
-        if "evolution_seeds" in manifest:
-            return manifest.get("evolution_seeds")
-        return manifest.get("seed")
-
     def budget_cap(manifest: dict[str, Any]):
         return manifest.get("request_budget_cap")
 
@@ -722,7 +531,7 @@ def _compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any
     comparisons = [
         _compatibility_row("Phase", run_a.get("phase"), run_b.get("phase")),
         _compatibility_row("Task panel", panel(a), panel(b)),
-        _compatibility_row("Seed schedule", seed_schedule(a), seed_schedule(b)),
+        _compatibility_row("Seed", a.get("seed"), b.get("seed")),
         _compatibility_row("Request budget", budget_cap(a), budget_cap(b)),
         _compatibility_row("Model configuration", (a.get("role_models"), a.get("role_model_args")),
                            (b.get("role_models"), b.get("role_model_args"))),
@@ -739,7 +548,11 @@ def _compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any
         reward = result.get("native_reward")
         if isinstance(reward, (int, float)) and not isinstance(reward, bool):
             return f"native reward {reward:g} (stored)"
-        return "Unavailable (no frozen run-level summary)"
+        episodes = run.get("episodes", ())
+        observed = [item.get("task_success") for item in episodes if type(item.get("task_success")) is bool]
+        if observed:
+            return f"{sum(observed)}/{len(observed)} visible episodes successful"
+        return "Unavailable"
     def model_label(manifest):
         models = manifest.get("role_models")
         if not isinstance(models, dict):
@@ -747,10 +560,9 @@ def _compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any
         return ", ".join(f"{role}: {model}" for role, model in sorted(models.items()))
     def protocol_label(manifest):
         value = manifest.get("enforce_communication_protocol")
-        return "Strict diagnostic" if value is True else "Upstream default" if value is False else "Unknown (legacy artifact)"
+        return "Strict diagnostic" if value is True else "Upstream default" if value is False else "Unknown"
     rows = [
         ("Native task success", native_result(run_a), native_result(run_b)),
-        ("Verified failures", str(len(run_a.get("verified_failures", ()))), str(len(run_b.get("verified_failures", ())))),
         ("Visible episodes", str(len(run_a.get("episodes", ()))), str(len(run_b.get("episodes", ())))),
         ("Provider attempts", run_a["budget"].get("attempt_label", "Unavailable"), run_b["budget"].get("attempt_label", "Unavailable")),
         ("Prompt / completion tokens", run_a["budget"].get("token_label", "Unavailable"), run_b["budget"].get("token_label", "Unavailable")),
@@ -831,14 +643,9 @@ def _compatibility_label(label: str, value: Any) -> str | None:
 
 
 def _artifact_inventory(run: dict[str, Any]) -> list[dict[str, Any]]:
-    import hashlib
-
     root = Path(run["path"])
-    manifest_name = "pilot-manifest.json" if (root / "pilot-manifest.json").exists() else "manifest.json"
-    result_name = ("pilot-result.json" if run["phase"].startswith("4-") else
-                   "phase0-result.json" if run["phase"].startswith("0-") else "phase3-result.json")
-    allowed = [manifest_name, result_name, "archive.sqlite", "events.jsonl",
-               "crossplay-matrix.json", "crossplay.json", "crossplay-matrices.json"]
+    result_name = "phase0-result.json" if run["phase"] == "0-integration-proof" else "alternating-result.json"
+    allowed = ["manifest.json", "run-context.json", result_name, "events.jsonl"]
     entries: dict[str, dict[str, Any]] = {}
     def add(path: Path, label: str, state: str = "Available"):
         try:
@@ -853,7 +660,7 @@ def _artifact_inventory(run: dict[str, Any]) -> list[dict[str, Any]]:
                              "size": len(data), "status": state}
     for name in allowed:
         path = root / name
-        if run.get("heldout_sealed") and name in {result_name, "archive.sqlite"}:
+        if run.get("heldout_sealed") and name == result_name:
             if path.exists():
                 entries[name] = {"name": name, "path": "[sealed]", "sha256": None,
                                  "size": None, "status": "Heldout sealed"}
@@ -887,37 +694,6 @@ def _artifact_inventory(run: dict[str, Any]) -> list[dict[str, Any]]:
             except (OSError, RuntimeError):
                 continue
     return sorted(entries.values(), key=lambda item: item["path"])
-
-
-def _failure_repair_view(
-    run: dict[str, Any], failure: dict[str, Any], source_episode: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    if source_episode is None:
-        return None
-    for commit in run.get("generation_commits", ()):
-        service = ((commit.get("decision_record") or {}).get("service") or {})
-        gate = service.get("gate")
-        if not isinstance(gate, dict) or gate.get("target_failure_id") != failure.get("failure_id"):
-            continue
-        after_id = commit.get("service_id")
-        candidates = [
-            episode for episode in run.get("episodes", ())
-            if episode.get("episode_id") != failure.get("episode_id")
-            and episode.get("task_id") == source_episode.get("task_id")
-            and episode.get("seed") == source_episode.get("seed")
-            and episode.get("customer_strategy_id") == source_episode.get("customer_strategy_id")
-            and episode.get("service_strategy_id") == after_id
-        ]
-        return {
-            "generation": commit.get("generation"),
-            "accepted": gate.get("accepted") is True,
-            "inconclusive": gate.get("inconclusive") is True,
-            "before_service_id": (service.get("incumbent_before") or {}).get("strategy_id"),
-            "after_service_id": after_id,
-            "gate": gate,
-            "after_episode": candidates[0] if candidates else None,
-        }
-    return None
 
 
 async def _read_form(request: Request) -> dict[str, str]:

@@ -27,8 +27,7 @@ class EventJournal:
 
     def sync(self, run: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         run_path = Path(run["path"])
-        if not ((run_path / "manifest.json").is_file()
-                or (run_path / "pilot-manifest.json").is_file()):
+        if not (run_path / "manifest.json").is_file():
             return ()
         path = self.path_for(run)
         if path.is_symlink():
@@ -92,7 +91,7 @@ class EventJournal:
     def _observations(self, run: dict[str, Any]):
         run_id = run["run_id"]
         run_path = Path(run["path"])
-        manifest_name = "pilot-manifest.json" if (run_path / "pilot-manifest.json").exists() else "manifest.json"
+        manifest_name = "manifest.json"
         manifest_path = run_path / manifest_name
         timestamp = _file_time(manifest_path)
         yield self._event(run_id, "run_started", f"{manifest_name}:started", timestamp, None, None, {
@@ -108,17 +107,19 @@ class EventJournal:
                                   "service_evolved": commit.get("service_evolved"),
                                   "note": commit.get("note"),
                               })
-            gate = ((commit.get("decision_record") or {}).get("service") or {}).get("gate")
-            if isinstance(gate, dict):
-                yield self._event(run_id, "service_repair_proposed", f"generation:{generation}:repair", timestamp,
-                                  generation, None, redact_secrets(gate.get("proposal")))
-                status = "inconclusive" if gate.get("inconclusive") else (
-                    "accepted" if gate.get("accepted") else "rejected"
+            service_phase = commit.get("service_phase")
+            if isinstance(service_phase, dict):
+                yield self._event(
+                    run_id, "service_strategy_proposed", f"generation:{generation}:proposal", timestamp,
+                    generation, None, redact_secrets(service_phase.get("proposed_strategy")),
                 )
-                yield self._event(run_id, "service_gate_finished", f"generation:{generation}:gate", timestamp,
-                                  generation, None, {"status": status, "reasons": gate.get("reasons", ())})
-                yield self._event(run_id, f"service_repair_{status}", f"generation:{generation}:decision", timestamp,
-                                  generation, None, {"target_failure_id": gate.get("target_failure_id")})
+                yield self._event(
+                    run_id, "service_strategy_selected", f"generation:{generation}:service-selection", timestamp,
+                    generation, None, {
+                        "accepted": service_phase.get("accepted") is True,
+                        "reason": (service_phase.get("selection") or {}).get("reason", ""),
+                    },
+                )
         active_episode = run.get("current_episode")
         if isinstance(active_episode, dict):
             attempt_id = active_episode.get("attempt_id")
@@ -172,15 +173,6 @@ class EventJournal:
             if episode.get("budget") is not None:
                 yield self._event(run_id, "budget_updated", f"episode:{episode_id}:budget", ep_time,
                                   episode.get("generation"), episode_id, episode["budget"])
-        for failure in run.get("verified_failures", ()):
-            failure_id = failure.get("failure_id")
-            yield self._event(run_id, "failure_verified", f"failure:{failure_id}", timestamp,
-                              failure.get("generation"), failure.get("episode_id"), {
-                                  "failure_id": failure_id,
-                                  "task_id": failure.get("task_id"),
-                                  "workflow_stage": (failure.get("signature") or {}).get("workflow_stage"),
-                                  "policy_ref": failure.get("policy_ref"),
-                              })
         if run.get("status") == "complete":
             yield self._event(run_id, "run_finished", "run:finished", timestamp, None, None, {
                 "provider_attempts": run.get("budget", {}).get("attempts"),

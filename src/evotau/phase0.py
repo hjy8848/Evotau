@@ -10,8 +10,8 @@ from typing import Any
 
 import yaml
 
-from .eligibility import validate_smoke_selection
-from .manifest import ExperimentManifest, verify_git_blob_sha1, write_manifest_once
+from .manifest import ExperimentManifest
+from .tau_provenance import verify_git_blob_sha1, write_manifest_once
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -62,18 +62,25 @@ def main(argv: list[str] | None = None) -> int:
             with args.split_json.open("r", encoding="utf-8") as handle:
                 splits = json.load(handle)
             selection = config["experiment"]["task_selection"]
-            result = validate_smoke_selection(
-                tasks,
-                splits,
-                evolution_task_id=str(selection["evolution"][0]),
-                validation_task_id=str(selection["validation"][0]),
-                excluded_task_ids=selection.get("excluded", ("46", "47")),
-            )
+            selected = {
+                str(task_id)
+                for task_id in (*selection["evolution"], *selection["validation"])
+            }
+            train_ids = {str(task_id) for task_id in splits.get(manifest.split_name, ())}
+            task_ids = {
+                str(task.get("id"))
+                for task in tasks
+                if isinstance(task, dict) and task.get("id") is not None
+            }
+            expected_count = len(manifest.evolution_task_ids) + len(manifest.validation_task_ids)
+            if len(selected) != expected_count:
+                raise ValueError("E and V task IDs must be distinct")
+            if selected - train_ids or selected - task_ids:
+                raise ValueError("Phase 0 tasks must exist in the pinned official train split")
             selection_result = {
-                "evolution_task_id": result.evolution_task_id,
-                "validation_task_id": result.validation_task_id,
-                "evolution_entity_keys": list(result.evolution_entity_keys),
-                "validation_entity_keys": list(result.validation_entity_keys),
+                "evolution_task_ids": list(manifest.evolution_task_ids),
+                "validation_task_ids": list(manifest.validation_task_ids),
+                "official_train_split": True,
             }
         else:
             selection_result = "not checked: provide the pinned task and split files"

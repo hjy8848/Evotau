@@ -6,9 +6,7 @@
     generation_committed: "Generation committed", episode_started: "Episode started",
     episode_finished: "Episode completed", evaluation_finished: "τ-bench evaluation completed",
     tool_call: "Service called a tool", tool_result: "Tool returned a result",
-    failure_verified: "Service failure verified", service_repair_proposed: "Service repair proposed",
-    service_gate_finished: "Repair gate completed", service_repair_accepted: "Repair accepted",
-    service_repair_rejected: "Repair rejected", service_repair_inconclusive: "Repair evidence inconclusive",
+    service_strategy_proposed: "Service strategy proposed", service_strategy_selected: "Service proposal compared",
     budget_updated: "Provider budget updated", customer_message: "Customer message",
     agent_message: "Service response",
   };
@@ -41,16 +39,12 @@
     if (kind === "generation_committed") return `Generation ${event.generation} committed`;
     if (kind === "episode_started") return `Episode started · ${event.episode_id || "current episode"}`;
     if (kind === "episode_finished") return `Episode completed · Task ${payload.task_id || "Unavailable"}`;
-    if (kind === "failure_verified") return `${payload.failure_id || "Failure"} verified as a Service failure`;
     if (kind === "tool_call") return `Tool call · ${payload.name || payload.tool_name || "tool"}`;
     if (kind === "tool_result") return `Tool result · ${payload.tool_name || "tool"}`;
     if (kind === "evaluation_finished" && typeof payload.task_success === "boolean") {
       return payload.task_success ? "τ-bench task succeeded" : "τ-bench task was not successful";
     }
-    if (kind === "service_gate_finished") {
-      const state = { accepted: "passed", rejected: "not passed", inconclusive: "inconclusive" }[payload.status] || "unavailable";
-      return `Repair gate ${state}`;
-    }
+    if (kind === "service_strategy_selected") return `Service proposal ${payload.accepted ? "accepted" : "not accepted"}`;
     return labels[kind] || "Run record updated";
   }
 })();

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import os
-import re
 import subprocess
 import sys
 import threading
@@ -15,11 +13,10 @@ from typing import Any
 
 import yaml
 
-from ..manifest import ExperimentManifest, MechanismManifest, PilotManifest, sha256_json
-from ..native_runner import _validate_phase0_parent
+from ..alternating_manifest import AlternatingManifest
+from ..manifest import ExperimentManifest
 from ..phase0 import load_config
-
-_PLUGIN_SPEC = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*\Z")
+from ..tau_provenance import sha256_json
 
 
 class RunManagerError(ValueError):
@@ -37,15 +34,14 @@ class RunPreview:
     seeds: tuple[int, ...]
     generations: int
     customer_candidates: int
-    max_episodes: int
+    max_episodes: int | None
     max_concurrency: int
-    request_budget_cap: int
+    request_budget_cap: int | None
     provider_retries: int
     models: tuple[tuple[str, str], ...]
     real_provider_enabled: bool
-    provider_plugin: str | None
+    runtime: str
     tau2_data_path: str | None
-    phase0_result_path: str | None
     config_path: Path
     output_directory: Path
     manifest_document: dict[str, Any]
@@ -67,11 +63,11 @@ class RunPreview:
             "provider_retries": self.provider_retries,
             "models": self.models,
             "real_provider_enabled": self.real_provider_enabled,
-            "provider_plugin": self.provider_plugin or "未设置",
+            "runtime": self.runtime,
             "tau2_data_path": self.tau2_data_path or "未设置",
-            "phase0_result_path": self.phase0_result_path or "未设置",
             "enforce_communication_protocol": self.manifest_document.get(
                 "enforce_communication_protocol",
+                self.manifest_document.get("communication_enforcement"),
             ),
         }
 
@@ -88,7 +84,7 @@ class _ManagedProcess:
 
 
 class RunManager:
-    """Call Phase 0/3/Pilot entrypoints; do not make decisions in the web layer."""
+    """Preview and launch Phase 0 or the alternating τ-bench method."""
 
     def __init__(
         self,
@@ -114,8 +110,6 @@ class RunManager:
         *,
         phase: str,
         config_path: str | Path,
-        phase0_result_path: str | Path | None = None,
-        provider_plugin: str | None = None,
         tau2_data_dir: str | Path | None = None,
     ) -> RunPreview:
         config = self._config_path(config_path)
@@ -130,31 +124,28 @@ class RunManager:
                 seeds = (manifest.seed,)
                 generations = 1
                 candidates = 0
-            elif phase == "3-two-generation-smoke":
-                manifest = MechanismManifest.from_mapping(raw)
-                task_labels = (f"E: {manifest.evolution_task_id}", f"V: {manifest.validation_task_id}")
-                seeds = (manifest.seed,)
-                generations = manifest.generations
-                candidates = manifest.customer_candidates
-            elif phase == "4-pilot":
-                manifest = PilotManifest.from_mapping(raw)
-                heldout_count = len(manifest.heldout_task_ids)
+            elif phase == "alternating-self-evolution":
+                manifest = AlternatingManifest.from_mapping(raw)
                 task_labels = (
                     *(f"E: {item}" for item in manifest.evolution_task_ids),
                     *(f"V: {item}" for item in manifest.validation_task_ids),
-                    *((f"H panel sealed · {heldout_count} tasks",) if heldout_count else ()),
+                    f"H sealed · {len(manifest.heldout_task_ids)} tasks",
                 )
-                seeds = manifest.evolution_seeds
+                seeds = (manifest.seed,)
                 generations = manifest.generations
                 candidates = manifest.customer_candidates
             else:
-                raise RunManagerError("请选择 Phase 0、Phase 3 或 Pilot 配置。")
+                raise RunManagerError("请选择 Phase 0 或 alternating evolution 配置。")
         except RunManagerError:
             raise
         except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
             raise RunManagerError(f"配置无法通过 EvoTau manifest 校验（{type(exc).__name__}）。") from exc
 
-        if manifest.phase != phase:
+        manifest_phase = (
+            "0-integration-proof" if isinstance(manifest, ExperimentManifest)
+            else "alternating-self-evolution"
+        )
+        if manifest_phase != phase:
             raise RunManagerError("所选入口和配置中的 phase 不一致。")
         output_directory = self._output_path(manifest.output_path)
         role_models = tuple(sorted((str(role), str(model) if model else "未冻结")
@@ -165,34 +156,28 @@ class RunManager:
             manifest_sha256=manifest.sha256,
             launch_sha256=self._launch_fingerprint(
                 manifest.sha256,
-                provider_plugin=provider_plugin,
                 tau2_data_dir=tau2_data_dir,
-                phase0_result_path=phase0_result_path,
             ),
             output_path=str(output_directory),
             task_labels=task_labels,
             seeds=tuple(seeds),
             generations=generations,
             customer_candidates=candidates,
-            max_episodes=manifest.max_episodes,
-            max_concurrency=manifest.max_concurrency,
+            max_episodes=1 if isinstance(manifest, ExperimentManifest) else None,
+            max_concurrency=1,
             request_budget_cap=manifest.request_budget_cap,
-            provider_retries=manifest.provider_retries,
+            provider_retries=manifest.provider_retries if isinstance(manifest, ExperimentManifest) else 0,
             models=role_models,
             real_provider_enabled=manifest.real_provider_enabled,
-            provider_plugin=provider_plugin,
+            runtime="Pinned τ-bench native runtime",
             tau2_data_path=(str(self._data_path(tau2_data_dir))
                             if self._data_path(tau2_data_dir) is not None else None),
-            phase0_result_path=(str(self._contained_run_file(phase0_result_path))
-                                if phase0_result_path else None),
             config_path=config,
             output_directory=output_directory,
             manifest_document=manifest.to_document(),
         )
         self._validate_launch_inputs(
             preview,
-            phase0_result_path=phase0_result_path,
-            provider_plugin=provider_plugin,
             tau2_data_dir=tau2_data_dir,
             for_start=False,
         )
@@ -205,14 +190,10 @@ class RunManager:
         config_path: str | Path,
         confirmed_manifest_sha256: str,
         confirmed_launch_sha256: str | None = None,
-        phase0_result_path: str | Path | None = None,
-        provider_plugin: str | None = None,
         tau2_data_dir: str | Path | None = None,
     ) -> dict[str, Any]:
         preview = self.preview(
             phase=phase, config_path=config_path,
-            phase0_result_path=phase0_result_path,
-            provider_plugin=provider_plugin,
             tau2_data_dir=tau2_data_dir,
         )
         if preview.manifest_sha256 != confirmed_manifest_sha256:
@@ -222,8 +203,6 @@ class RunManager:
             raise RunManagerError("启动参数在预览后发生变化，请重新预览。")
         self._validate_launch_inputs(
             preview,
-            phase0_result_path=phase0_result_path,
-            provider_plugin=provider_plugin,
             tau2_data_dir=tau2_data_dir,
             for_start=True,
         )
@@ -244,8 +223,6 @@ class RunManager:
                 pause_file.unlink()
             command = self._command(
                 preview,
-                phase0_result_path=phase0_result_path,
-                provider_plugin=provider_plugin,
                 tau2_data_dir=tau2_data_dir,
                 pause_file=pause_file,
             )
@@ -320,8 +297,6 @@ class RunManager:
         self,
         preview: RunPreview,
         *,
-        phase0_result_path: str | Path | None,
-        provider_plugin: str | None,
         tau2_data_dir: str | Path | None,
         for_start: bool,
     ) -> None:
@@ -335,74 +310,37 @@ class RunManager:
             data_dir = self._data_path(tau2_data_dir)
             if data_dir is None or not data_dir.is_dir() or data_dir.is_symlink():
                 raise RunManagerError("启动前需要指定固定 τ-bench data 目录。")
-            if (preview.phase != "0-integration-proof"
-                    and (not provider_plugin or not _PLUGIN_SPEC.fullmatch(provider_plugin))):
-                raise RunManagerError("Phase 3/Pilot 需要冻结 provider plugin 的 module:factory。")
-        if preview.phase == "3-two-generation-smoke":
-            if not phase0_result_path:
-                if for_start:
-                    raise RunManagerError("Phase 3 必须绑定一份已完成的 Phase 0 结果。")
-                return
-            path = self._contained_run_file(phase0_result_path)
-            if for_start and not path.is_file():
-                raise RunManagerError("Phase 0 parent result 不存在。")
-            if path.is_file():
-                try:
-                    config = load_config(preview.config_path)
-                    manifest = MechanismManifest.from_mapping(config)
-                    _validate_phase0_parent(path, manifest)
-                except Exception as exc:
-                    if for_start:
-                        raise RunManagerError(
-                            f"Phase 0 parent 未通过绑定校验（{type(exc).__name__}）。"
-                        ) from exc
 
     def _launch_fingerprint(
         self,
         manifest_sha256: str,
         *,
-        provider_plugin: str | None,
         tau2_data_dir: str | Path | None,
-        phase0_result_path: str | Path | None,
     ) -> str:
         data_path = None
         if tau2_data_dir:
             resolved_data_path = self._data_path(tau2_data_dir)
             data_path = str(resolved_data_path) if resolved_data_path is not None else None
-        parent_path, parent_sha256 = None, None
-        if phase0_result_path:
-            source = self._contained_run_file(phase0_result_path)
-            parent_path = str(source)
-            parent_sha256 = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None
         return sha256_json({
             "manifest_sha256": manifest_sha256,
-            "provider_plugin": provider_plugin,
             "tau2_data_path": data_path,
-            "phase0_result_path": parent_path,
-            "phase0_result_sha256": parent_sha256,
         })
 
     def _command(
         self,
         preview: RunPreview,
         *,
-        phase0_result_path: str | Path | None,
-        provider_plugin: str | None,
         tau2_data_dir: str | Path | None,
         pause_file: Path,
     ) -> list[str]:
         command = [sys.executable, "-m", {
             "0-integration-proof": "evotau.phase0_run",
-            "3-two-generation-smoke": "evotau.phase3_run",
-            "4-pilot": "evotau.pilot_run",
+            "alternating-self-evolution": "evotau.alternating_run",
         }[preview.phase], "--config", str(preview.config_path)]
         data_dir = self._data_path(tau2_data_dir)
         if data_dir is not None:
             command.extend(("--tau2-data-dir", str(data_dir)))
-        if preview.phase == "3-two-generation-smoke":
-            command.extend(("--phase0-result", str(self._contained_run_file(phase0_result_path))))
         if preview.phase != "0-integration-proof":
-            command.extend(("--provider-plugin", str(provider_plugin)))
             command.extend(("--stop-before-next-episode-file", str(pause_file)))
         return command
 
@@ -445,21 +383,6 @@ class RunManager:
             current = current.parent
         return path
 
-    def _contained_run_file(self, value: str | Path | None) -> Path:
-        if value is None:
-            raise RunManagerError("Phase 0 parent result is required.")
-        candidate = Path(value).expanduser()
-        if not candidate.is_absolute():
-            candidate = self.project_root / candidate
-        if candidate.is_symlink():
-            raise RunManagerError("parent artifact cannot be a symlink.")
-        try:
-            resolved = candidate.resolve(strict=False)
-            resolved.relative_to(self.runs_root)
-        except ValueError as exc:
-            raise RunManagerError("parent artifact must be under the local run directory.") from exc
-        return resolved
-
     def _data_path(self, value: str | Path | None) -> Path | None:
         if value:
             candidate = Path(value).expanduser()
@@ -470,17 +393,14 @@ class RunManager:
     def _completed_result_exists(preview: RunPreview) -> bool:
         name = {
             "0-integration-proof": "phase0-result.json",
-            "3-two-generation-smoke": "phase3-result.json",
-            "4-pilot": "pilot-result.json",
+            "alternating-self-evolution": "alternating-result.json",
         }[preview.phase]
         path = preview.output_directory / name
         return path.is_file()
 
     @staticmethod
     def _result_file(job: _ManagedProcess) -> bool:
-        name = "phase0-result.json" if job.phase.startswith("0-") else (
-            "phase3-result.json" if job.phase.startswith("3-") else "pilot-result.json"
-        )
+        name = "phase0-result.json" if job.phase.startswith("0-") else "alternating-result.json"
         return (job.output_directory / name).is_file()
 
     @staticmethod
@@ -490,7 +410,7 @@ class RunManager:
             return
         if output.is_symlink() or not output.is_dir():
             raise RunManagerError("immutable run output is not a regular directory.")
-        manifest_name = "pilot-manifest.json" if preview.phase == "4-pilot" else "manifest.json"
+        manifest_name = "manifest.json"
         saved_path = output / manifest_name
         if not saved_path.exists():
             if any(output.iterdir()):

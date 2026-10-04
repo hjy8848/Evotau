@@ -11,17 +11,16 @@ from typing import Any
 from uuid import uuid4
 
 from .budget import RequestBudget
-from .manifest import (
+from .prompts import append_strategy_block
+from .strategies import (
+    PromptStrategy,
+    render_customer_strategy,
+    render_service_strategy,
+)
+from .tau_provenance import (
     TAU2_PACKAGE_VERSION,
     TAU_BENCH_COMMIT,
     role_model_args_for_runtime,
-)
-from .prompts import append_strategy_block
-from .strategies import (
-    CustomerStrategy,
-    ServiceStrategy,
-    render_customer_strategy,
-    render_service_strategy,
 )
 
 
@@ -58,7 +57,7 @@ def verify_tau2_installation() -> None:
 
 def customer_user_class(
     base_user_class: type,
-    strategy: CustomerStrategy | None,
+    strategy: PromptStrategy | None,
 ) -> type:
     """Bind an immutable customer strategy to a UserSimulator subclass."""
 
@@ -76,13 +75,11 @@ def customer_user_class(
 
 def service_agent_class(
     base_agent_class: type,
-    strategy: ServiceStrategy | None,
-    *,
-    token_counter: Callable[[str], int] | None = None,
+    strategy: PromptStrategy | None,
 ) -> type:
-    """Bind structured policy-grounded rules to an LLMAgent subclass."""
+    """Append the Service's open strategy overlay to the native agent prompt."""
 
-    block = render_service_strategy(strategy, token_counter=token_counter)
+    block = render_service_strategy(strategy)
 
     class EvoTauServiceAgent(base_agent_class):
         @property
@@ -103,9 +100,8 @@ def build_phase0_orchestrator(
     customer_model_args: dict[str, Any] | None = None,
     seed: int,
     max_steps: int = 64,
-    customer_strategy: CustomerStrategy | None = None,
-    service_strategy: ServiceStrategy | None = None,
-    service_token_counter: Callable[[str], int] | None = None,
+    customer_strategy: PromptStrategy | None = None,
+    service_strategy: PromptStrategy | None = None,
     enforce_communication_protocol: bool = False,
 ) -> Any:
     """Construct native Retail text components directly, without changing the runner."""
@@ -119,9 +115,7 @@ def build_phase0_orchestrator(
     from tau2.user.user_simulator import UserSimulator
 
     environment = build_environment("retail")
-    agent_type = service_agent_class(
-        LLMAgent, service_strategy, token_counter=service_token_counter
-    )
+    agent_type = service_agent_class(LLMAgent, service_strategy)
     customer_type = customer_user_class(UserSimulator, customer_strategy)
     agent = agent_type(
         tools=environment.get_tools(),
@@ -304,9 +298,8 @@ def run_phase0_episode(
     *,
     manifest: Any,
     task: Any,
-    customer_strategy: CustomerStrategy | None = None,
-    service_strategy: ServiceStrategy | None = None,
-    service_token_counter: Callable[[str], int] | None = None,
+    customer_strategy: PromptStrategy | None = None,
+    service_strategy: PromptStrategy | None = None,
     request_budget: RequestBudget | None = None,
     on_orchestrator: Callable[[Any], None] | None = None,
     on_simulation: Callable[[Any], None] | None = None,
@@ -348,7 +341,6 @@ def run_phase0_episode(
         max_steps=manifest.max_steps,
         customer_strategy=customer_strategy,
         service_strategy=service_strategy,
-        service_token_counter=service_token_counter,
         enforce_communication_protocol=manifest.enforce_communication_protocol,
     )
     if on_orchestrator is not None:

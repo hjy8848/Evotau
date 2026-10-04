@@ -16,7 +16,7 @@ from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .manifest import (
+from .tau_provenance import (
     TAU2_PACKAGE_VERSION,
     TAU_BENCH_COMMIT,
     TAU_BENCH_REPOSITORY,

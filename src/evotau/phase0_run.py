@@ -15,20 +15,11 @@ import yaml
 
 from .budget import RequestBudget
 from .communication import observe_communication_protocol
-from .eligibility import (
-    validate_activation_selection,
-    validate_generalization_selection,
-    validate_smoke_selection,
-)
-from .manifest import (
-    ActivationSmokeManifest,
-    ExperimentManifest,
-    verify_git_blob_sha1,
-    write_manifest_once,
-)
+from .manifest import ExperimentManifest
 from .phase0 import load_config
-from .strategies import CustomerStrategy, ServiceRule, ServiceStrategy
+from .strategies import PromptStrategy
 from .tau_adapter import run_phase0_episode, verify_tau2_installation
+from .tau_provenance import verify_git_blob_sha1, write_manifest_once
 
 
 class Phase0ExecutionError(RuntimeError):
@@ -56,7 +47,7 @@ def _load_pinned_tasks(
     task_selection: Mapping[str, Any],
     task_ids: tuple[str, ...],
 ) -> dict[str, Any]:
-    """Load requested official-train tasks after verifying every pinned source blob."""
+    """Load requested official-train tasks and verify the τ-bench source pin."""
 
     data_root = Path(data_dir).expanduser().resolve()
     if not data_root.is_dir():
@@ -79,84 +70,17 @@ def _load_pinned_tasks(
             raise ValueError(f"unsupported pinned source path: {repository_path}")
         verify_git_blob_sha1(source, digest)
 
-    tasks_path = data_root / "tau2/domains/retail/tasks.json"
     split_path = data_root / "tau2/domains/retail/split_tasks.json"
-    with tasks_path.open("r", encoding="utf-8") as handle:
-        tasks_data = json.load(handle)
     with split_path.open("r", encoding="utf-8") as handle:
         split_data = json.load(handle)
-    evolution_ids = getattr(manifest, "evolution_task_ids", None)
-    validation_ids = getattr(manifest, "validation_task_ids", None)
-    heldout_ids = getattr(manifest, "heldout_task_ids", ())
-    if evolution_ids is None:
-        evolution_ids = (manifest.evolution_task_id,)
-    if validation_ids is None:
-        validation_ids = (manifest.validation_task_id,)
-    if heldout_ids:
-        heldout_split = getattr(manifest, "heldout_split_name", "test")
-        validate_generalization_selection(
-            tasks_data,
-            split_data,
-            evolution_task_ids=evolution_ids,
-            validation_task_ids=validation_ids,
-            heldout_task_ids=heldout_ids,
-            excluded_task_ids=task_selection.get("excluded", ()),
-        )
-        semantic_review_json = getattr(manifest, "task_semantic_review_json", None)
-        if semantic_review_json is not None:
-            from .task_review import verify_reviewed_task_hashes
-
-            verify_reviewed_task_hashes(json.loads(semantic_review_json), tasks_data)
-        train_ids = (*evolution_ids, *validation_ids)
-        train_id_set, heldout_id_set = set(train_ids), set(heldout_ids)
-        heldout_requested = tuple(task_id for task_id in task_ids if task_id in heldout_id_set)
-        train_requested = tuple(task_id for task_id in task_ids if task_id in train_id_set)
-        if set(task_ids) - set(train_ids) - set(heldout_ids):
-            raise ValueError("requested task IDs are outside the frozen Pilot E/V/H panels")
-        selected = []
-        if train_requested:
-            selected.extend(get_tasks(
-                manifest.domain, task_split_name=manifest.split_name,
-                task_ids=list(train_requested),
-            ))
-        if heldout_requested:
-            selected.extend(get_tasks(
-                manifest.domain, task_split_name=heldout_split,
-                task_ids=list(heldout_requested),
-            ))
-    elif isinstance(manifest, ActivationSmokeManifest):
-        panel = validate_activation_selection(
-            tasks_data,
-            split_data,
-            evolution_task_ids=manifest.evolution_task_ids,
-            validation_task_ids=manifest.validation_task_ids,
-            excluded_task_ids=manifest.excluded_task_ids,
-        )
-        review_document = json.loads(manifest.task_semantic_review_json)
-        from .task_review import verify_reviewed_task_hashes
-
-        verify_reviewed_task_hashes(review_document, tasks_data)
-        expected = panel.evolution_task_ids + panel.validation_task_ids
-        if set(task_ids) != set(expected):
-            raise ValueError("activation runner must load exactly its frozen E/V task panel")
-        selected = get_tasks(
-            manifest.domain,
-            task_split_name=manifest.split_name,
-            task_ids=list(task_ids),
-        )
-    else:
-        validate_smoke_selection(
-            tasks_data,
-            split_data,
-            evolution_task_id=evolution_ids[0],
-            validation_task_id=validation_ids[0],
-            excluded_task_ids=task_selection.get("excluded", ()),
-        )
-        selected = get_tasks(
-            manifest.domain,
-            task_split_name=manifest.split_name,
-            task_ids=list(task_ids),
-        )
+    split_ids = {str(item) for item in split_data.get(manifest.split_name, ())}
+    if set(task_ids) - split_ids:
+        raise ValueError("requested task IDs are outside the frozen τ-bench train split")
+    selected = get_tasks(
+        manifest.domain,
+        task_split_name=manifest.split_name,
+        task_ids=list(task_ids),
+    )
     tasks_by_id = {str(task.id): task for task in selected}
     if set(tasks_by_id) != set(task_ids):
         raise ValueError("pinned τ-bench did not return exactly the requested official-train tasks")
@@ -165,39 +89,19 @@ def _load_pinned_tasks(
 
 def _parse_strategies(
     experiment: Mapping[str, Any],
-) -> tuple[Any | None, ServiceStrategy]:
+) -> tuple[PromptStrategy | None, PromptStrategy]:
     customer_data = experiment.get("customer_strategy")
-    if customer_data is None:
-        customer = None
-    elif isinstance(customer_data, Mapping) and customer_data.get("schema_version") == 3:
-        from .customer_skill_v3 import validate_skill
-
-        if set(customer_data) != {"schema_version", "skill"} or not isinstance(customer_data["skill"], Mapping):
-            raise ValueError("V3 Customer baseline has an invalid explicit schema")
-        raw_skill = customer_data["skill"]
-        normalized = validate_skill(
-            raw_skill,
-            incumbent=CustomerStrategy.v2_baseline(),
-            operation="create",
-            verified_failure_ids=raw_skill.get("evidence_refs", ()),
-        )
-        if normalized.to_dict() != customer_data:
-            raise ValueError("V3 Customer baseline must be canonical")
-        customer = normalized
-    else:
-        customer = CustomerStrategy(**customer_data)
-    service_data = experiment.get("service_strategy") or {"rules": []}
-    rules = tuple(
-        ServiceRule(
-            rule_id=item["rule_id"],
-            policy_ref=item["policy_ref"],
-            trigger=item["trigger"],
-            required_execution=item["required_execution"],
-            evidence_refs=tuple(item["evidence_refs"]),
-        )
-        for item in service_data.get("rules", ())
-    )
-    return customer, ServiceStrategy(rules)
+    service_data = experiment.get("service_strategy")
+    if customer_data is not None and not isinstance(customer_data, str):
+        raise TypeError("customer_strategy must be null or open text")
+    if isinstance(service_data, Mapping) and not service_data.get("rules"):
+        service_data = ""
+    if service_data is None:
+        service_data = ""
+    if not isinstance(service_data, str):
+        raise TypeError("service_strategy must be open text")
+    customer = None if customer_data is None else PromptStrategy(customer_data)
+    return customer, PromptStrategy(service_data)
 
 
 def _write_json_once(path: Path, value: Mapping[str, Any]) -> Path:
@@ -216,7 +120,6 @@ def execute_phase0(
     config: Mapping[str, Any],
     task: Any,
     episode_runner: Callable[..., tuple[Any, RequestBudget]] | None = None,
-    service_token_counter: Callable[[str], int] | None = None,
 ) -> dict[str, Any]:
     """Run one explicitly enabled episode and save an immutable result record."""
 
@@ -229,8 +132,6 @@ def execute_phase0(
     if task.id != manifest.evolution_task_ids[0]:
         raise ValueError("loaded task does not match the frozen evolution task")
     customer_strategy, service_strategy = _parse_strategies(config["experiment"])
-    if service_strategy.rules and service_token_counter is None:
-        raise ValueError("non-empty ServiceStrategy requires a model-matched token counter")
 
     output_dir = Path(manifest.output_path)
     manifest_path = output_dir / "manifest.json"
@@ -266,7 +167,6 @@ def execute_phase0(
             task=task,
             customer_strategy=customer_strategy,
             service_strategy=service_strategy,
-            service_token_counter=service_token_counter,
             request_budget=budget,
             on_orchestrator=record_prompt_hashes,
             on_simulation=persist_native_simulation,
@@ -344,18 +244,11 @@ def run_from_config(
         data_dir=data_dir,
         task_selection=config["experiment"]["task_selection"],
     )
-    token_counter = None
-    if (config["experiment"].get("service_strategy") or {}).get("rules"):
-        from litellm import token_counter as count_tokens
-
-        agent_model = dict(manifest.role_models)["agent"]
-        token_counter = lambda text: count_tokens(model=agent_model, text=text)
     return execute_phase0(
         manifest=manifest,
         config=config,
         task=task,
         episode_runner=episode_runner,
-        service_token_counter=token_counter,
     )
 
 

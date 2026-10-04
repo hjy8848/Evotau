@@ -13,18 +13,16 @@ pytest.importorskip("fastapi")
 pytest.importorskip("jinja2")
 from fastapi.testclient import TestClient
 
-from evotau.crossplay import build_crossplay_matrix
-from evotau.manifest import sha256_json
 from evotau.records import (
     EpisodeRecord,
     EpisodeStatus,
     customer_strategy_id,
     service_strategy_id,
 )
-from evotau.strategies import CustomerStrategy, ServiceStrategy
+from evotau.strategies import PromptStrategy
+from evotau.tau_provenance import sha256_json
 from evotau.web.app import (
     _compatibility_row,
-    _crossplay_cells,
     _human_events,
     create_app,
 )
@@ -34,8 +32,7 @@ from evotau.web.run_manager import RunManager, RunManagerError
 from evotau.web.view_models import (
     budget_view,
     customer_strategy_view,
-    failure_status,
-    gate_status,
+    generation_view,
     strategy_diff_rows,
 )
 
@@ -76,13 +73,8 @@ def _write_phase0_fixture(
     manifest_path = run_dir / "manifest.json"
     _write_json(manifest_path, manifest)
     strategy = {
-        "customer": {
-            "disclosure": "minimal_on_request",
-            "request_order": "reverse_independent",
-            "challenge_style": "ask_reason",
-            "challenge_budget": 1,
-        },
-        "service": {"rules": []},
+        "customer": {"text": "Pursue the task scenario and respond naturally."},
+        "service": {"text": "Use the τ-bench policy and tools carefully."},
     }
     trajectory = {
         "id": f"episode-{task_id}",
@@ -139,24 +131,20 @@ def _write_phase0_fixture(
     return run_dir
 
 
-def _write_pilot_heldout_fixture(root: Path) -> Path:
-    run_dir = root / "experiments" / "runs" / "pilot-fixture"
+def _write_alternating_heldout_fixture(root: Path) -> Path:
+    run_dir = root / "experiments" / "runs" / "alternating-fixture"
     manifest = {
-        "experiment_id": "pilot fixture",
-        "phase": "4-pilot",
+        "experiment_id": "alternating fixture",
+        "phase": "alternating-self-evolution",
         "real_provider_enabled": False,
-        "request_budget_cap": 100,
-        "evolution_seeds": [12],
-        "task_selection": {
-            "evolution": ["E"],
-            "validation": ["V"],
-            "heldout": ["H_SECRET_TASK"],
-        },
+        "request_budget_cap": None,
+        "seed": 12,
+        "task_panels": {"E": ["E"], "V": ["V"], "H": ["H_SECRET_TASK"]},
     }
     manifest["manifest_sha256"] = sha256_json(manifest)
-    _write_json(run_dir / "pilot-manifest.json", manifest)
-    episode_dir = run_dir / "seed-blocks" / "seed-12" / "episodes" / "attempt-H"
-    customer, service = CustomerStrategy(), ServiceStrategy()
+    _write_json(run_dir / "manifest.json", manifest)
+    episode_dir = run_dir / "episodes" / "attempt-H"
+    customer, service = PromptStrategy("adaptive"), PromptStrategy("careful")
     record = EpisodeRecord(
         episode_id="heldout-episode-secret",
         task_id="H_SECRET_TASK",
@@ -171,7 +159,7 @@ def _write_pilot_heldout_fixture(root: Path) -> Path:
     _write_json(episode_dir / "episode-record.json", record.to_dict())
     _write_json(
         episode_dir / "run-telemetry.json",
-        {"panel_name": "heldout", "simulation_id": record.episode_id},
+        {"panel_name": "heldout-native_customer-S0", "simulation_id": record.episode_id},
     )
     _write_json(
         episode_dir / "native-simulation.json",
@@ -182,72 +170,41 @@ def _write_pilot_heldout_fixture(root: Path) -> Path:
             "messages": [{"role": "user", "content": "HIDDEN_H_TRAJECTORY_SENTINEL"}],
         },
     )
-    matrix = build_crossplay_matrix(
-        [record],
-        [],
-        customer_strategies=[customer],
-        service_strategies=[service],
-        task_ids=[record.task_id],
-        seeds=[record.seed],
-    )
-    _write_json(run_dir / "crossplay-matrix.json", matrix.to_dict())
     return run_dir
 
 
-def _write_completed_pilot_fixture(root: Path) -> Path:
-    run_dir = _write_pilot_heldout_fixture(root)
-    manifest_path = run_dir / "pilot-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    seed_dir = run_dir / "seed-blocks/seed-12"
-    episode_dir = seed_dir / "episodes/attempt-H"
-    trajectory_path = episode_dir / "native-simulation.json"
-    telemetry_path = episode_dir / "run-telemetry.json"
-    record = json.loads(
-        (episode_dir / "episode-record.json").read_text(encoding="utf-8")
-    )
-    seed_result = {
+def _complete_alternating_heldout_fixture(root: Path) -> Path:
+    run_dir = _write_alternating_heldout_fixture(root)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    _write_json(run_dir / "alternating-result.json", {
         "schema_version": 1,
         "status": "complete",
+        "experiment_id": "alternating fixture",
         "manifest_sha256": manifest["manifest_sha256"],
-        "evolution_seed": 12,
-        "episodes": [record],
-        "provider_budget": {
-            "attempts": 2,
-            "cap": 100,
-            "prompt_tokens": 12,
-            "completion_tokens": 6,
-            "usage_unavailable": 0,
-            "model_usage": [],
-        },
-        "artifacts": [
-            {
-                "path": trajectory_path.relative_to(root).as_posix(),
-                "sha256": hashlib.sha256(trajectory_path.read_bytes()).hexdigest(),
+        "initial_customer": {"text": "initial"},
+        "initial_service": {"text": "initial"},
+        "final_customer": {"text": "adaptive"},
+        "final_service": {"text": "careful"},
+        "generations": [{
+            "generation": 0,
+            "customer_before": {"strategy_id": "c0", "strategy": "base customer"},
+            "customer_after": {"strategy_id": "c1", "strategy": "adaptive customer strategy"},
+            "service_before": {"strategy_id": "s0", "strategy": "base service"},
+            "service_after": {"strategy_id": "s0", "strategy": "base service"},
+            "customer_phase": {
+                "candidates": [],
+                "selection": {"choice": "incumbent", "reason": "Incumbent showed the clearest weakness."},
             },
-            {
-                "path": telemetry_path.relative_to(root).as_posix(),
-                "sha256": hashlib.sha256(telemetry_path.read_bytes()).hexdigest(),
+            "service_phase": {
+                "accepted": False,
+                "proposed_strategy": {"text": "Inspect the order before replying."},
+                "selection": {"improved": False, "reason": "The replay remained unsuccessful."},
+                "clean_panel": {"evaluated": False, "catastrophic_regression": None},
             },
-        ],
-    }
-    seed_result_path = seed_dir / "pilot-seed-result.json"
-    seed_raw = _write_json(seed_result_path, seed_result)
-    root_result = {
-        "schema_version": 1,
-        "status": "complete",
-        "experiment_id": "pilot fixture",
-        "manifest_sha256": manifest["manifest_sha256"],
-        "seed_blocks": [
-            {
-                "evolution_seed": 12,
-                "result_path": seed_result_path.relative_to(root).as_posix(),
-                "result_sha256": hashlib.sha256(seed_raw).hexdigest(),
-                "episode_count": 1,
-                "provider_budget": seed_result["provider_budget"],
-            }
-        ],
-    }
-    _write_json(run_dir / "pilot-result.json", root_result)
+        }],
+        "provider_usage": {"attempts": 2, "cap": None, "prompt_tokens": 10,
+                            "completion_tokens": 5, "usage_unavailable": 0, "model_usage": []},
+    })
     return run_dir
 
 
@@ -385,6 +342,7 @@ def test_episode_console_places_verified_db_change_after_its_tool_call_in_both_m
     trajectory_path = run_dir / "trajectory.json"
     trajectory = json.loads(trajectory_path.read_text(encoding="utf-8"))
     trajectory["messages"][1]["tool_calls"][0]["name"] = "update_order_status"
+    trajectory["messages"][2]["name"] = "update_order_status"
     trajectory["messages"][3] = {
         "role": "assistant",
         "turn_idx": 2,
@@ -399,10 +357,11 @@ def test_episode_console_places_verified_db_change_after_its_tool_call_in_both_m
     trajectory["messages"].extend(
         [
             {
-                "role": "tool",
-                "turn_idx": 2,
-                "id": "call-2",
-                "content": "status=return requested",
+            "role": "tool",
+            "turn_idx": 2,
+            "id": "call-2",
+            "name": "return_delivered_order_items",
+            "content": "status=return requested",
             },
             {"role": "assistant", "turn_idx": 3, "content": "Done."},
         ]
@@ -542,7 +501,7 @@ def test_episode_console_places_verified_db_change_after_its_tool_call_in_both_m
     assert "Actual vs expected" in mismatch_page.text
     assert "Actual: shipped" in mismatch_page.text
     assert "Expected: return requested" in mismatch_page.text
-    assert "does not establish a Service failure" in mismatch_page.text
+    assert "native review to understand the outcome" in mismatch_page.text
 
 
 def test_missing_and_malformed_runs_fail_closed_with_friendly_pages(tmp_path: Path):
@@ -571,79 +530,54 @@ def test_missing_and_malformed_runs_fail_closed_with_friendly_pages(tmp_path: Pa
     assert "Traceback" not in malformed.text
 
 
-def test_heldout_is_not_rendered_in_pages_raw_manifest_or_crossplay(tmp_path: Path):
+def test_heldout_is_sealed_from_current_console_until_run_completion(tmp_path: Path):
     project = tmp_path / "project"
-    run_dir = _write_pilot_heldout_fixture(project)
-    manifest_path = run_dir / "pilot-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["task_semantic_review"] = {
-        "reviewer_id": "reviewer-1",
-        "reviewed_at": "2026-09-29T00:00:00Z",
-        "task_reviews": [
-            {"task_id": "H_SECRET_TASK", "rationale": "H_REVIEW_SENTINEL"}
-        ],
-        "pairwise_reviews": [
-            {
-                "left_task_id": "H_SECRET_TASK",
-                "right_task_id": "E",
-                "rationale": "H_PAIR_SENTINEL",
-            }
-        ],
-    }
-    manifest["task_semantic_review_sha256"] = "f" * 64
-    manifest["manifest_sha256"] = sha256_json(
-        {k: v for k, v in manifest.items() if k != "manifest_sha256"}
-    )
-    _write_json(manifest_path, manifest)
+    run_dir = _write_alternating_heldout_fixture(project)
     client = TestClient(
         create_app(project_root=project, runs_root=project / "experiments/runs")
     )
-    response = client.get("/runs/pilot-fixture")
+    response = client.get("/runs/alternating-fixture")
     assert response.status_code == 200
     assert "Heldout panel sealed" in response.text
     assert "H_SECRET_TASK" not in response.text
     assert "HIDDEN_H_TRAJECTORY_SENTINEL" not in response.text
     assert "heldout-episode-secret" not in response.text
-    assert "H_REVIEW_SENTINEL" not in response.text
-    assert "H_PAIR_SENTINEL" not in response.text
     assert (
         "H_SECRET_TASK"
         not in response.text.split('id="command-index">', 1)[-1].split("</script>", 1)[
             0
         ]
     )
-    assert client.get("/runs/pilot-fixture/heldout").status_code == 200
-    review = client.get("/runs/pilot-fixture/task-review")
-    assert review.status_code == 200 and "H_SECRET_TASK" not in review.text
-    assert "H_REVIEW_SENTINEL" not in review.text
+    assert client.get("/runs/alternating-fixture/heldout").status_code == 200
     assert (
-        client.get("/runs/pilot-fixture/episodes/heldout-episode-secret").status_code
+        client.get("/runs/alternating-fixture/episodes/heldout-episode-secret").status_code
         == 404
     )
-    events = client.get("/runs/pilot-fixture/events.jsonl").text
+    assert client.get("/runs/alternating-fixture/task-review").status_code == 404
+    assert client.get("/runs/alternating-fixture/cross-play").status_code == 404
+    events = client.get("/runs/alternating-fixture/events.jsonl").text
     assert "H_SECRET_TASK" not in events
     assert "HIDDEN_H_TRAJECTORY_SENTINEL" not in events
     assert (run_dir / "events.jsonl").exists()
-    crossplay = client.get("/runs/pilot-fixture/cross-play")
-    assert crossplay.status_code == 200
-    assert "H_SECRET_TASK" not in crossplay.text
-    run = client.app.state.reader.get_run("pilot-fixture")
+    run = client.app.state.reader.get_run("alternating-fixture")
     assert run["result"] is None
     assert run["raw_artifacts"]["result"] is None
 
 
-def test_heldout_can_only_be_revealed_after_verified_complete_root_index(
+def test_heldout_is_revealed_only_after_complete_alternating_result(
     tmp_path: Path,
 ):
     project = tmp_path / "project"
-    _write_completed_pilot_fixture(project)
+    _complete_alternating_heldout_fixture(project)
     client = TestClient(
         create_app(project_root=project, runs_root=project / "experiments/runs")
     )
-    response = client.get("/runs/pilot-fixture")
+    response = client.get("/runs/alternating-fixture")
     assert response.status_code == 200
     assert "H_SECRET_TASK" in response.text
-    episode_page = client.get("/runs/pilot-fixture/episodes/heldout-episode-secret")
+    assert "adaptive customer strategy" in response.text
+    assert "Inspect the order before replying." in response.text
+    episode_page = client.get("/runs/alternating-fixture/episodes/heldout-episode-secret")
     assert episode_page.status_code == 200
     assert "H_SECRET_TASK" in episode_page.text
     assert "HIDDEN_H_TRAJECTORY_SENTINEL" in episode_page.text
@@ -668,12 +602,24 @@ def test_event_journal_is_derived_append_only_and_resumable(tmp_path: Path):
     }
 
 
-def test_view_models_do_not_conflate_failure_gate_or_unavailable_cost():
-    assert failure_status({"verified": True})["label"] == "已验证的 Service 失败"
-    assert failure_status({"provisional": True})["label"] == "尚未验证，不计入 fitness"
-    assert gate_status({"accepted": True})["label"] == "已接受"
-    assert gate_status({"accepted": False})["label"] == "已拒绝"
-    assert gate_status({"inconclusive": True, "accepted": False})["label"] == "无法判断"
+def test_view_models_show_alternating_selection_and_open_service_proposal():
+    view = generation_view({
+        "generation": 0,
+        "customer_before": {"strategy_id": "c0", "strategy": "old customer"},
+        "customer_after": {"strategy_id": "c1", "strategy": "new customer"},
+        "service_before": {"strategy_id": "s0", "strategy": "old service"},
+        "service_after": {"strategy_id": "s0", "strategy": "old service"},
+        "customer_phase": {"selection": {"choice": 0, "reason": "More revealing trajectory."}},
+        "service_phase": {
+            "accepted": False,
+            "proposed_strategy": {"text": "A natural-language Service proposal."},
+            "selection": {"improved": False, "reason": "Same native outcome."},
+        },
+    })
+    assert view["customer_evolved"] is True
+    assert view["service_accepted"] is False
+    assert "Same native outcome" in view["service_reason"]
+    assert view["proposed_service_text"] == "A natural-language Service proposal."
     summary = budget_view(
         {
             "attempts": 2,
@@ -699,7 +645,7 @@ def test_episode_filters_inspector_and_artifact_index_are_read_only(tmp_path: Pa
     client = TestClient(
         create_app(project_root=project, runs_root=project / "experiments/runs")
     )
-    response = client.get("/runs/fixture/episodes?task=73&failure=none")
+    response = client.get("/runs/fixture/episodes?task=73")
     assert response.status_code == 200
     assert "episode-73" in response.text
     assert "data-inspector-target" in response.text
@@ -762,73 +708,22 @@ def test_run_comparison_requires_known_matching_frozen_conditions(tmp_path: Path
     assert "Native task success" in matched.text
 
 
-def test_failure_candidate_route_only_accepts_provisional_episode(tmp_path: Path):
-    project = tmp_path / "project"
-    _write_phase0_fixture(project, secret=False)
-    client = TestClient(
-        create_app(project_root=project, runs_root=project / "experiments/runs")
-    )
-    assert client.get("/runs/fixture/failures/candidate-episode-73").status_code == 404
-
-
-def test_crossplay_uses_neutral_magnitude_scale_and_metric_specific_denominators():
-    cell = {
-        "customer_strategy_id": "c",
-        "service_strategy_id": "s",
-        "native_success_rate": 0.9,
-        "verified_failure_rate": 0.9,
-        "successful_episodes": 9,
-        "valid_episodes": 10,
-        "verified_failure_episodes": 3,
-        "strategy_adherent_episodes": 4,
-    }
-    success = _crossplay_cells({"cells": [cell]}, "native_success_rate")[0]
-    failure = _crossplay_cells({"cells": [cell]}, "verified_failure_rate")[0]
-    assert success["style"] == failure["style"] == "high"
-    assert (success["metric_numerator"], success["metric_denominator"]) == (9, 10)
-    assert (failure["metric_numerator"], failure["metric_denominator"]) == (3, 4)
-    assert (
-        _crossplay_cells(
-            {"cells": [{**cell, "verified_failure_rate": None}]},
-            "verified_failure_rate",
-        )[0]["style"]
-        == "unknown"
-    )
-
-
-def test_strategy_diff_is_display_only_and_marks_changed_fields():
+def test_strategy_diff_is_display_only_and_marks_open_text_changes():
     diff = strategy_diff_rows(
-        {
-            "disclosure": "minimal_on_request",
-            "request_order": "scenario_order",
-            "challenge_style": "none",
-            "challenge_budget": 0,
-        },
-        {
-            "disclosure": "related_on_request",
-            "request_order": "scenario_order",
-            "challenge_style": "ask_reason",
-            "challenge_budget": 1,
-        },
+        {"text": "Ask one clear question."},
+        {"text": "Clarify the request, then ask one clear question."},
         "customer",
     )
     assert diff["available"] is True
-    assert {row["field"] for row in diff["rows"] if row["changed"]} == {
-        "信息披露",
-        "挑战方式",
-        "挑战次数",
-    }
+    assert len(diff["rows"]) == 1
+    assert diff["rows"][0]["changed"] is True
 
 
-def test_v2_customer_strategy_view_explains_all_interaction_axes():
-    incumbent = CustomerStrategy.v2_baseline().to_dict()
-    candidate = {**incumbent, "request_decomposition": "one_by_one"}
-    view = customer_strategy_view(candidate)
-    assert view["version"] == 2
-    assert view["request_decomposition"] == "独立请求逐个提出"
-    diff = strategy_diff_rows(incumbent, candidate, "customer")
-    assert len(diff["rows"]) == 7
-    assert [row["field"] for row in diff["rows"] if row["changed"]] == ["请求拆分"]
+def test_open_text_customer_strategy_is_displayed_verbatim():
+    view = customer_strategy_view({"text": "Use the scenario and adapt to the service."})
+    assert view["available"] is True
+    assert view["version"] == "open-text"
+    assert view["text"] == "Use the scenario and adapt to the service."
 
 
 def test_run_manager_refuses_provider_off_and_binds_launch_inputs_without_spawning(

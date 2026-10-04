@@ -5,8 +5,6 @@
 <form class="panel filter-bar" method="get" action="/runs/{{ run.run_id|urlencode }}/episodes" aria-label="Episode filters">
  <div class="form-grid">
   {% for key,label in [('generation','Generation'),('panel','Panel'),('customer','Customer'),('service','Service'),('task','Task'),('seed','Seed')] %}<label>{{ label }}<select name="{{ key }}"><option value="">All</option>{% for option in filter_options[key] %}<option value="{{ option }}" {% if filters[key] == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>{% endfor %}
-  <label>Failure status<select name="failure"><option value="">All</option><option value="verified" {% if filters.failure == 'verified' %}selected{% endif %}>Verified</option><option value="provisional" {% if filters.failure == 'provisional' %}selected{% endif %}>Provisional</option><option value="none" {% if filters.failure == 'none' %}selected{% endif %}>No attributed failure</option></select></label>
-  <label>Strategy adherence<select name="adherence"><option value="">All</option><option value="yes" {% if filters.adherence == 'yes' %}selected{% endif %}>Adherent</option><option value="no" {% if filters.adherence == 'no' %}selected{% endif %}>Not adherent</option><option value="unknown" {% if filters.adherence == 'unknown' %}selected{% endif %}>Unavailable</option></select></label>
   <div class="page-actions"><button class="button" type="submit">Apply filters</button><a class="button button-quiet" href="/runs/{{ run.run_id|urlencode }}/episodes">Clear</a></div>
  </div>
 </form>
@@ -17,7 +15,7 @@
     <div class="episode-list-link" {% if request.url.path.endswith(episode.episode_id) %}aria-current="page"{% endif %}>
       <a href="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}"><strong>{{ episode.episode_id }}</strong></a>
       <span>{{ episode.panel_name or 'panel unavailable' }} · Task {{ episode.task_id }}</span>
-      <div class="annotation-row">{% if episode.verified_failure %}<span class="badge badge-verified">Verified</span>{% elif episode.policy_violation %}<span class="badge badge-provisional">Provisional</span>{% else %}<span class="badge badge-neutral">No attribution</span>{% endif %}</div>
+      <div class="annotation-row"><span class="badge badge-neutral">{{ 'Success' if episode.task_success else 'Not successful' if episode.task_success is sameas false else 'Outcome unavailable' }}</span><span class="badge badge-neutral">{{ episode.tool_calls }} tool calls</span></div>
       <button class="trace-inspect" type="button" data-inspector-target data-inspect-url="/runs/{{ run.run_id|urlencode }}/episodes/{{ episode.episode_id|urlencode }}" data-inspect-title="Episode {{ episode.episode_id }}">Inspect context</button>
     </div>
    </div>{% else %}<div class="empty-state">No episodes match these filters.</div>{% endfor %}

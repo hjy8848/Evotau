@@ -1,0 +1,213 @@
+"""Small run manifest for the alternating Customer/Service evolution method."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from .tau_provenance import (
+    DEFAULT_ROLE_MODEL_ARGS,
+    EVOLUTION_ROLE_NAMES,
+    REQUIRED_SOURCE_PATHS,
+    TAU2_PACKAGE_VERSION,
+    TAU_BENCH_COMMIT,
+    TAU_BENCH_REPOSITORY,
+    _freeze_role_models,
+    _relative_path,
+    _role_model_args_payload,
+    capture_code_provenance,
+    freeze_role_model_args,
+    sha256_json,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AlternatingManifest:
+    """Only the frozen inputs needed to reproduce an alternating run."""
+
+    experiment_id: str
+    upstream_repository: str
+    upstream_commit: str
+    upstream_package_version: str
+    evotau_git_commit: str | None
+    evotau_working_tree_clean: bool | None
+    evotau_source_sha256: str
+    evolution_task_ids: tuple[str, ...]
+    validation_task_ids: tuple[str, ...]
+    heldout_task_ids: tuple[str, ...]
+    excluded_task_ids: tuple[str, ...]
+    seed: int
+    generations: int
+    customer_candidates: int
+    clean_panel_size: int
+    max_steps: int
+    request_budget_cap: int | None
+    real_provider_enabled: bool
+    role_models: tuple[tuple[str, str | None], ...]
+    role_model_args: tuple[tuple[str, tuple[tuple[str, float | int | str], ...]], ...]
+    source_blob_sha1: tuple[tuple[str, str], ...]
+    initial_customer_strategy: str
+    initial_service_strategy: str
+    output_path: str
+    checkpoint_path: str
+    domain: str = "retail"
+    split_name: str = "train"
+    heldout_split_name: str = "test"
+    enforce_communication_protocol: bool = False
+    evaluation_type: str = "all"
+
+    def __post_init__(self) -> None:
+        if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
+            TAU_BENCH_REPOSITORY, TAU_BENCH_COMMIT, TAU2_PACKAGE_VERSION,
+        ):
+            raise ValueError("alternating runs require the pinned tau-bench release")
+        if not self.experiment_id.strip() or self.domain != "retail":
+            raise ValueError("alternating runs require a named Retail experiment")
+        panels = (self.evolution_task_ids, self.validation_task_ids, self.heldout_task_ids)
+        if any(not panel or len(set(panel)) != len(panel) for panel in panels):
+            raise ValueError("E, V, and H must each contain unique task IDs")
+        flat = tuple(task_id for panel in panels for task_id in panel)
+        if any(not task_id.strip() for task_id in flat) or len(set(flat)) != len(flat):
+            raise ValueError("E, V, and H task panels must be non-empty and disjoint")
+        if set(flat) & set(self.excluded_task_ids):
+            raise ValueError("excluded tasks cannot appear in E, V, or H")
+        if self.split_name != "train" or self.heldout_split_name != "test":
+            raise ValueError("E/V use τ-bench train tasks and H uses τ-bench test tasks")
+        if self.seed < 0 or self.generations < 1 or self.customer_candidates < 1:
+            raise ValueError("seed, generation count, and candidate count must be positive")
+        if not 1 <= self.clean_panel_size <= len(self.validation_task_ids):
+            raise ValueError("clean_panel_size must select tasks from the V panel")
+        if self.max_steps < 1:
+            raise ValueError("max_steps must be positive")
+        if self.request_budget_cap is not None and self.request_budget_cap < 1:
+            raise ValueError("request budget cap must be positive or null")
+        if not isinstance(self.initial_customer_strategy, str) or not isinstance(
+            self.initial_service_strategy, str,
+        ):
+            raise TypeError("initial strategies must be natural-language strings")
+        if type(self.enforce_communication_protocol) is not bool:
+            raise ValueError("communication protocol mode must be boolean")
+        models = dict(self.role_models)
+        if tuple(name for name, _ in self.role_models) != EVOLUTION_ROLE_NAMES:
+            raise ValueError("models must freeze agent, customer, reviewer, evaluator, and evolver")
+        if self.real_provider_enabled and any(not models[name] for name in EVOLUTION_ROLE_NAMES):
+            raise ValueError("provider-enabled runs require a model for every τ-bench role")
+        blobs = dict(self.source_blob_sha1)
+        missing = REQUIRED_SOURCE_PATHS - set(blobs)
+        if missing:
+            raise ValueError(f"missing pinned τ-bench source fingerprints: {sorted(missing)}")
+        _relative_path(self.output_path, "output_path")
+        _relative_path(self.checkpoint_path, "checkpoint_path")
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any]) -> AlternatingManifest:
+        experiment = raw["experiment"]
+        if experiment.get("phase") != "alternating-self-evolution":
+            raise ValueError("AlternatingManifest requires phase='alternating-self-evolution'")
+        upstream = experiment["upstream"]
+        selection = experiment["task_selection"]
+        if selection.get("source_split") != "train":
+            raise ValueError("E/V tasks must use the official τ-bench train split")
+        if not selection.get("heldout"):
+            raise ValueError("alternating runs require a sealed H panel from the τ-bench test split")
+        models = experiment.get("models", {})
+        role_models = _freeze_role_models(models, roles=EVOLUTION_ROLE_NAMES)
+        role_args = freeze_role_model_args(
+            experiment.get("model_args", DEFAULT_ROLE_MODEL_ARGS),
+            roles=EVOLUTION_ROLE_NAMES,
+        )
+        enabled = experiment.get("real_provider_enabled", False)
+        if type(enabled) is not bool:
+            raise ValueError("real_provider_enabled must be boolean")
+        cap = experiment.get("request_budget_cap")
+        code = capture_code_provenance()
+        return cls(
+            experiment_id=str(experiment["id"]),
+            upstream_repository=str(upstream["repository"]),
+            upstream_commit=str(upstream["commit"]),
+            upstream_package_version=str(upstream["package_version"]),
+            evotau_git_commit=code.git_commit,
+            evotau_working_tree_clean=code.working_tree_clean,
+            evotau_source_sha256=code.source_sha256,
+            evolution_task_ids=tuple(str(item) for item in selection.get("evolution", ())),
+            validation_task_ids=tuple(str(item) for item in selection.get("validation", ())),
+            heldout_task_ids=tuple(str(item) for item in selection.get("heldout", ())),
+            excluded_task_ids=tuple(str(item) for item in selection.get("excluded", ())),
+            seed=int(experiment["seed"]),
+            generations=int(experiment["generations"]),
+            customer_candidates=int(experiment.get("customer_candidates", 2)),
+            clean_panel_size=int(experiment.get("clean_panel_size", 1)),
+            max_steps=int(experiment.get("max_steps", 64)),
+            request_budget_cap=None if cap is None else int(cap),
+            real_provider_enabled=enabled,
+            role_models=role_models,
+            role_model_args=role_args,
+            source_blob_sha1=tuple(sorted(
+                (str(path), str(digest).lower())
+                for path, digest in experiment["source_blob_sha1"].items()
+            )),
+            initial_customer_strategy=str(experiment.get("customer_strategy") or ""),
+            initial_service_strategy=str(experiment.get("service_strategy") or ""),
+            output_path=_relative_path(str(experiment["output_path"]), "output_path"),
+            checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
+            domain=str(experiment.get("domain", "retail")),
+            split_name=str(selection["source_split"]),
+            heldout_split_name=str(selection.get("heldout_split", "test")),
+            enforce_communication_protocol=experiment.get(
+                "enforce_communication_protocol", False,
+            ),
+        )
+
+    @property
+    def role_model_args_dict(self) -> dict[str, dict[str, float | int | str]]:
+        return _role_model_args_payload(self.role_model_args)
+
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self.to_payload())
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "experiment_id": self.experiment_id,
+            "phase": "alternating-self-evolution",
+            "upstream": {
+                "repository": self.upstream_repository,
+                "commit": self.upstream_commit,
+                "package_version": self.upstream_package_version,
+            },
+            "evotau": {
+                "git_commit": self.evotau_git_commit,
+                "working_tree_clean": self.evotau_working_tree_clean,
+                "source_sha256": self.evotau_source_sha256,
+            },
+            "domain": self.domain,
+            "task_panels": {
+                "E": list(self.evolution_task_ids),
+                "V": list(self.validation_task_ids),
+                "H": list(self.heldout_task_ids),
+                "excluded": list(self.excluded_task_ids),
+                "split": self.split_name,
+                "heldout_split": self.heldout_split_name,
+            },
+            "seed": self.seed,
+            "generations": self.generations,
+            "customer_candidates": self.customer_candidates,
+            "clean_panel_size": self.clean_panel_size,
+            "max_steps": self.max_steps,
+            "request_budget_cap": self.request_budget_cap,
+            "real_provider_enabled": self.real_provider_enabled,
+            "role_models": dict(self.role_models),
+            "role_model_args": self.role_model_args_dict,
+            "source_blob_sha1": dict(self.source_blob_sha1),
+            "initial_customer_strategy_sha256": sha256_json(self.initial_customer_strategy),
+            "initial_service_strategy_sha256": sha256_json(self.initial_service_strategy),
+            "communication_enforcement": self.enforce_communication_protocol,
+            "output_path": self.output_path,
+            "checkpoint_path": self.checkpoint_path,
+        }
+
+    def to_document(self) -> dict[str, Any]:
+        payload = self.to_payload()
+        payload["manifest_sha256"] = self.sha256
+        return payload
