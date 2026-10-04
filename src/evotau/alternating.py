@@ -293,7 +293,7 @@ def run_alternating_evolution(
         # Service runs, including the small τ-bench native-Customer clean panel.
         service_context = {
             "generation": generation,
-            "task_interactions": _context_episodes(selected_runs, runner, tasks),
+            "task_interactions": _service_context_episodes(selected_runs, runner, tasks),
             "customer_strategy": customer.text,
             "current_service_strategy": service.text,
             "service_policy": domain_policy,
@@ -330,8 +330,8 @@ def run_alternating_evolution(
                 "service_policy": domain_policy,
                 "old_service_strategy": service.text,
                 "proposed_service_strategy": proposed_service.text,
-                "old_service_episodes": _context_episodes(selected_runs, runner, tasks),
-                "proposed_service_episodes": _context_episodes(target_runs, runner, tasks),
+                "old_service_episodes": _service_context_episodes(selected_runs, runner, tasks),
+                "proposed_service_episodes": _service_context_episodes(target_runs, runner, tasks),
             }
             service_decision = _provider_call(
                 request_budget, service_judge, service_selection_context,
@@ -569,12 +569,36 @@ def _context_episodes(
     runner: EpisodeRunner,
     tasks: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
+    """Build Customer-side examples, including the Customer's source scenario."""
+
+    return _project_context_episodes(episodes, runner, tasks, include_user_scenario=True)
+
+
+def _service_context_episodes(
+    episodes: Sequence[EpisodeRecord],
+    runner: EpisodeRunner,
+    tasks: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Build Service-side examples from observed interactions, never hidden scenarios."""
+
+    return _project_context_episodes(episodes, runner, tasks, include_user_scenario=False)
+
+
+def _project_context_episodes(
+    episodes: Sequence[EpisodeRecord],
+    runner: EpisodeRunner,
+    tasks: Mapping[str, Any],
+    *,
+    include_user_scenario: bool,
+) -> list[dict[str, Any]]:
     loader = getattr(runner, "load_trajectory", None)
     rows = []
     for episode in episodes:
         trajectory = None if loader is None else loader(episode)
         rows.append({
-            "task": _task_context(tasks[episode.task_id]),
+            "task": _task_context(
+                tasks[episode.task_id], include_user_scenario=include_user_scenario,
+            ),
             "customer_strategy_id": episode.customer_strategy_id,
             "service_strategy_id": episode.service_strategy_id,
             "seed": episode.seed,
@@ -591,15 +615,17 @@ def _context_episodes(
     return rows
 
 
-def _task_context(task: Any) -> dict[str, Any]:
-    """Pass task intent and scenario, never evaluation criteria or reference actions."""
+def _task_context(task: Any, *, include_user_scenario: bool) -> dict[str, Any]:
+    """Project public task metadata, with the source scenario only for Customer-side use."""
 
-    return {
+    context = {
         "task_id": str(getattr(task, "id", "")),
         "description": str(getattr(task, "description", "")),
-        "user_scenario": str(getattr(task, "user_scenario", "")),
         "user_tools": list(getattr(task, "user_tools", ()) or ()),
     }
+    if include_user_scenario:
+        context["user_scenario"] = str(getattr(task, "user_scenario", ""))
+    return context
 
 
 def _trajectory_context(trajectory: Mapping[str, Any] | None) -> dict[str, Any]:

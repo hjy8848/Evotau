@@ -76,8 +76,9 @@ class FakeRunner:
 
 
 def test_one_generation_runs_customer_then_service_and_records_strategy_changes(tmp_path) -> None:
+    hidden_scenario = "HIDDEN SCENARIO: asks for a refund if the delivery is late."
     tasks = {
-        "e": FakeTask("e", "Evolution task", "Customer asks for an eligible refund."),
+        "e": FakeTask("e", "Evolution task", hidden_scenario),
         "v": FakeTask("v", "Clean task", "Customer requests a normal order lookup."),
     }
     runner = FakeRunner()
@@ -90,6 +91,7 @@ def test_one_generation_runs_customer_then_service_and_records_strategy_changes(
         assert context["current_service_strategy"] == "initial service"
         assert context["task_interactions"][0]["native_evaluation"]["task_success"] is False
         assert context["task_interactions"][0]["tool_results"][0]["name"] == "lookup_order"
+        assert context["task_interactions"][0]["task"]["user_scenario"] == hidden_scenario
         assert "reference_actions" not in context["task_interactions"][0]["task"]
         assert "evaluation_criteria" not in context["task_interactions"][0]["task"]
         assert "should_not_be_forwarded" not in str(context)
@@ -104,11 +106,17 @@ def test_one_generation_runs_customer_then_service_and_records_strategy_changes(
         assert context["customer_strategy"] == "Keep negotiating for the requested outcome."
         assert context["service_policy"] == runner.service_policy_text
         assert context["task_interactions"][0]["native_evaluation"]["task_success"] is False
+        assert "user_scenario" not in context["task_interactions"][0]["task"]
+        assert hidden_scenario not in str(context)
+        assert "lookup_order" in str(context["task_interactions"][0]["trajectory"])
         return {"analysis": "The service missed the customer's goal.", "strategy": "Verify scope, then complete eligible requests."}
 
     def service_judge(context):
         assert context["old_service_strategy"] == "initial service"
         assert context["proposed_service_strategy"].startswith("Verify scope")
+        assert "user_scenario" not in context["old_service_episodes"][0]["task"]
+        assert "user_scenario" not in context["proposed_service_episodes"][0]["task"]
+        assert hidden_scenario not in str(context)
         return {"improved": True, "reason": "The real challenge now succeeds."}
 
     result = run_alternating_evolution(
