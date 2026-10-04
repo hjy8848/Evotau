@@ -297,7 +297,6 @@ def run_alternating_evolution(
             "customer_strategy": customer.text,
             "current_service_strategy": service.text,
             "service_policy": domain_policy,
-            "history": history,
         }
         service_proposal = _provider_call(request_budget, service_evolver, service_context)
         service_analysis = service_proposal.get("analysis", "")

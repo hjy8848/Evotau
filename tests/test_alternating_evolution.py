@@ -164,6 +164,7 @@ def test_two_generations_continue_from_the_previous_customer_service_pair() -> N
     runner = FakeRunner()
     proposal_inputs = []
     service_inputs = []
+    customer_judge_reason = "Hidden scenario says the customer ultimately wants a refund."
 
     def customer_evolver(context, _count):
         proposal_inputs.append(context)
@@ -185,14 +186,17 @@ def test_two_generations_continue_from_the_previous_customer_service_pair() -> N
             service_inputs.append(context)
             or {"analysis": "observed", "strategy": f"service {context['generation'] + 1}"}
         ),
-        customer_judge=lambda _context: {"choice": 0, "reason": "challenge"},
+        customer_judge=lambda _context: {"choice": 0, "reason": customer_judge_reason},
         service_judge=lambda _context: {"improved": True, "reason": "fixed"},
         domain_policy=runner.service_policy_text,
     )
 
     assert len(result.generations) == 2
     assert proposal_inputs[1]["current_service_strategy"] == "service 1"
+    assert customer_judge_reason in str(proposal_inputs[1]["history"])
     assert service_inputs[1]["customer_strategy"] == "Customer strategy 1"
+    assert "history" not in service_inputs[1]
+    assert customer_judge_reason not in str(service_inputs[1])
     assert result.customer.text == "Customer strategy 1"
     assert result.service.text == "service 2"
 
