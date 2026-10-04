@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from .tau_provenance import (
+    ALTERNATING_REQUIRED_SOURCE_PATHS,
     DEFAULT_ROLE_MODEL_ARGS,
     EVOLUTION_ROLE_NAMES,
-    REQUIRED_SOURCE_PATHS,
     TAU2_PACKAGE_VERSION,
     TAU_BENCH_COMMIT,
     TAU_BENCH_REPOSITORY,
@@ -90,11 +90,11 @@ class AlternatingManifest:
             raise ValueError("communication protocol mode must be boolean")
         models = dict(self.role_models)
         if tuple(name for name, _ in self.role_models) != EVOLUTION_ROLE_NAMES:
-            raise ValueError("models must freeze agent, customer, reviewer, evaluator, and evolver")
+            raise ValueError("models must freeze agent, customer, evaluator, and evolver")
         if self.real_provider_enabled and any(not models[name] for name in EVOLUTION_ROLE_NAMES):
             raise ValueError("provider-enabled runs require a model for every τ-bench role")
         blobs = dict(self.source_blob_sha1)
-        missing = REQUIRED_SOURCE_PATHS - set(blobs)
+        missing = ALTERNATING_REQUIRED_SOURCE_PATHS - set(blobs)
         if missing:
             raise ValueError(f"missing pinned τ-bench source fingerprints: {sorted(missing)}")
         _relative_path(self.output_path, "output_path")
@@ -112,9 +112,19 @@ class AlternatingManifest:
         if not selection.get("heldout"):
             raise ValueError("alternating runs require a sealed H panel from the τ-bench test split")
         models = experiment.get("models", {})
-        role_models = _freeze_role_models(models, roles=EVOLUTION_ROLE_NAMES)
+        if not isinstance(models, Mapping) or not set(EVOLUTION_ROLE_NAMES) <= set(models):
+            raise ValueError("models must include agent, customer, evaluator, and evolver")
+        role_models = _freeze_role_models(
+            {role: models[role] for role in EVOLUTION_ROLE_NAMES},
+            roles=EVOLUTION_ROLE_NAMES,
+        )
+        raw_model_args = experiment.get("model_args", DEFAULT_ROLE_MODEL_ARGS)
+        if not isinstance(raw_model_args, Mapping) or not set(EVOLUTION_ROLE_NAMES) <= set(
+            raw_model_args,
+        ):
+            raise ValueError("model_args must include agent, customer, evaluator, and evolver")
         role_args = freeze_role_model_args(
-            experiment.get("model_args", DEFAULT_ROLE_MODEL_ARGS),
+            {role: raw_model_args[role] for role in EVOLUTION_ROLE_NAMES},
             roles=EVOLUTION_ROLE_NAMES,
         )
         enabled = experiment.get("real_provider_enabled", False)
@@ -146,6 +156,7 @@ class AlternatingManifest:
             source_blob_sha1=tuple(sorted(
                 (str(path), str(digest).lower())
                 for path, digest in experiment["source_blob_sha1"].items()
+                if str(path) in ALTERNATING_REQUIRED_SOURCE_PATHS
             )),
             initial_customer_strategy=str(experiment.get("customer_strategy") or ""),
             initial_service_strategy=str(experiment.get("service_strategy") or ""),

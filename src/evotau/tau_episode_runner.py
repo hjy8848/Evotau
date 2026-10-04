@@ -56,11 +56,11 @@ class TauBenchEpisodeRunner:
         if request_budget.snapshot().cap != manifest.request_budget_cap:
             raise ValueError("request budget cap must match the frozen alternating manifest")
         self.models = dict(manifest.role_models)
-        if set(self.models) != {"agent", "customer", "reviewer", "evaluator", "evolver"} or any(
+        if set(self.models) != {"agent", "customer", "evaluator", "evolver"} or any(
             not self.models[name] for name in self.models
         ):
             raise ValueError(
-                "alternating runs require frozen agent, customer, reviewer, evaluator, and evolver models"
+                "alternating runs require frozen agent, customer, evaluator, and evolver models"
             )
         self.model_args = {role: dict(args) for role, args in manifest.role_model_args}
         experiment = config.get("experiment", {})
@@ -260,10 +260,9 @@ class TauBenchEpisodeRunner:
             simulation = run_with_budget(
                 orchestrator,
                 self.request_budget,
-                reviewer_model=self.models["reviewer"],
-                reviewer_model_args=self.model_args["reviewer"],
                 evaluator_model=self.models["evaluator"],
                 evaluator_model_args=self.model_args["evaluator"],
+                run_reviewer=False,
                 on_simulation=on_simulation,
             )
             simulation_payload = simulation.model_dump(mode="json")
@@ -308,10 +307,7 @@ class TauBenchEpisodeRunner:
                 mixed_text_tool_call_messages=(
                     protocol_observation["mixed_text_tool_call_message_count"]
                 ),
-                raw_review={
-                    "native_review": simulation_payload.get("review"),
-                    "auth_classification": simulation_payload.get("auth_classification"),
-                },
+                raw_review={},
             )
             after = self.request_budget.snapshot()
             exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)

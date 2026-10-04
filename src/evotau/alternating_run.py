@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -70,17 +71,15 @@ def run_from_config(
     providers = LLMAlternatingEvolvers(
         model=models["evolver"],
         model_args=role_args["evolver"],
-        judge_model=models["evaluator"],
-        judge_model_args=role_args["evaluator"],
     )
     run_context = {
-        "schema_version": 1,
+        "schema_version": 2,
         "manifest_sha256": manifest.sha256,
         "config_sha256": sha256_json(config),
         "provider_models": {
             "customer_evolver": models["evolver"],
             "service_evolver": models["evolver"],
-            "selection_judge": models["evaluator"],
+            "task_evaluator": models["evaluator"],
         },
         "task_panels": {
             "E": list(manifest.evolution_task_ids),
@@ -88,6 +87,7 @@ def run_from_config(
             "H": list(manifest.heldout_task_ids),
         },
         "heldout_policy": "H task content is loaded only after evolution and fresh challenge generation.",
+        "reviewer_enabled": False,
     }
     _write_or_verify_context(output_directory / "run-context.json", run_context)
 
@@ -106,8 +106,6 @@ def run_from_config(
         runner=runner,
         customer_evolver=providers.customer_candidates,
         service_evolver=providers.service_candidate,
-        customer_judge=providers.choose_customer,
-        service_judge=providers.service_is_better,
         domain_policy=runner.service_policy_text,
         request_budget=budget,
         output_directory=output_directory,
@@ -121,10 +119,8 @@ def run_from_config(
         evolved,
         providers.customer_candidates,
         tasks=runner.tasks,
-        evolution_task_ids=manifest.evolution_task_ids,
         runner=runner,
         domain_policy=runner.service_policy_text,
-        seed=manifest.seed + manifest.generations + 10_000,
         request_budget=budget,
     )
     heldout_tasks = load_alternating_tasks(manifest, data_dir, include_heldout=True)
@@ -149,8 +145,9 @@ def run_from_config(
         runner=heldout_runner,
         output_path=output_directory / "heldout-endpoint-evaluation.json",
     )
+    api_usage_by_call_name = budget.api_usage_by_call_name()
     final_result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "complete",
         "experiment_id": manifest.experiment_id,
         "manifest_sha256": manifest.sha256,
@@ -163,9 +160,69 @@ def run_from_config(
         "fresh_adaptive_customer": fresh_customer.to_dict(),
         "heldout_endpoint_evaluation": heldout_evaluation,
         "provider_usage": budget.snapshot().to_dict(),
+        "api_usage_by_call_name": api_usage_by_call_name,
+        "api_usage_by_role": _api_usage_by_role(api_usage_by_call_name),
     }
     _write_json_atomic(output_directory / "alternating-result.json", final_result)
     return output_directory, final_result
+
+
+def _api_usage_by_role(
+    usage_by_call_name: Mapping[str, Mapping[str, int | float]],
+) -> dict[str, dict[str, Any]]:
+    call_names_by_role = {
+        "customer": ("user_simulator_response",),
+        "service": ("agent_response",),
+        "evaluator": ("nl_assertions_eval",),
+        "customer_evolver": ("evotau_customer_evolver",),
+        "service_evolver": ("evotau_service_evolver",),
+        "reviewer": (
+            "llm_judge_review", "llm_judge_streaming_review",
+            "classify_authentication", "llm_judge_hallucination_check",
+        ),
+        "customer_judge": ("evotau_customer_selection",),
+        "service_judge": ("evotau_service_selection",),
+    }
+    roles = {}
+    assigned = set()
+    for role, call_names in call_names_by_role.items():
+        selected = {
+            name: dict(usage_by_call_name[name])
+            for name in call_names if name in usage_by_call_name
+        }
+        assigned.update(selected)
+        roles[role] = _aggregate_call_usage(selected)
+    other = {
+        name: dict(usage)
+        for name, usage in usage_by_call_name.items() if name not in assigned
+    }
+    roles["other"] = _aggregate_call_usage(other)
+    for role, call_names in call_names_by_role.items():
+        roles[role]["by_call_name"] = {
+            name: dict(usage_by_call_name[name])
+            for name in call_names if name in usage_by_call_name
+        }
+    roles["other"]["by_call_name"] = other
+    return roles
+
+
+def _aggregate_call_usage(
+    calls: Mapping[str, Mapping[str, int | float]],
+) -> dict[str, int | float]:
+    integer_fields = (
+        "calls", "successes", "failures", "prompt_tokens", "completion_tokens",
+        "usage_responses", "usage_unavailable",
+    )
+    totals: dict[str, int | float] = {
+        field: sum(int(item.get(field, 0)) for item in calls.values())
+        for field in integer_fields
+    }
+    elapsed = sum(float(item.get("total_elapsed_seconds", 0.0)) for item in calls.values())
+    totals["total_elapsed_seconds"] = round(elapsed, 6)
+    totals["average_elapsed_seconds"] = round(
+        elapsed / max(int(totals["calls"]), 1), 6,
+    )
+    return totals
 
 
 def load_alternating_tasks(

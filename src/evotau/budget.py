@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass
 from threading import Lock, RLock
-from time import sleep
+from time import perf_counter, sleep
 from types import ModuleType
 from typing import Any
 
@@ -196,9 +197,11 @@ class _InstrumentationState:
     llm_utils: Any
     litellm_module: Any
     original_completion: Any
+    generate_bindings: list[tuple[Any, str, Any]]
     original_default_retries: Any
     original_litellm_completion: Any
     guarded_completion: Any
+    guarded_generate: Any
     retry_empty_responses: bool = False
     references: int = 1
 
@@ -245,6 +248,10 @@ class RequestBudget:
         self._usage_context: ContextVar[EpisodeUsageTracker | None] = ContextVar(
             f"evotau_episode_usage_{id(self)}", default=None,
         )
+        self._call_name_context: ContextVar[str | None] = ContextVar(
+            f"evotau_call_name_{id(self)}", default=None,
+        )
+        self._call_usage: dict[str, dict[str, int | float]] = {}
 
     def reserve_episode_dispatch(self) -> ProviderDispatchReservation | None:
         """Reserve one first request so parallel episodes cannot oversubscribe the cap."""
@@ -410,6 +417,61 @@ class RequestBudget:
                 ),
             )
 
+    def api_usage_by_call_name(self) -> dict[str, dict[str, int | float]]:
+        """Return per-native-call_name attempt, token, and latency totals."""
+        with self._lock:
+            return {
+                name: {
+                    **{key: int(value) for key, value in counters.items()
+                       if key not in {"total_elapsed_seconds"}},
+                    "total_elapsed_seconds": round(
+                        float(counters["total_elapsed_seconds"]), 6,
+                    ),
+                    "average_elapsed_seconds": round(
+                        float(counters["total_elapsed_seconds"])
+                        / max(int(counters["calls"]), 1),
+                        6,
+                    ),
+                }
+                for name, counters in sorted(self._call_usage.items())
+            }
+
+    def _record_api_call(
+        self,
+        call_name: str,
+        *,
+        succeeded: bool,
+        response: Any,
+        elapsed_seconds: float,
+    ) -> None:
+        usage = self._field(response, "usage") if succeeded else None
+        prompt_tokens = self._field(usage, "prompt_tokens")
+        completion_tokens = self._field(usage, "completion_tokens")
+        has_usage = (
+            isinstance(prompt_tokens, int) and prompt_tokens >= 0
+            and isinstance(completion_tokens, int) and completion_tokens >= 0
+        )
+        with self._lock:
+            row = self._call_usage.setdefault(call_name, {
+                "calls": 0,
+                "successes": 0,
+                "failures": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "usage_responses": 0,
+                "usage_unavailable": 0,
+                "total_elapsed_seconds": 0.0,
+            })
+            row["calls"] += 1
+            row["successes" if succeeded else "failures"] += 1
+            row["total_elapsed_seconds"] += max(0.0, elapsed_seconds)
+            if has_usage:
+                row["prompt_tokens"] += prompt_tokens
+                row["completion_tokens"] += completion_tokens
+                row["usage_responses"] += 1
+            else:
+                row["usage_unavailable"] += 1
+
     def restore_usage(self, snapshot: BudgetSnapshot) -> None:
         """Restore cumulative accounting before a resumed run dispatches work."""
         if snapshot.cap != self._cap:
@@ -548,6 +610,7 @@ class RequestBudget:
                 state.references += 1
             else:
                 original_completion = llm_utils.completion
+                original_generate = getattr(llm_utils, "generate", None)
                 original_default_retries = llm_utils.DEFAULT_MAX_RETRIES
                 litellm_module = getattr(llm_utils, "litellm", None)
                 original_litellm_completion = getattr(litellm_module, "completion", None)
@@ -560,15 +623,29 @@ class RequestBudget:
                     if litellm_module is not None:
                         kwargs["num_retries"] = 0
                     model_id = None if model is None else str(model)
+                    call_name = self._call_name_context.get() or "unknown"
                     empty_attempt = 0
                     while True:
                         self._begin(model_id)
+                        started = perf_counter()
                         try:
                             result = original_completion(*args, **kwargs)
                         except BaseException:
                             self._finish(succeeded=False, model=model_id)
+                            self._record_api_call(
+                                call_name,
+                                succeeded=False,
+                                response=None,
+                                elapsed_seconds=perf_counter() - started,
+                            )
                             raise
                         self._finish(succeeded=True, response=result, model=model_id)
+                        self._record_api_call(
+                            call_name,
+                            succeeded=True,
+                            response=result,
+                            elapsed_seconds=perf_counter() - started,
+                        )
                         if not retry_empty_responses or not _is_empty_completion(result):
                             return result
                         empty_attempt += 1
@@ -580,14 +657,45 @@ class RequestBudget:
                         )
                         sleep(1.0)
 
+                def guarded_generate(*args: Any, **kwargs: Any) -> Any:
+                    call_name = kwargs.get("call_name")
+                    if call_name is None and len(args) > 4:
+                        call_name = args[4]
+                    token = self._call_name_context.set(
+                        str(call_name) if call_name else "unknown",
+                    )
+                    try:
+                        return original_generate(*args, **kwargs)
+                    finally:
+                        self._call_name_context.reset(token)
+
+                generate_bindings = []
+                if callable(original_generate):
+                    modules = [llm_utils]
+                    modules.extend(
+                        module for module in tuple(sys.modules.values())
+                        if module is not None
+                        and getattr(module, "__name__", "").startswith("tau2.")
+                    )
+                    seen_modules = set()
+                    for module in modules:
+                        if id(module) in seen_modules:
+                            continue
+                        seen_modules.add(id(module))
+                        if getattr(module, "generate", None) is original_generate:
+                            generate_bindings.append((module, "generate", original_generate))
+                            module.generate = guarded_generate
+
                 state = _InstrumentationState(
                     budget=self,
                     llm_utils=llm_utils,
                     litellm_module=litellm_module,
                     original_completion=original_completion,
+                    generate_bindings=generate_bindings,
                     original_default_retries=original_default_retries,
                     original_litellm_completion=original_litellm_completion,
                     guarded_completion=guarded_completion,
+                    guarded_generate=(guarded_generate if generate_bindings else None),
                     retry_empty_responses=retry_empty_responses,
                 )
                 _INSTRUMENTATION_STATES[module_key] = state
@@ -606,6 +714,9 @@ class RequestBudget:
                 if state.references == 0:
                     if llm_utils.completion is state.guarded_completion:
                         llm_utils.completion = state.original_completion
+                    for module, name, original in reversed(state.generate_bindings):
+                        if getattr(module, name, None) is state.guarded_generate:
+                            setattr(module, name, original)
                     llm_utils.DEFAULT_MAX_RETRIES = state.original_default_retries
                     if (state.litellm_module is not None
                             and callable(state.original_litellm_completion)

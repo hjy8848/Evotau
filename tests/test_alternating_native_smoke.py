@@ -34,6 +34,8 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
     source_config = Path(__file__).resolve().parents[1] / "configs/alternating-evolution.yaml"
     config = yaml.safe_load(source_config.read_text(encoding="utf-8"))
     experiment = config["experiment"]
+    assert experiment["max_steps"] == 32
+    assert "reviewer" not in experiment["models"]
     experiment["id"] = "offline-native-alternating-smoke"
     experiment["generations"] = 1
     experiment["customer_candidates"] = 1
@@ -42,7 +44,7 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
     experiment["real_provider_enabled"] = True
     experiment["models"] = {
         role: f"offline-{role}"
-        for role in ("agent", "customer", "reviewer", "evaluator", "evolver")
+        for role in ("agent", "customer", "evaluator", "evolver")
     }
     experiment["output_path"] = "experiments/runs/offline-native-alternating-smoke"
     experiment["checkpoint_path"] = "experiments/checkpoints/offline-native-alternating-smoke.json"
@@ -68,11 +70,7 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
                     "strategy": "Inspect the requested order before explaining the next step.",
                 })
         elif model == "offline-evaluator":
-            system = messages[0]["content"]
-            if "Compare the incumbent Customer" in system:
-                content = json.dumps({"choice": "incumbent", "reason": "Fixture trajectories are identical."})
-            else:
-                content = json.dumps({"improved": False, "reason": "Fixture trajectories are identical."})
+            content = json.dumps({"results": []})
         elif model == "offline-customer":
             role_counts[model] += 1
             content = (
@@ -96,13 +94,6 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
                 choices=[{"index": 0, "finish_reason": "tool_calls", "message": response_message}],
                 usage={"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
             )
-        elif model == "offline-reviewer":
-            system = messages[0]["content"]
-            content = (
-                json.dumps({"status": "succeeded", "reasoning": "Offline fixture."})
-                if "Classify the user authentication outcome" in system
-                else json.dumps({"errors": [], "summary": "Offline native review fixture."})
-            )
         else:
             raise AssertionError(f"unexpected model call: {model}")
 
@@ -123,13 +114,18 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
 
     generation = result["generations"][0]
     assert result["status"] == "complete"
-    assert generation["customer_phase"]["selection"]["choice"] == "incumbent"
+    assert len(generation["customer_phase"]["candidate_accuracies"]) == 1
+    assert generation["customer_phase"]["selected_accuracy"] == min(
+        generation["customer_phase"]["incumbent_accuracy"],
+        generation["customer_phase"]["candidate_accuracies"][0],
+    )
     assert generation["service_phase"]["accepted"] is False
     assert generation["service_phase"]["clean_panel"]["evaluated"] is False
     assert generation["service_phase"]["proposed_strategy"]["text"].startswith("Inspect the requested order")
     records = list((output / "episodes").glob("*/episode-record.json"))
     simulations = list((output / "episodes").glob("*/native-simulation.json"))
-    assert len(records) == len(simulations) == 8
+    assert len(records) == len(simulations)
+    assert 5 <= len(records) <= 9
     assert any(
         call.get("name") == "find_user_id_by_email"
         for path in simulations
@@ -138,4 +134,12 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
     )
     assert result["provider_usage"]["attempts"] == len(calls)
     assert result["provider_usage"]["attempts"] > 0
+    assert result["api_usage_by_role"]["customer"]["calls"] > 0
+    assert result["api_usage_by_role"]["service"]["calls"] > 0
+    assert result["api_usage_by_role"]["customer_evolver"]["calls"] == 2
+    assert result["api_usage_by_role"]["service_evolver"]["calls"] == 1
+    assert result["api_usage_by_role"]["reviewer"]["calls"] == 0
+    assert result["api_usage_by_role"]["customer_judge"]["calls"] == 0
+    assert result["api_usage_by_role"]["service_judge"]["calls"] == 0
+    assert "agent_response" in result["api_usage_by_call_name"]
     assert (output / "alternating-result.json").is_file()

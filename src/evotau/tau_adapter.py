@@ -158,29 +158,30 @@ def _freeze_tau_evaluator_settings(
     *,
     evaluator_model: str,
     evaluator_model_args: dict[str, Any],
-    reviewer_model: str,
-    reviewer_model_args: dict[str, Any],
+    reviewer_model: str | None = None,
+    reviewer_model_args: dict[str, Any] | None = None,
 ):
-    """Override upstream module defaults so every evaluation request is manifest-bound."""
+    """Freeze native evaluator settings and optionally the Phase 0 reviewer settings."""
 
-    from tau2.evaluator import (
-        auth_classifier,
-        evaluator_nl_assertions,
-        review_llm_judge,
-    )
+    from tau2.evaluator import evaluator_nl_assertions
 
     evaluator_attributes = (
         (evaluator_nl_assertions, "DEFAULT_LLM_NL_ASSERTIONS", evaluator_model),
         (evaluator_nl_assertions, "DEFAULT_LLM_NL_ASSERTIONS_ARGS", dict(evaluator_model_args)),
     )
-    reviewer_modules = (auth_classifier, review_llm_judge)
+    reviewer_modules = ()
+    if reviewer_model is not None:
+        from tau2.evaluator import auth_classifier, review_llm_judge
+
+        reviewer_modules = (auth_classifier, review_llm_judge)
+    reviewer_args = dict(reviewer_model_args or {})
     global _EVALUATOR_SETTINGS_STATE
     settings_key = json.dumps(
         {
             "evaluator_model": evaluator_model,
             "evaluator_model_args": evaluator_model_args,
             "reviewer_model": reviewer_model,
-            "reviewer_model_args": reviewer_model_args,
+            "reviewer_model_args": reviewer_args,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -196,7 +197,7 @@ def _freeze_tau_evaluator_settings(
 
                 def frozen_generate(
                     *args: Any, _original=original, _model=reviewer_model,
-                    _model_args=reviewer_model_args, **kwargs: Any,
+                    _model_args=reviewer_args, **kwargs: Any,
                 ) -> Any:
                     # These modules import `generate` directly, so changing
                     # llm_utils defaults alone would leave reviewer choice implicit.
@@ -241,30 +242,37 @@ def run_with_budget(
     orchestrator: Any,
     budget: RequestBudget,
     *,
-    reviewer_model: str,
-    reviewer_model_args: dict[str, Any],
     evaluator_model: str,
     evaluator_model_args: dict[str, Any],
+    reviewer_model: str | None = None,
+    reviewer_model_args: dict[str, Any] | None = None,
+    run_reviewer: bool = True,
     on_simulation: Callable[[Any], None] | None = None,
     after_review: Callable[[Any, Any], None] | None = None,
     retry_empty_responses: bool = False,
 ) -> Any:
-    """Run, score, and review natively under one provider-request budget."""
+    """Run and score natively; optionally add the Phase 0 FULL reviewer pass."""
+
+    if type(run_reviewer) is not bool:
+        raise TypeError("run_reviewer must be boolean")
+    if run_reviewer and (not reviewer_model or reviewer_model_args is None):
+        raise ValueError("reviewer settings are required when run_reviewer is enabled")
 
     verify_tau2_installation()
-    from tau2.data_model.simulation import UserInfo
     from tau2.evaluator.evaluator import EvaluationType
-    from tau2.evaluator.reviewer import ReviewMode, review_simulation
     from tau2.runner.simulation import run_simulation
     from tau2.utils import llm_utils
+    if run_reviewer:
+        from tau2.data_model.simulation import UserInfo
+        from tau2.evaluator.reviewer import ReviewMode, review_simulation
 
     if getattr(llm_utils, "LLM_CACHE_ENABLED", False):
         raise RuntimeError("Phase 0 requires τ-bench/LiteLLM response caching to be disabled")
     with _freeze_tau_evaluator_settings(
         evaluator_model=evaluator_model,
         evaluator_model_args=evaluator_model_args,
-        reviewer_model=reviewer_model,
-        reviewer_model_args=reviewer_model_args,
+        reviewer_model=reviewer_model if run_reviewer else None,
+        reviewer_model_args=reviewer_model_args if run_reviewer else None,
     ), budget.instrument_tau_llm_utils(
         llm_utils,
         retry_empty_responses=retry_empty_responses,
@@ -272,25 +280,26 @@ def run_with_budget(
         result = run_simulation(orchestrator, evaluation_type=EvaluationType.ALL)
         if on_simulation is not None:
             on_simulation(result)
-        user = orchestrator.user
-        review, auth_classification = review_simulation(
-            simulation=result,
-            task=orchestrator.task,
-            mode=ReviewMode.FULL,
-            user_info=UserInfo(
-                implementation="llm",
-                llm=user.llm,
-                llm_args=user.llm_args,
-                global_simulation_guidelines=user.global_simulation_guidelines,
-                persona_config=user.persona_config,
-            ),
-            policy=orchestrator.environment.get_policy(),
-            review_model=reviewer_model,
-        )
-        result.review = review
-        result.auth_classification = auth_classification
-        if after_review is not None:
-            after_review(result, orchestrator)
+        if run_reviewer:
+            user = orchestrator.user
+            review, auth_classification = review_simulation(
+                simulation=result,
+                task=orchestrator.task,
+                mode=ReviewMode.FULL,
+                user_info=UserInfo(
+                    implementation="llm",
+                    llm=user.llm,
+                    llm_args=user.llm_args,
+                    global_simulation_guidelines=user.global_simulation_guidelines,
+                    persona_config=user.persona_config,
+                ),
+                policy=orchestrator.environment.get_policy(),
+                review_model=reviewer_model,
+            )
+            result.review = review
+            result.auth_classification = auth_classification
+            if after_review is not None:
+                after_review(result, orchestrator)
         return result
 
 

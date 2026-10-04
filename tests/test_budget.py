@@ -58,3 +58,32 @@ def test_request_budget_records_reported_tokens_and_unbounded_runs() -> None:
         completion_tokens=4, usage_responses=1, cache_hits=1,
     ),)
     assert BudgetSnapshot(**snapshot.to_dict()) == snapshot
+
+
+def test_request_budget_records_call_name_success_failure_tokens_and_latency() -> None:
+    def provider(*, model: str, fail: bool = False):
+        if fail:
+            raise RuntimeError("provider failed")
+        return {"usage": {"prompt_tokens": 8, "completion_tokens": 3}}
+
+    module = SimpleNamespace(completion=provider, DEFAULT_MAX_RETRIES=0)
+
+    def generate(*, model: str, call_name: str, fail: bool = False):
+        return module.completion(model=model, fail=fail)
+
+    module.generate = generate
+    budget = RequestBudget(cap=None)
+    with budget.instrument_tau_llm_utils(module):
+        module.generate(model="model-a", call_name="user_simulator_response")
+        with pytest.raises(RuntimeError, match="provider failed"):
+            module.generate(model="model-a", call_name="agent_response", fail=True)
+
+    usage = budget.api_usage_by_call_name()
+    assert usage["user_simulator_response"]["calls"] == 1
+    assert usage["user_simulator_response"]["successes"] == 1
+    assert usage["user_simulator_response"]["prompt_tokens"] == 8
+    assert usage["user_simulator_response"]["completion_tokens"] == 3
+    assert usage["user_simulator_response"]["total_elapsed_seconds"] >= 0
+    assert usage["user_simulator_response"]["average_elapsed_seconds"] >= 0
+    assert usage["agent_response"]["failures"] == 1
+    assert usage["agent_response"]["usage_unavailable"] == 1

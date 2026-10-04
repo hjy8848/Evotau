@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from evotau.alternating import (
+    LLMAlternatingEvolvers,
     propose_fresh_customer_challenge,
     run_alternating_evolution,
     run_final_endpoint_evaluation,
@@ -17,43 +19,35 @@ class FakeTask:
     description: str
     user_scenario: str
     user_tools: tuple[str, ...] = ()
-    reference_actions: tuple[str, ...] = ("hidden gold",)
-    evaluation_criteria: tuple[str, ...] = ("hidden evaluator details",)
-    db_state: str = "hidden backend state"
 
 
 class FakeRunner:
     service_policy_text = "Fixed benchmark policy text."
 
-    def __init__(self) -> None:
+    def __init__(self, success: Callable[[str, str, str], bool] | None = None) -> None:
         self.calls: list[dict] = []
         self.trajectories: dict[str, dict] = {}
+        self.success = success or (lambda _task, _customer, _service: True)
 
     def __call__(self, *, task_id, seed, customer, service, panel_name):
-        success = task_id == "v" or service.text.startswith(("Verify scope", "service "))
+        customer_text = "native" if customer is None else customer.text
+        succeeded = self.success(str(task_id), customer_text, service.text)
         episode_id = f"episode-{len(self.calls)}"
         record = EpisodeRecord(
             episode_id=episode_id,
-            task_id=task_id,
+            task_id=str(task_id),
             seed=seed,
-            customer_strategy_id=(
-                "native" if customer is None else str(hash(customer.text))
-            ),
-            service_strategy_id=str(hash(service.text)),
+            customer_strategy_id=customer_text,
+            service_strategy_id=service.text,
             status=EpisodeStatus.COMPLETE,
-            task_success=success,
-            native_reward=1.0 if success else 0.0,
+            task_success=succeeded,
+            native_reward=1.0 if succeeded else 0.0,
             termination_reason="user_stop",
             trajectory_ref=f"{episode_id}.json",
-            raw_review={
-                "native_review": {
-                    "agent_error": not success,
-                    "summary": "resolved" if success else "service failed",
-                },
-            },
+            raw_review={},
         )
         self.calls.append({
-            "task_id": task_id,
+            "task_id": str(task_id),
             "seed": seed,
             "customer": customer,
             "service": service,
@@ -61,10 +55,9 @@ class FakeRunner:
         })
         self.trajectories[record.trajectory_ref] = {
             "messages": [
-                {"role": "user", "content": "I need help with this request."},
-                {"role": "assistant", "content": "Checking the account."},
+                {"role": "user", "content": "Please help with my request."},
+                {"role": "assistant", "content": "Checking the order."},
                 {"role": "tool", "name": "lookup_order", "content": "order found"},
-                {"role": "assistant", "content": "Done." if success else "I cannot help."},
             ],
             "termination_reason": "user_stop",
             "reward_info": {"should_not_be_forwarded": True},
@@ -75,134 +68,166 @@ class FakeRunner:
         return self.trajectories[episode.trajectory_ref]
 
 
-def test_one_generation_runs_customer_then_service_and_records_strategy_changes(tmp_path) -> None:
-    hidden_scenario = "HIDDEN SCENARIO: asks for a refund if the delivery is late."
+def test_customer_prompt_is_task_grounded_and_reusable(monkeypatch) -> None:
+    prompts = {}
+
+    def fake_json_call(_model, _args, system_prompt, _context, *, call_name):
+        prompts[call_name] = system_prompt
+        return {"candidates": ["Ask one grounded follow-up question."]}
+
+    monkeypatch.setattr(
+        LLMAlternatingEvolvers, "_json_call", staticmethod(fake_json_call),
+    )
+    evolver = LLMAlternatingEvolvers(model="provider/model", model_args={})
+    evolver.customer_candidates({"incumbent_accuracy": 0.5}, 1)
+    prompt = prompts["evotau_customer_evolver"].lower()
+    assert "reusable interaction skills" in prompt
+    assert "avoid task-specific entities" in prompt
+    assert "preserve the original user objective" in prompt
+    assert "accuracy" in prompt
+
+
+def test_accuracy_selects_hardest_customer_then_accepts_service_gain(tmp_path) -> None:
     tasks = {
-        "e": FakeTask("e", "Evolution task", hidden_scenario),
-        "v": FakeTask("v", "Clean task", "Customer requests a normal order lookup."),
+        "e1": FakeTask("e1", "Evolution one", "Customer goal one."),
+        "e2": FakeTask("e2", "Evolution two", "Customer goal two."),
+        "v1": FakeTask("v1", "Validation one", "Native validation request."),
+        "v2": FakeTask("v2", "Validation two", "Native validation request."),
     }
-    runner = FakeRunner()
-    seen_customer_contexts = []
-    seen_service_contexts = []
+
+    def success(task_id: str, customer: str, service: str) -> bool:
+        if task_id.startswith("v"):
+            return True
+        if service == "S0":
+            return customer == "C0" or (customer == "C1" and task_id == "e1")
+        if service == "S1":
+            return customer == "C2" and task_id == "e1"
+        return False
+
+    runner = FakeRunner(success)
+    customer_contexts = []
+    service_contexts = []
 
     def customer_evolver(context, count):
-        seen_customer_contexts.append(context)
+        customer_contexts.append(context)
         assert count == 2
-        assert context["current_service_strategy"] == "initial service"
-        assert context["task_interactions"][0]["native_evaluation"]["task_success"] is False
-        assert context["task_interactions"][0]["tool_results"][0]["name"] == "lookup_order"
-        assert context["task_interactions"][0]["task"]["user_scenario"] == hidden_scenario
-        assert "reference_actions" not in context["task_interactions"][0]["task"]
-        assert "evaluation_criteria" not in context["task_interactions"][0]["task"]
-        assert "should_not_be_forwarded" not in str(context)
-        return ["Keep negotiating for the requested outcome.", "Ask a clarifying question first."]
-
-    def customer_judge(context):
-        assert context["service_strategy"] == "initial service"
-        return {"choice": 0, "reason": "Candidate followed the scenario and exposed the current failure."}
+        return ["C1", "C2"]
 
     def service_evolver(context):
-        seen_service_contexts.append(context)
-        assert context["customer_strategy"] == "Keep negotiating for the requested outcome."
-        assert context["service_policy"] == runner.service_policy_text
-        assert context["task_interactions"][0]["native_evaluation"]["task_success"] is False
+        service_contexts.append(context)
+        assert context["selected_customer_accuracy"] == 0.0
+        assert context["customer_strategy"] == "C2"
         assert "user_scenario" not in context["task_interactions"][0]["task"]
-        assert hidden_scenario not in str(context)
-        assert "lookup_order" in str(context["task_interactions"][0]["trajectory"])
-        return {"analysis": "The service missed the customer's goal.", "strategy": "Verify scope, then complete eligible requests."}
-
-    def service_judge(context):
-        assert context["old_service_strategy"] == "initial service"
-        assert context["proposed_service_strategy"].startswith("Verify scope")
-        assert "user_scenario" not in context["old_service_episodes"][0]["task"]
-        assert "user_scenario" not in context["proposed_service_episodes"][0]["task"]
-        assert hidden_scenario not in str(context)
-        return {"improved": True, "reason": "The real challenge now succeeds."}
+        return {"analysis": "Observed low E accuracy.", "strategy": "S1"}
 
     result = run_alternating_evolution(
         tasks=tasks,
-        evolution_task_ids=("e",),
-        validation_task_ids=("v",),
+        evolution_task_ids=("e1", "e2"),
+        validation_task_ids=("v1", "v2"),
         seed=1,
         generations=1,
         customer_candidate_count=2,
-        clean_panel_size=1,
-        initial_customer=PromptStrategy(""),
-        initial_service=PromptStrategy("initial service"),
+        clean_panel_size=2,
+        initial_customer=PromptStrategy("C0"),
+        initial_service=PromptStrategy("S0"),
         runner=runner,
         customer_evolver=customer_evolver,
         service_evolver=service_evolver,
-        customer_judge=customer_judge,
-        service_judge=service_judge,
         domain_policy=runner.service_policy_text,
         output_directory=tmp_path,
         manifest_sha256="manifest",
     )
 
-    assert len(result.generations) == 1
     generation = result.generations[0]
-    assert generation["customer_after"]["strategy"] == "Keep negotiating for the requested outcome."
-    assert generation["service_after"]["strategy"] == "Verify scope, then complete eligible requests."
-    assert generation["service_phase"]["accepted"] is True
-    assert generation["service_phase"]["clean_panel"]["catastrophic_regression"] is False
-    assert seen_customer_contexts and seen_service_contexts
-    customer_phase_calls = [call for call in runner.calls if "customer-" in call["panel_name"]]
-    assert customer_phase_calls
-    assert all(call["service"].text == "initial service" for call in customer_phase_calls)
-    service_challenge_calls = [call for call in runner.calls if call["panel_name"].endswith("service-candidate")]
-    assert len(service_challenge_calls) == 1
-    assert service_challenge_calls[0]["customer"].text == "Keep negotiating for the requested outcome."
-    assert (tmp_path / "generation-0000.json").is_file()
+    customer_phase = generation["customer_phase"]
+    service_phase = generation["service_phase"]
+    assert customer_phase["incumbent_accuracy"] == 1.0
+    assert customer_phase["candidate_accuracies"] == [0.5, 0.0]
+    assert customer_phase["selected_customer"] == 1
+    assert customer_phase["selected_accuracy"] == 0.0
+    assert result.customer.text == "C2"
+    assert service_phase["old_accuracy"] == 0.0
+    assert service_phase["proposed_accuracy"] == 0.5
+    assert service_phase["validation_old_accuracy"] == 1.0
+    assert service_phase["validation_new_accuracy"] == 1.0
+    assert service_phase["accepted"] is True
+    assert result.service.text == "S1"
+    assert all("user_scenario" in row["task"] for row in customer_contexts[0]["task_interactions"])
+    assert service_contexts
+    saved = __import__("json").loads((tmp_path / "generation-0000.json").read_text())
+    assert saved["customer_phase"]["selected_accuracy"] == 0.0
+    assert saved["service_phase"]["proposed_accuracy"] == 0.5
     assert (tmp_path / "checkpoint.json").is_file()
 
 
-def test_two_generations_continue_from_the_previous_customer_service_pair() -> None:
+def test_customer_accuracy_tie_keeps_incumbent_without_selection_judge() -> None:
     tasks = {
-        "e": FakeTask("e", "Evolution task", "Customer's original goal."),
-        "v": FakeTask("v", "Clean task", "A normal service request."),
+        "e": FakeTask("e", "Evolution task", "Original customer goal."),
+        "v": FakeTask("v", "Validation task", "Native validation request."),
     }
     runner = FakeRunner()
-    proposal_inputs = []
-    service_inputs = []
-    customer_judge_reason = "Hidden scenario says the customer ultimately wants a refund."
+    result = run_alternating_evolution(
+        tasks=tasks,
+        evolution_task_ids=("e",),
+        validation_task_ids=("v",),
+        seed=2,
+        generations=1,
+        customer_candidate_count=1,
+        clean_panel_size=1,
+        initial_customer=PromptStrategy("incumbent"),
+        initial_service=PromptStrategy("service"),
+        runner=runner,
+        customer_evolver=lambda _context, _count: ["candidate"],
+        service_evolver=lambda _context: {"analysis": "no change", "strategy": "service"},
+        domain_policy=runner.service_policy_text,
+    )
+    phase = result.generations[0]["customer_phase"]
+    assert phase["incumbent_accuracy"] == phase["candidate_accuracies"][0] == 1.0
+    assert phase["selected_customer"] == "incumbent"
+    assert result.customer.text == "incumbent"
+    assert len(runner.calls) == 2
 
-    def customer_evolver(context, _count):
-        proposal_inputs.append(context)
-        return [f"Customer strategy {context['generation']}"]
 
+def test_service_e_gain_is_rejected_when_native_validation_accuracy_decreases() -> None:
+    tasks = {
+        "e": FakeTask("e", "Evolution task", "Original customer goal."),
+        "v": FakeTask("v", "Validation task", "Native validation request."),
+    }
+
+    def success(task_id: str, _customer: str, service: str) -> bool:
+        return (task_id == "e" and service == "S1") or (task_id == "v" and service == "S0")
+
+    runner = FakeRunner(success)
     result = run_alternating_evolution(
         tasks=tasks,
         evolution_task_ids=("e",),
         validation_task_ids=("v",),
         seed=4,
-        generations=2,
+        generations=1,
         customer_candidate_count=1,
         clean_panel_size=1,
-        initial_customer=PromptStrategy("customer zero"),
-        initial_service=PromptStrategy("service zero"),
+        initial_customer=PromptStrategy("C0"),
+        initial_service=PromptStrategy("S0"),
         runner=runner,
-        customer_evolver=customer_evolver,
-        service_evolver=lambda context: (
-            service_inputs.append(context)
-            or {"analysis": "observed", "strategy": f"service {context['generation'] + 1}"}
-        ),
-        customer_judge=lambda _context: {"choice": 0, "reason": customer_judge_reason},
-        service_judge=lambda _context: {"improved": True, "reason": "fixed"},
+        customer_evolver=lambda _context, _count: ["C1"],
+        service_evolver=lambda _context: {"analysis": "improves E", "strategy": "S1"},
         domain_policy=runner.service_policy_text,
     )
 
-    assert len(result.generations) == 2
-    assert proposal_inputs[1]["current_service_strategy"] == "service 1"
-    assert customer_judge_reason in str(proposal_inputs[1]["history"])
-    assert service_inputs[1]["customer_strategy"] == "Customer strategy 1"
-    assert "history" not in service_inputs[1]
-    assert customer_judge_reason not in str(service_inputs[1])
-    assert result.customer.text == "Customer strategy 1"
-    assert result.service.text == "service 2"
+    phase = result.generations[0]["service_phase"]
+    assert phase["old_accuracy"] == 0.0
+    assert phase["proposed_accuracy"] == 1.0
+    assert phase["validation_old_accuracy"] == 1.0
+    assert phase["validation_new_accuracy"] == 0.0
+    assert phase["accepted"] is False
+    assert result.service.text == "S0"
 
 
-def test_fresh_challenge_uses_only_evidence_given_before_h_is_loaded() -> None:
-    tasks = {"e": FakeTask("e", "Evolution task", "Only E scenario."), "v": FakeTask("v", "V", "V scenario.")}
+def test_fresh_customer_reuses_final_e_episodes_without_running_another_episode() -> None:
+    tasks = {
+        "e": FakeTask("e", "Evolution task", "The original goal."),
+        "v": FakeTask("v", "Validation task", "Native validation goal."),
+    }
     runner = FakeRunner()
     result = run_alternating_evolution(
         tasks=tasks,
@@ -212,48 +237,66 @@ def test_fresh_challenge_uses_only_evidence_given_before_h_is_loaded() -> None:
         generations=1,
         customer_candidate_count=1,
         clean_panel_size=1,
-        initial_customer=PromptStrategy("base"),
-        initial_service=PromptStrategy("service"),
+        initial_customer=PromptStrategy("C0"),
+        initial_service=PromptStrategy("S0"),
         runner=runner,
-        customer_evolver=lambda _context, _count: ["evolved"],
-        service_evolver=lambda _context: {"analysis": "none", "strategy": "service"},
-        customer_judge=lambda _context: {"choice": 0, "reason": "ok"},
-        service_judge=lambda _context: {"improved": False, "reason": "same"},
+        customer_evolver=lambda _context, _count: ["C1"],
+        service_evolver=lambda _context: {"analysis": "same", "strategy": "S0"},
         domain_policy=runner.service_policy_text,
     )
-    contexts = []
-
-    def fresh_evolver(context, count):
-        contexts.append(context)
-        assert count == 1
-        assert all(
-            row["task"]["task_id"] != "h"
-            for row in context["task_interactions"]
-        )
-        return ["fresh challenger"]
+    calls_before = len(runner.calls)
+    observed = []
 
     fresh = propose_fresh_customer_challenge(
         result,
-        fresh_evolver,
+        lambda context, count: observed.append((context, count)) or ["fresh skill"],
         tasks=tasks,
-        evolution_task_ids=("e",),
         runner=runner,
         domain_policy=runner.service_policy_text,
-        seed=500,
     )
-    heldout = {"h": FakeTask("h", "Held-out task", "Never shown during evolution.")}
-    h_runner = FakeRunner()
+
+    assert fresh.text == "fresh skill"
+    assert len(runner.calls) == calls_before
+    assert observed[0][1] == 1
+    assert observed[0][0]["final_evolution_accuracy"] == 1.0
+    assert observed[0][0]["task_interactions"][0]["trajectory"]["messages"]
+
+
+def test_heldout_aliases_st_when_service_is_identical_to_s0() -> None:
+    heldout = {"h": FakeTask("h", "Held-out task", "Held-out customer goal.")}
+    runner = FakeRunner()
     evaluation = run_final_endpoint_evaluation(
         heldout_tasks=heldout,
         heldout_task_ids=("h",),
-        seed=99,
-        initial_service=result.initial_service,
-        final_service=result.service,
-        fresh_customer=fresh,
-        runner=h_runner,
+        seed=9,
+        initial_service=PromptStrategy("same service"),
+        final_service=PromptStrategy("same service"),
+        fresh_customer=PromptStrategy("fresh challenge"),
+        runner=runner,
     )
+    assert len(runner.calls) == 2
+    assert len(evaluation["cells"]) == 4
+    for condition in ("native_customer", "fresh_adaptive_customer"):
+        s0 = next(row for row in evaluation["cells"]
+                  if row["customer_condition"] == condition and row["service_endpoint"] == "S0")
+        st = next(row for row in evaluation["cells"]
+                  if row["customer_condition"] == condition and row["service_endpoint"] == "ST")
+        assert st["identical_to_S0"] is True
+        assert st["episodes"] == s0["episodes"]
 
-    assert fresh.text == "fresh challenger"
-    assert len(contexts) == 1
-    assert {row["task_id"] for cell in evaluation["cells"] for row in cell["episodes"]} == {"h"}
-    assert {call["task_id"] for call in h_runner.calls} == {"h"}
+
+def test_heldout_runs_st_when_final_service_differs() -> None:
+    heldout = {"h": FakeTask("h", "Held-out task", "Held-out customer goal.")}
+    runner = FakeRunner()
+    evaluation = run_final_endpoint_evaluation(
+        heldout_tasks=heldout,
+        heldout_task_ids=("h",),
+        seed=10,
+        initial_service=PromptStrategy("S0"),
+        final_service=PromptStrategy("ST"),
+        fresh_customer=PromptStrategy("fresh challenge"),
+        runner=runner,
+    )
+    assert len(runner.calls) == 4
+    assert evaluation["services_identical"] is False
+    assert all(not cell["identical_to_S0"] for cell in evaluation["cells"])

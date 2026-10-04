@@ -16,8 +16,6 @@ from .tau_provenance import sha256_json
 
 CustomerEvolver = Callable[[Mapping[str, Any], int], Sequence[str]]
 ServiceEvolver = Callable[[Mapping[str, Any]], Mapping[str, str]]
-CustomerJudge = Callable[[Mapping[str, Any]], Mapping[str, Any]]
-ServiceJudge = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 EpisodeRunner = Callable[..., EpisodeRecord]
 
 
@@ -28,23 +26,20 @@ class AlternatingResult:
     customer: PromptStrategy
     service: PromptStrategy
     generations: tuple[Mapping[str, Any], ...]
+    final_evolution_episodes: tuple[EpisodeRecord, ...]
 
 
 class LLMAlternatingEvolvers:
-    """Four small language-model calls; strategies remain free-form text."""
+    """Two language-model calls propose free-form Customer and Service strategies."""
 
     def __init__(
         self,
         *,
         model: str,
         model_args: Mapping[str, Any],
-        judge_model: str,
-        judge_model_args: Mapping[str, Any],
     ) -> None:
         self.model = model
         self.model_args = dict(model_args)
-        self.judge_model = judge_model
-        self.judge_model_args = dict(judge_model_args)
 
     def customer_candidates(
         self, context: Mapping[str, Any], count: int,
@@ -53,12 +48,25 @@ class LLMAlternatingEvolvers:
             self.model,
             self.model_args,
             "You evolve the Customer as a task-grounded adaptive challenge generator. "
-            "Find natural interaction strategies that search the current Service's failure boundary. "
-            "Use the supplied τ-bench task, user scenario, current strategies, real conversation, "
-            "tool results, native evaluation, reviewer feedback, and history. Keep the underlying "
-            "τ-bench task, scenario, policy, tools, backend, and evaluator fixed. Do not assume the "
-            "Customer must follow Service business policy. Do not use reference answers or hidden data. "
-            "Return only JSON: {\"candidates\": [natural-language strategy strings]}.",
+            "Your goal is to discover REUSABLE INTERACTION SKILLS that expose weaknesses in the "
+            "current Service. A strategy should describe HOW the Customer interacts, not WHAT "
+            "specific entity from this task it should mention. Good strategies probe a nearby boundary "
+            "after a state-changing action and ask whether another action is possible; ask for a concrete "
+            "policy or backend-state reason after a rejection and test whether it stays grounded; delay "
+            "or reorder relevant information to test unresolved-goal tracking; or introduce a correction "
+            "while preserving the original user goal. Bad strategies name a task-specific product, order, "
+            "person, address, or request, or introduce a new product, order, identity, fact, or user "
+            "objective not grounded in the supplied scenario. Make the interaction harder, more persistent, "
+            "indirect, or demanding without primarily changing the original task objective or inventing "
+            "facts. Preserve the original user objective. Avoid task-specific entities: do not copy "
+            "task-specific entity names, IDs, "
+            "product names, user names, addresses, or literal requests into the strategy. The strategy "
+            "must be reusable across different tasks in the same domain. Do not assume the Customer "
+            "must follow Service business policy. Use the supplied task, user "
+            "scenario, current strategies, accuracy, and real conversations/tool results to infer a "
+            "general interaction skill. Keep the underlying τ-bench task, "
+            "policy, tools, backend, and evaluator fixed. Do not use reference answers or hidden data. "
+            "Return only JSON: {\"candidates\": [\"reusable natural-language interaction strategy\", ...]}.",
             {"requested_candidates": count, **dict(context)},
             call_name="evotau_customer_evolver",
         )
@@ -71,10 +79,11 @@ class LLMAlternatingEvolvers:
         result = self._json_call(
             self.model,
             self.model_args,
-            "You evolve the Service from actual failures. Study the fixed τ-bench task policy, "
-            "the current Service strategy, real interaction trajectory, tool results, native "
-            "evaluation, and reviewer feedback. Propose a natural-language Service strategy that "
-            "addresses the observed weakness. Do not modify tasks, policy, tools, backend, or evaluator. "
+            "You evolve the Service from native τ-bench task outcomes. Study the fixed task policy, "
+            "the current Service strategy, Customer strategy, E-panel accuracy, real interaction "
+            "trajectories, tool results, and task-success results. Propose a reusable natural-language "
+            "Service strategy that improves task accuracy without changing tasks or policy. "
+            "Do not modify tasks, policy, tools, backend, or evaluator. "
             "Do not use reference answers or hidden data. Return only JSON with string fields "
             "`analysis` and `strategy`.",
             dict(context),
@@ -84,34 +93,6 @@ class LLMAlternatingEvolvers:
             raise TypeError("Service Evolver must return string analysis and strategy fields")
         return {"analysis": result["analysis"], "strategy": result["strategy"]}
 
-    def choose_customer(self, context: Mapping[str, Any]) -> Mapping[str, Any]:
-        return self._json_call(
-            self.judge_model,
-            self.judge_model_args,
-            "Compare the incumbent Customer and its candidates using only their actual τ-bench "
-            "trajectories, tool results, native evaluation, and reviewer feedback. Choose the one "
-            "that best exposes a real weakness in the frozen Service while still engaging with the "
-            "given task. Do not apply a fixed challenge taxonomy. Return JSON with `choice` (the "
-            "string `incumbent` or a zero-based candidate index) and a short `reason`.",
-            dict(context),
-            call_name="evotau_customer_selection",
-            judge=True,
-        )
-
-    def service_is_better(self, context: Mapping[str, Any]) -> Mapping[str, Any]:
-        return self._json_call(
-            self.judge_model,
-            self.judge_model_args,
-            "Compare the old and proposed Service on the same evolved Customer challenge. Decide "
-            "whether the proposal handles the observed challenge better under the fixed τ-bench policy, "
-            "using the real trajectories, tool results, native evaluation, and reviewer feedback. "
-            "Do not treat a Customer's policy conflict as a reason to make the Customer obey Service "
-            "policy. Return JSON with boolean `improved` and a short `reason`.",
-            dict(context),
-            call_name="evotau_service_selection",
-            judge=True,
-        )
-
     @staticmethod
     def _json_call(
         model: str,
@@ -120,7 +101,6 @@ class LLMAlternatingEvolvers:
         context: Mapping[str, Any],
         *,
         call_name: str,
-        judge: bool = False,
     ) -> dict[str, Any]:
         from tau2.data_model.message import SystemMessage, UserMessage
         from tau2.utils.llm_utils import generate
@@ -141,10 +121,9 @@ class LLMAlternatingEvolvers:
         try:
             value = json.loads(message.content or "")
         except (TypeError, json.JSONDecodeError) as exc:
-            role = "judge" if judge else "evolver"
-            raise ValueError(f"{role} returned invalid JSON") from exc
+            raise ValueError("Evolver returned invalid JSON") from exc
         if not isinstance(value, dict):
-            raise TypeError("evolver and judge responses must be JSON objects")
+            raise TypeError("evolver responses must be JSON objects")
         return value
 
 
@@ -162,16 +141,13 @@ def run_alternating_evolution(
     runner: EpisodeRunner,
     customer_evolver: CustomerEvolver,
     service_evolver: ServiceEvolver,
-    customer_judge: CustomerJudge,
-    service_judge: ServiceJudge,
     domain_policy: str,
     request_budget: RequestBudget | None = None,
     output_directory: str | Path | None = None,
     checkpoint_path: str | Path | None = None,
     manifest_sha256: str | None = None,
-    prior_feedback: Sequence[Mapping[str, Any]] = (),
 ) -> AlternatingResult:
-    """Run complete ``C_t → C_(t+1) → S_(t+1)`` generations in order."""
+    """Alternate Customer challenge and Service repair using native task accuracy."""
 
     e_tasks = tuple(str(item) for item in evolution_task_ids)
     v_tasks = tuple(str(item) for item in validation_task_ids[:clean_panel_size])
@@ -181,7 +157,7 @@ def run_alternating_evolution(
     if missing:
         raise ValueError(f"task loader is missing E/V tasks: {sorted(missing)}")
     if generations < 1 or customer_candidate_count < 1 or seed < 0:
-        raise ValueError("seed, generations, and customer candidate count must be non-negative")
+        raise ValueError("seed, generation count, and candidate count must be non-negative")
 
     output_root = None if output_directory is None else Path(output_directory)
     if output_root is not None:
@@ -193,8 +169,9 @@ def run_alternating_evolution(
     initial_customer_state = initial_customer
     initial_service_state = initial_service
     customer, service = initial_customer, initial_service
-    history = [dict(item) for item in prior_feedback]
+    history: list[dict[str, Any]] = []
     generation_documents: list[Mapping[str, Any]] = []
+    final_evolution_episodes: tuple[EpisodeRecord, ...] = ()
     start_generation = 0
     if checkpoint_file is not None and checkpoint_file.exists():
         checkpoint = json.loads(checkpoint_file.read_text(encoding="utf-8"))
@@ -208,6 +185,10 @@ def run_alternating_evolution(
         history = [dict(item) for item in checkpoint.get("history", ())]
         customer = PromptStrategy(checkpoint["customer"]["text"])
         service = PromptStrategy(checkpoint["service"]["text"])
+        final_evolution_episodes = tuple(
+            EpisodeRecord.from_dict(item)
+            for item in checkpoint.get("final_evolution_episodes", ())
+        )
         start_generation = int(checkpoint["completed_generation"]) + 1
         if not 0 <= start_generation <= generations:
             raise ValueError("alternating checkpoint generation is outside the frozen run")
@@ -218,8 +199,6 @@ def run_alternating_evolution(
         service_before = service
         budget_before = None if request_budget is None else request_budget.snapshot().to_dict()
 
-        # Customer phase: the current Service value is passed to every E run
-        # and is not changed until all Customer selection is complete.
         incumbent_runs = _run_panel(
             runner,
             task_ids=e_tasks,
@@ -229,14 +208,15 @@ def run_alternating_evolution(
             service=service,
             panel_name=f"generation-{generation}-customer-incumbent",
         )
-        incumbent_context = _context_episodes(incumbent_runs, runner, tasks)
+        incumbent_accuracy = _accuracy(incumbent_runs)
         proposal_context = {
             "generation": generation,
-            "task_interactions": incumbent_context,
+            "task_interactions": _context_episodes(incumbent_runs, runner, tasks),
+            "incumbent_accuracy": incumbent_accuracy,
             "service_policy": domain_policy,
             "current_customer_strategy": customer.text,
             "current_service_strategy": service.text,
-            "history": history,
+            "accuracy_history": history,
         }
         candidate_texts = tuple(_provider_call(
             request_budget, customer_evolver, proposal_context, customer_candidate_count,
@@ -254,49 +234,32 @@ def run_alternating_evolution(
             )
             for index, candidate in enumerate(candidates)
         )
-        customer_decision: Mapping[str, Any]
-        if candidates:
-            selection_context = {
-                "generation": generation,
-                "task_interactions": incumbent_context,
-                "incumbent_strategy": customer.text,
-                "incumbent_episodes": incumbent_context,
-                "candidates": [
-                    {
-                        "strategy": candidate.text,
-                        "episodes": _context_episodes(runs, runner, tasks),
-                    }
-                    for candidate, runs in zip(candidates, candidate_runs, strict=True)
-                ],
-                "service_strategy": service.text,
-                "service_policy": domain_policy,
-                "history": history,
-            }
-            customer_decision = _provider_call(request_budget, customer_judge, selection_context)
-            choice = customer_decision.get("choice", "incumbent")
-            if isinstance(choice, bool):
-                raise ValueError("Customer judge choice must be `incumbent` or a candidate index")
-            if isinstance(choice, int):
-                if choice < 0 or choice >= len(candidates):
-                    raise ValueError("Customer judge selected a candidate that was not run")
-                customer = candidates[choice]
-                selected_runs = candidate_runs[choice]
-            elif choice == "incumbent":
-                selected_runs = incumbent_runs
-            else:
-                raise ValueError("Customer judge choice must be `incumbent` or a candidate index")
-        else:
-            customer_decision = {"choice": "incumbent", "reason": "No candidate was returned."}
-            selected_runs = incumbent_runs
+        candidate_accuracies = [_accuracy(runs) for runs in candidate_runs]
 
-        # Service phase: the selected Customer is fixed for both old and new
-        # Service runs, including the small τ-bench native-Customer clean panel.
+        selected_customer_source: str | int = "incumbent"
+        selected_runs = incumbent_runs
+        selected_accuracy = incumbent_accuracy
+        for index, (candidate, runs, accuracy) in enumerate(
+            zip(candidates, candidate_runs, candidate_accuracies, strict=True),
+        ):
+            # Strict comparison makes an exact tie keep the incumbent. Candidate
+            # ties are stable: the first candidate at the lowest score wins.
+            if accuracy < selected_accuracy:
+                customer = candidate
+                selected_customer_source = index
+                selected_runs = runs
+                selected_accuracy = accuracy
+
+        old_service = service
+        old_accuracy = selected_accuracy
         service_context = {
             "generation": generation,
             "task_interactions": _service_context_episodes(selected_runs, runner, tasks),
+            "selected_customer_accuracy": selected_accuracy,
             "customer_strategy": customer.text,
             "current_service_strategy": service.text,
             "service_policy": domain_policy,
+            "accuracy_history": history,
         }
         service_proposal = _provider_call(request_budget, service_evolver, service_context)
         service_analysis = service_proposal.get("analysis", "")
@@ -304,17 +267,18 @@ def run_alternating_evolution(
         if not isinstance(service_analysis, str) or not isinstance(proposed_text, str):
             raise TypeError("Service Evolver must return natural-language analysis and strategy")
         proposed_service = PromptStrategy(proposed_text)
-        service_decision: Mapping[str, Any] = {
-            "improved": False,
-            "reason": "The Service strategy did not change.",
-        }
-        clean_regression: bool | None = None
-        target_runs: tuple[EpisodeRecord, ...] = ()
-        clean_reference_runs: tuple[EpisodeRecord, ...] = ()
-        clean_candidate_runs: tuple[EpisodeRecord, ...] = ()
-        old_service = service
+
+        proposed_runs: tuple[EpisodeRecord, ...] = ()
+        proposed_accuracy = old_accuracy
+        improved_on_e = False
+        validation_old_accuracy: float | None = None
+        validation_new_accuracy: float | None = None
+        validation_old_runs: tuple[EpisodeRecord, ...] = ()
+        validation_new_runs: tuple[EpisodeRecord, ...] = ()
+        accepted = False
+        service_reason = "The Service strategy did not change."
         if proposed_service.text != service.text:
-            target_runs = _run_panel(
+            proposed_runs = _run_panel(
                 runner,
                 task_ids=e_tasks,
                 tasks=tasks,
@@ -323,107 +287,119 @@ def run_alternating_evolution(
                 service=proposed_service,
                 panel_name=f"generation-{generation}-service-candidate",
             )
-            service_selection_context = {
-                "generation": generation,
-                "customer_strategy": customer.text,
-                "service_policy": domain_policy,
-                "old_service_strategy": service.text,
-                "proposed_service_strategy": proposed_service.text,
-                "old_service_episodes": _service_context_episodes(selected_runs, runner, tasks),
-                "proposed_service_episodes": _service_context_episodes(target_runs, runner, tasks),
-            }
-            service_decision = _provider_call(
-                request_budget, service_judge, service_selection_context,
-            )
-            if service_decision.get("improved") is True:
-                clean_reference_runs = _run_panel(
+            proposed_accuracy = _accuracy(proposed_runs)
+            improved_on_e = proposed_accuracy > old_accuracy
+            if not improved_on_e:
+                service_reason = (
+                    "Rejected by native E accuracy: proposed Service accuracy did not exceed "
+                    "the old Service accuracy."
+                )
+            else:
+                validation_old_runs = _run_panel(
                     runner,
                     task_ids=v_tasks,
                     tasks=tasks,
                     seed=seed,
                     customer=None,
                     service=old_service,
-                    panel_name=f"generation-{generation}-clean-reference-native-customer",
+                    panel_name=f"generation-{generation}-validation-old-native-customer",
                 )
-                clean_candidate_runs = _run_panel(
+                validation_new_runs = _run_panel(
                     runner,
                     task_ids=v_tasks,
                     tasks=tasks,
                     seed=seed,
                     customer=None,
                     service=proposed_service,
-                    panel_name=f"generation-{generation}-clean-candidate-native-customer",
+                    panel_name=f"generation-{generation}-validation-proposed-native-customer",
                 )
-                clean_regression = _has_clean_regression(
-                    clean_reference_runs, clean_candidate_runs,
-                )
-                if not clean_regression:
+                validation_old_accuracy = _accuracy(validation_old_runs)
+                validation_new_accuracy = _accuracy(validation_new_runs)
+                if validation_new_accuracy >= validation_old_accuracy:
                     service = proposed_service
+                    accepted = True
+                    service_reason = "Accepted: E accuracy improved and native V accuracy did not decrease."
+                else:
+                    service_reason = "Rejected: native V accuracy decreased."
 
+        # For the final fresh challenge, keep evidence for the actual final
+        # (Customer, Service) pair. If a proposed Service is rejected, use the
+        # selected Customer's incumbent-Service episodes instead.
+        final_evolution_episodes = proposed_runs if accepted else selected_runs
+
+        customer_phase = {
+            "frozen_service": _strategy_document("service", old_service),
+            "evolver_input_sha256": sha256_json(proposal_context),
+            "incumbent_accuracy": incumbent_accuracy,
+            "candidate_accuracies": candidate_accuracies,
+            "selected_accuracy": selected_accuracy,
+            "selected_customer": selected_customer_source,
+            "incumbent_episodes": [_episode_ref(item) for item in incumbent_runs],
+            "candidates": [
+                {
+                    "strategy": candidate.to_dict(),
+                    "accuracy": accuracy,
+                    "episodes": [_episode_ref(item) for item in runs],
+                }
+                for candidate, accuracy, runs in zip(
+                    candidates, candidate_accuracies, candidate_runs, strict=True,
+                )
+            ],
+        }
+        service_phase = {
+            "frozen_customer": _strategy_document("customer", customer),
+            "analysis": service_analysis,
+            "evolver_input_sha256": sha256_json(service_context),
+            "proposed_strategy": proposed_service.to_dict(),
+            "old_accuracy": old_accuracy,
+            "proposed_accuracy": proposed_accuracy,
+            "improved_on_E": improved_on_e,
+            "accepted": accepted,
+            "validation_old_accuracy": validation_old_accuracy,
+            "validation_new_accuracy": validation_new_accuracy,
+            "challenge_episodes": [_episode_ref(item) for item in proposed_runs],
+            "selection": {"reason": service_reason},
+            "clean_panel": {
+                "customer": "native τ-bench customer",
+                "evaluated": validation_old_accuracy is not None,
+                "reference_accuracy": validation_old_accuracy,
+                "candidate_accuracy": validation_new_accuracy,
+                "reference_episodes": [_episode_ref(item) for item in validation_old_runs],
+                "candidate_episodes": [_episode_ref(item) for item in validation_new_runs],
+            },
+        }
         generation_doc = {
-            "schema_version": 1,
+            "schema_version": 2,
             "generation": generation,
             "seed": generation_seed,
             "customer_before": _strategy_document("customer", customer_before),
             "service_before": _strategy_document("service", service_before),
             "customer_after": _strategy_document("customer", customer),
             "service_after": _strategy_document("service", service),
-            "customer_phase": {
-                "frozen_service": _strategy_document("service", old_service),
-                "evolver_input_sha256": sha256_json(proposal_context),
-                "selection_input_sha256": (
-                    None if not candidates else sha256_json(selection_context)
-                ),
-                "incumbent_episodes": [_episode_ref(item) for item in incumbent_runs],
-                "candidates": [
-                    {
-                        "strategy": candidate.to_dict(),
-                        "episodes": [_episode_ref(item) for item in runs],
-                    }
-                    for candidate, runs in zip(candidates, candidate_runs, strict=True)
-                ],
-                "selection": dict(customer_decision),
-            },
-            "service_phase": {
-                "frozen_customer": _strategy_document("customer", customer),
-                "analysis": service_analysis,
-                "evolver_input_sha256": sha256_json(service_context),
-                "proposed_strategy": proposed_service.to_dict(),
-                "challenge_episodes": [_episode_ref(item) for item in target_runs],
-                "selection": dict(service_decision),
-                "selection_input_sha256": (
-                    None if not target_runs else sha256_json(service_selection_context)
-                ),
-                "clean_panel": {
-                    "customer": "native τ-bench customer",
-                    "evaluated": clean_regression is not None,
-                    "reference_episodes": [_episode_ref(item) for item in clean_reference_runs],
-                    "candidate_episodes": [_episode_ref(item) for item in clean_candidate_runs],
-                    "catastrophic_regression": clean_regression,
-                },
-                "accepted": service == proposed_service and service != old_service,
-            },
+            "customer_phase": customer_phase,
+            "service_phase": service_phase,
             "provider_budget": _budget_delta(
                 budget_before,
                 None if request_budget is None else request_budget.snapshot().to_dict(),
             ),
         }
         generation_documents.append(generation_doc)
-        summary = {
+        history.append({
             "generation": generation,
-            "customer_id": customer_strategy_id(customer),
-            "service_id": service_strategy_id(service),
-            "customer_selection": customer_decision.get("reason", ""),
-            "service_selection": service_decision.get("reason", ""),
-        }
-        history.append(summary)
+            "customer_incumbent_accuracy": incumbent_accuracy,
+            "customer_candidate_accuracies": candidate_accuracies,
+            "customer_selected_accuracy": selected_accuracy,
+            "service_old_accuracy": old_accuracy,
+            "service_proposed_accuracy": proposed_accuracy,
+            "service_accepted": accepted,
+        })
         if output_root is not None:
             _write_json_atomic(output_root / f"generation-{generation:04d}.json", generation_doc)
         if checkpoint_file is not None:
             _write_json_atomic(
                 checkpoint_file,
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "manifest_sha256": manifest_sha256,
                     "completed_generation": generation,
                     "initial_customer": initial_customer_state.to_dict(),
@@ -432,6 +408,9 @@ def run_alternating_evolution(
                     "service": service.to_dict(),
                     "generations": generation_documents,
                     "history": history,
+                    "final_evolution_episodes": [
+                        episode.to_dict() for episode in final_evolution_episodes
+                    ],
                 },
             )
 
@@ -441,6 +420,7 @@ def run_alternating_evolution(
         customer,
         service,
         tuple(generation_documents),
+        final_evolution_episodes,
     )
 
 
@@ -449,31 +429,25 @@ def propose_fresh_customer_challenge(
     customer_evolver: CustomerEvolver,
     *,
     tasks: Mapping[str, Any],
-    evolution_task_ids: Sequence[str],
     runner: EpisodeRunner,
     domain_policy: str,
-    seed: int,
     request_budget: RequestBudget | None = None,
 ) -> PromptStrategy:
-    """Observe the final pair on E and propose a fresh challenge before H is loaded."""
+    """Propose one fresh Customer strategy from the final saved E episodes."""
 
-    observed_runs = _run_panel(
-        runner,
-        task_ids=evolution_task_ids,
-        tasks=tasks,
-        seed=seed,
-        customer=result.customer,
-        service=result.service,
-        panel_name="fresh-challenge-generation",
-    )
+    if not result.final_evolution_episodes:
+        raise ValueError("final saved E episodes are required to propose the fresh Customer")
     context = {
         "generation": len(result.generations),
-        "task_interactions": _context_episodes(observed_runs, runner, tasks),
-        "purpose": "Create one fresh adaptive Customer strategy for final held-out evaluation.",
+        "task_interactions": _context_episodes(
+            result.final_evolution_episodes, runner, tasks,
+        ),
+        "purpose": "Create one reusable Customer challenge skill for held-out evaluation.",
+        "final_evolution_accuracy": _accuracy(result.final_evolution_episodes),
         "current_customer_strategy": result.customer.text,
         "current_service_strategy": result.service.text,
         "service_policy": domain_policy,
-        "history": [dict(item) for item in result.generations],
+        "accuracy_history": [dict(item) for item in result.generations],
     }
     candidates = tuple(_provider_call(request_budget, customer_evolver, context, 1))
     if not candidates:
@@ -492,40 +466,65 @@ def run_final_endpoint_evaluation(
     runner: EpisodeRunner,
     output_path: str | Path | None = None,
 ) -> Mapping[str, Any]:
-    """Compare S0 and ST on native τ-bench Customers and one fresh adaptive Customer."""
+    """Compare S0 and ST endpoints without rerunning identical Service cells."""
 
     task_ids = tuple(str(item) for item in heldout_task_ids)
     if not task_ids or set(task_ids) - set(heldout_tasks):
         raise ValueError("final endpoint evaluation requires loaded H tasks")
-    rows = []
-    for customer_label, customer in (
+    identical_services = final_service.text == initial_service.text
+    customers = (
         ("native_customer", None),
         ("fresh_adaptive_customer", fresh_customer),
-    ):
-        for service_label, service in (
-            ("S0", initial_service),
-            ("ST", final_service),
-        ):
-            episodes = _run_panel(
+    )
+    rows = []
+    s0_episodes_by_customer: dict[str, tuple[EpisodeRecord, ...]] = {}
+    for customer_label, customer in customers:
+        episodes = _run_panel(
+            runner,
+            task_ids=task_ids,
+            tasks=heldout_tasks,
+            seed=seed,
+            customer=customer,
+            service=initial_service,
+            panel_name=f"heldout-{customer_label}-S0",
+        )
+        s0_episodes_by_customer[customer_label] = episodes
+        rows.append({
+            "customer_condition": customer_label,
+            "service_endpoint": "S0",
+            "identical_to_S0": False,
+            "episodes": [_episode_ref(item) for item in episodes],
+        })
+        if identical_services:
+            rows.append({
+                "customer_condition": customer_label,
+                "service_endpoint": "ST",
+                "identical_to_S0": True,
+                "episodes": [_episode_ref(item) for item in episodes],
+            })
+        else:
+            updated_episodes = _run_panel(
                 runner,
                 task_ids=task_ids,
                 tasks=heldout_tasks,
                 seed=seed,
                 customer=customer,
-                service=service,
-                panel_name=f"heldout-{customer_label}-{service_label}",
+                service=final_service,
+                panel_name=f"heldout-{customer_label}-ST",
             )
             rows.append({
                 "customer_condition": customer_label,
-                "service_endpoint": service_label,
-                "episodes": [_episode_ref(item) for item in episodes],
+                "service_endpoint": "ST",
+                "identical_to_S0": False,
+                "episodes": [_episode_ref(item) for item in updated_episodes],
             })
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "heldout_task_ids": list(task_ids),
         "seed": seed,
         "initial_service": _strategy_document("service", initial_service),
         "final_service": _strategy_document("service", final_service),
+        "services_identical": identical_services,
         "fresh_customer": fresh_customer.to_dict(),
         "cells": rows,
     }
@@ -608,7 +607,6 @@ def _project_context_episodes(
                 "reward": episode.native_reward,
                 "termination_reason": episode.termination_reason,
             },
-            "reviewer_feedback": dict(episode.raw_review),
             "trajectory_ref": episode.trajectory_ref,
         })
     return rows
@@ -662,24 +660,10 @@ def _tool_results(trajectory: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     return results
 
 
-def _has_clean_regression(
-    reference: Sequence[EpisodeRecord], candidate: Sequence[EpisodeRecord],
-) -> bool:
-    by_task = {item.task_id: item for item in candidate}
-    for baseline in reference:
-        updated = by_task.get(baseline.task_id)
-        if updated is None:
-            return True
-        if _clean_success(baseline) and not _clean_success(updated):
-            return True
-    return False
-
-
-def _clean_success(episode: EpisodeRecord) -> bool:
-    if episode.task_success is not True:
-        return False
-    review = episode.raw_review.get("native_review", {})
-    return not isinstance(review, Mapping) or review.get("agent_error") is not True
+def _accuracy(episodes: Sequence[EpisodeRecord]) -> float:
+    if not episodes:
+        raise ValueError("accuracy requires at least one task episode")
+    return sum(episode.task_success is True for episode in episodes) / len(episodes)
 
 
 def _episode_ref(episode: EpisodeRecord) -> dict[str, Any]:
@@ -693,7 +677,6 @@ def _episode_ref(episode: EpisodeRecord) -> dict[str, Any]:
         "task_success": episode.task_success,
         "native_reward": episode.native_reward,
         "trajectory_ref": episode.trajectory_ref,
-        "reviewer_feedback": dict(episode.raw_review),
     }
 
 

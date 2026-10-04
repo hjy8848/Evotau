@@ -16,12 +16,14 @@ TAU_BENCH_REPOSITORY = "sierra-research/tau2-bench"
 TAU_BENCH_COMMIT = "b7ea9074c1cba482b30687fecdb5c8425fd6f619"
 TAU2_PACKAGE_VERSION = "1.0.1"
 ROLE_NAMES = ("agent", "customer", "reviewer", "evaluator")
-EVOLUTION_ROLE_NAMES = (*ROLE_NAMES, "evolver")
+EVOLUTION_ROLE_NAMES = ("agent", "customer", "evaluator", "evolver")
 MODEL_ARGUMENT_NAMES = frozenset({
     "temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty",
     "api_base", "thinking_mode",
 })
-DEFAULT_ROLE_MODEL_ARGS = {role: {"temperature": 0.0} for role in EVOLUTION_ROLE_NAMES}
+DEFAULT_ROLE_MODEL_ARGS = {
+    role: {"temperature": 0.0} for role in (*ROLE_NAMES, "evolver")
+}
 REQUIRED_SOURCE_PATHS = frozenset({
     "data/tau2/domains/retail/tasks.json",
     "data/tau2/domains/retail/split_tasks.json",
@@ -42,6 +44,10 @@ REQUIRED_SOURCE_PATHS = frozenset({
     "src/tau2/evaluator/review_llm_judge.py",
     "src/tau2/evaluator/reviewer.py",
     "src/tau2/utils/llm_utils.py",
+})
+ALTERNATING_REQUIRED_SOURCE_PATHS = REQUIRED_SOURCE_PATHS - frozenset({
+    "src/tau2/evaluator/review_llm_judge.py",
+    "src/tau2/evaluator/reviewer.py",
 })
 def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
