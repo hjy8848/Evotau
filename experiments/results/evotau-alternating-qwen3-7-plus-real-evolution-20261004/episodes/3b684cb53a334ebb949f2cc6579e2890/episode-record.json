@@ -1,0 +1,72 @@
+{
+  "episode_id": "evotau-phase0-2d31d3cc-7619-4cc4-8286-e636600175f2",
+  "task_id": "73",
+  "seed": 1,
+  "customer_strategy_id": "f4ac8e0a74cf1b1f",
+  "service_strategy_id": "63be7e41e020bc00",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "trajectory_ref": "episodes/3b684cb53a334ebb949f2cc6579e2890/native-simulation.json",
+  "tool_calls": 4,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 1,
+  "raw_review": {
+    "native_review": {
+      "summary": "The agent correctly authenticated the user, retrieved the delivered order, processed the return for all four non-espresso items after obtaining confirmation, and properly denied the later request to add the espresso machine. The conversation achieved the intended outcome. The main issues were minor: the agent combined a user message with a tool call in one turn, cited a return-related policy not explicitly present in the guidelines, and the user made a later request inconsistent with the original instructions.",
+      "agent_error": true,
+      "user_error": true,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent sent a user-facing message and made a tool call in the same turn. The policy states that if the agent makes a tool call, it should not respond to the user at the same time, and vice versa.",
+          "correct_behavior": "The agent should have made the get_order_details tool call without including a user-facing response in the same turn, then responded after receiving the tool result."
+        },
+        {
+          "source": "user",
+          "error_type": null,
+          "error_tags": [
+            "inconsistent_behavior"
+          ],
+          "severity": "minor",
+          "turn_idx": 15,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The user originally stated they wanted to return everything except the coffee machine, and the return was processed accordingly. Later, the user asked to add the espresso machine to the return, contradicting the original instruction and previously stated intent.",
+          "correct_behavior": "The user should have stuck to the original goal of returning everything except the coffee machine, since the requested task had already been completed."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "hallucination"
+          ],
+          "severity": "minor",
+          "turn_idx": 16,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent told the user that 'per our policy, a return can only be processed once per order.' The provided policy does not state this rule explicitly for returns; it only states that exchange or modify order tools can be called once per order. The actual reason the espresso machine could not be added is that the order status was no longer 'delivered' after the return was processed.",
+          "correct_behavior": "The agent should have explained that the return had already been processed and the order status was changed to 'return requested', so no additional items could be added to the return, without citing a made-up policy limitation."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent requested the user's email address for authentication, looked up the user ID by email, and retrieved account details confirming the user's identity before proceeding with the return request.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

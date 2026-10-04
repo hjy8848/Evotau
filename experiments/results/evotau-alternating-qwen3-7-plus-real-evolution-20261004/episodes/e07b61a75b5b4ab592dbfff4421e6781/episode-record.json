@@ -1,0 +1,72 @@
+{
+  "episode_id": "evotau-phase0-83f9b684-227e-4977-9685-b03d71ce63f5",
+  "task_id": "5",
+  "seed": 50003,
+  "customer_strategy_id": "28782f59647fae61",
+  "service_strategy_id": "63be7e41e020bc00",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "trajectory_ref": "episodes/e07b61a75b5b4ab592dbfff4421e6781/native-simulation.json",
+  "tool_calls": 8,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 4,
+  "raw_review": {
+    "native_review": {
+      "summary": "The conversation proceeded correctly overall: the agent authenticated the user via name and zip code, identified the delivered order containing the water bottle and desk lamp, and followed the user's changing requests (first only desk lamp exchange, then no exchange and return the water bottle). The return was processed after explicit confirmation. The main issues were the user hallucinating an espresso machine that does not exist in the order, and the agent making multiple tool calls in the same turn on two occasions, which violates the one-tool-call-at-a-time policy.",
+      "agent_error": true,
+      "user_error": true,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "user",
+          "error_type": null,
+          "error_tags": [
+            "hallucination"
+          ],
+          "severity": "minor",
+          "turn_idx": 24,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The user asked to return an 'Espresso Machine' from order #W6390527, but no such item exists in that order according to the tool results, and the user instructions never mention an espresso machine. This is a fabricated item not grounded in the scenario.",
+          "correct_behavior": "The user should not have asked to return an item that is not part of the order or the scenario instructions."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made three get_order_details tool calls in the same turn, violating the policy that the agent should make at most one tool call at a time.",
+          "correct_behavior": "The agent should make one get_order_details call at a time and wait for the tool response before making the next call."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 12,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made two get_product_details tool calls simultaneously, violating the policy that the agent should make at most one tool call at a time.",
+          "correct_behavior": "The agent should make one get_product_details call at a time and wait for the tool response before making the next call."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent authenticated the user by looking up the account using the provided name and ZIP code, successfully finding and confirming the user's account (mei_kovacs_8020).",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

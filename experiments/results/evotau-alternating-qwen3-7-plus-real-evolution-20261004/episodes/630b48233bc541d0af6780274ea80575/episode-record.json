@@ -1,0 +1,46 @@
+{
+  "episode_id": "evotau-phase0-56a9a4fe-df1a-4086-abda-449de397b0bf",
+  "task_id": "93",
+  "seed": 1,
+  "customer_strategy_id": "0868017eaf3cd555",
+  "service_strategy_id": "b101e6af313ec2e9",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "trajectory_ref": "episodes/630b48233bc541d0af6780274ea80575/native-simulation.json",
+  "tool_calls": 7,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 3,
+  "raw_review": {
+    "native_review": {
+      "summary": "The user requested an exchange of a delivered laptop (15-inch, 32GB RAM) from order #W4073673 to a variant with i7 processor, 8GB RAM, and 1TB SSD. The agent authenticated the user via name and zip code, located the correct order, found the matching available variant (item #9844888101), confirmed the exchange details with the user, and successfully processed the exchange. The only error found was a minor policy violation where the agent made three tool calls simultaneously in turn 8 instead of one at a time. The user followed instructions correctly, provided only known information, and the task was completed successfully.",
+      "agent_error": true,
+      "user_error": false,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 8,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent made three tool calls (get_order_details for #W3826449, #W2905754, and #W4073673) in a single turn, violating the policy that states 'You should at most make one tool call at a time.'",
+          "correct_behavior": "The agent should have made one tool call at a time, waiting for each response before making the next call."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent successfully authenticated the user by looking up their account using name and zip code (Lei Wilson, 32255), which returned a valid user ID (lei_wilson_4541). The agent then accessed the user's details and orders, confirming the identity and proceeding with the exchange request.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}

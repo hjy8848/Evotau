@@ -1,0 +1,59 @@
+{
+  "episode_id": "evotau-phase0-27a69907-b042-4465-b135-55ffed378f87",
+  "task_id": "73",
+  "seed": 1,
+  "customer_strategy_id": "63be7e41e020bc00",
+  "service_strategy_id": "b101e6af313ec2e9",
+  "status": "complete",
+  "task_success": true,
+  "native_reward": 1.0,
+  "termination_reason": "user_stop",
+  "trajectory_ref": "episodes/4feb1f9d262946989d14e7ce70e8582f/native-simulation.json",
+  "tool_calls": 4,
+  "enforce_communication_protocol": false,
+  "mixed_text_tool_call_messages": 1,
+  "raw_review": {
+    "native_review": {
+      "summary": "The agent correctly authenticated Fatima Wilson, looked up her delivered order, identified the four items to return while excluding the espresso machine, obtained explicit confirmation, and processed the return to the original payment method. The only user error was a role-reversed opening message in which the user simulator mistakenly acted as the customer service agent; this did not affect the outcome. The agent made a minor hallucinated statement about return labels/pickup being included in the follow-up email.",
+      "agent_error": true,
+      "user_error": true,
+      "critical_user_error": false,
+      "has_errors": true,
+      "errors": [
+        {
+          "source": "user",
+          "error_type": null,
+          "error_tags": [
+            "guideline_violation"
+          ],
+          "severity": "minor",
+          "turn_idx": 1,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The user simulator spoke as if it were the customer service agent, offering to help with a return and asking the agent to provide an order number or email. This violates the simulation guidelines requiring the user to play the customer role and disclose information progressively.",
+          "correct_behavior": "The user should have greeted the agent as a customer and stated, for example, 'Hi, I'd like to return some items from my recent order except the coffee machine,' while letting the agent ask for any needed identity or order details."
+        },
+        {
+          "source": "agent",
+          "error_type": null,
+          "error_tags": [
+            "hallucination"
+          ],
+          "severity": "minor",
+          "turn_idx": 14,
+          "tick_start": null,
+          "tick_end": null,
+          "reasoning": "The agent stated that return labels or pickup arrangements 'will be included in that email.' The policy and tool response only indicate that the user will receive an email regarding how to return the items; they do not specify that the email will contain labels or pickup details. This is an ungrounded specific claim.",
+          "correct_behavior": "The agent should have said only that an email with return instructions will be sent, without inventing details about return labels or pickup arrangements."
+        }
+      ],
+      "cost": 0.0
+    },
+    "auth_classification": {
+      "status": "succeeded",
+      "reasoning": "The agent verified the user's identity by looking up the email address provided (fatima.wilson5721@example.com) and successfully retrieved the matching account details, including the user's name and address.",
+      "cost": 0.0
+    }
+  },
+  "notes": ""
+}
