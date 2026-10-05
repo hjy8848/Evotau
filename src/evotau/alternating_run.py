@@ -7,6 +7,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -32,6 +33,7 @@ from .tau_provenance import (
     role_model_args_for_runtime,
     sha256_json,
     verify_git_blob_sha1,
+    write_manifest_once,
 )
 
 
@@ -54,7 +56,20 @@ def run_from_config(
     project_root = config_file.parent.parent if config_file.parent.name == "configs" else config_file.parent
     output_directory = project_root / manifest.output_path
     checkpoint_path = project_root / manifest.checkpoint_path
+    output_directory.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_directory / "manifest.json"
+    if manifest_path.exists():
+        if json.loads(manifest_path.read_text(encoding="utf-8")) != manifest.to_document():
+            raise ValueError("existing run directory belongs to a different frozen manifest")
+    elif any(output_directory.iterdir()):
+        raise FileExistsError("refusing to bind an existing run directory without its manifest")
+    else:
+        write_manifest_once(manifest_path, manifest)
+    execution_state_path, execution_state = _begin_execution_attempt(
+        output_directory, manifest.sha256,
+    )
     budget = RequestBudget(manifest.request_budget_cap)
+    budget.enable_live_usage(output_directory / "api-usage-live.json")
     evolution_tasks = load_alternating_tasks(manifest, data_dir, include_heldout=False)
     runner = TauBenchEpisodeRunner(
         manifest=manifest,
@@ -127,6 +142,8 @@ def run_from_config(
         runner=runner,
         domain_policy=runner.service_policy_text,
         request_budget=budget,
+        proposal_path=output_directory / "fresh-customer-proposal.json",
+        manifest_sha256=manifest.sha256,
     )
     evolution_wall_clock_seconds = perf_counter() - evolution_started
     validation_wall_clock_seconds = sum(
@@ -159,6 +176,11 @@ def run_from_config(
     )
     heldout_wall_clock_seconds = perf_counter() - heldout_started
     api_usage_by_call_name = budget.api_usage_by_call_name()
+    execution_state = _finish_execution_attempt(execution_state_path)
+    completed_episodes = len(tuple((output_directory / "episodes").glob("*/episode-record.json")))
+    failed_episode_attempts = len(
+        tuple((output_directory / "episodes").glob("*/incomplete-run.json")),
+    )
     final_result = {
         "schema_version": 2,
         "status": "complete",
@@ -175,15 +197,59 @@ def run_from_config(
         "provider_usage": budget.snapshot().to_dict(),
         "api_usage_by_call_name": api_usage_by_call_name,
         "api_usage_by_role": _api_usage_by_role(api_usage_by_call_name),
+        "resume_count": execution_state["resume_count"],
+        "completed_episodes": completed_episodes,
+        "failed_episode_attempts": failed_episode_attempts,
         "timing": {
             "evolution_wall_clock_seconds": round(evolution_wall_clock_seconds, 6),
             "validation_wall_clock_seconds": round(validation_wall_clock_seconds, 6),
             "heldout_wall_clock_seconds": round(heldout_wall_clock_seconds, 6),
-            "total_wall_clock_seconds": round(perf_counter() - run_started, 6),
+            "total_wall_clock_seconds": execution_state["total_wall_clock_seconds"],
+            "current_process_wall_clock_seconds": round(perf_counter() - run_started, 6),
         },
     }
     _write_json_atomic(output_directory / "alternating-result.json", final_result)
     return output_directory, final_result
+
+
+def _begin_execution_attempt(
+    output_directory: Path, manifest_sha256: str,
+) -> tuple[Path, dict[str, Any]]:
+    path = output_directory / "run-execution-state.json"
+    now = datetime.now(UTC)
+    if path.exists():
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if state.get("manifest_sha256") != manifest_sha256:
+            raise ValueError("run execution state belongs to a different frozen manifest")
+        invocation_count = int(state.get("invocation_count", 0)) + 1
+        first_started_at = state.get("first_started_at")
+    else:
+        invocation_count = 1
+        first_started_at = now.isoformat()
+    state = {
+        "schema_version": 1,
+        "manifest_sha256": manifest_sha256,
+        "first_started_at": first_started_at,
+        "last_started_at": now.isoformat(),
+        "invocation_count": invocation_count,
+        "resume_count": max(0, invocation_count - 1),
+        "status": "running",
+    }
+    _write_json_atomic(path, state)
+    return path, state
+
+
+def _finish_execution_attempt(path: Path) -> dict[str, Any]:
+    state = json.loads(path.read_text(encoding="utf-8"))
+    started = datetime.fromisoformat(state["first_started_at"])
+    completed = datetime.now(UTC)
+    state.update({
+        "last_completed_at": completed.isoformat(),
+        "status": "complete",
+        "total_wall_clock_seconds": round((completed - started).total_seconds(), 6),
+    })
+    _write_json_atomic(path, state)
+    return state
 
 
 def _api_usage_by_role(

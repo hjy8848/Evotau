@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import traceback
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
@@ -33,7 +34,12 @@ from .tau_provenance import sha256_json, write_manifest_once
 
 
 class NativeEpisodeRunError(RuntimeError):
-    """A native run failed; provider or credential details are kept out of records."""
+    """A native run failed while preserving its actionable original exception text."""
+
+    def __init__(self, original: Exception) -> None:
+        self.original_type = type(original).__name__
+        self.original_message = str(original)
+        super().__init__(f"{self.original_type}: {self.original_message}")
 
 
 class TauBenchEpisodeRunner:
@@ -344,7 +350,7 @@ class TauBenchEpisodeRunner:
                 "episode_key": episode_key,
                 "episode_key_sha256": episode_key_sha256,
                 "panel_name": panel_name,
-                "failure_type": type(exc).__name__,
+                **_exception_details(exc),
                 "native_simulation_saved": simulation_path.exists(),
                 "communication_protocol_observation": (
                     None if simulation_payload is None else observe_communication_protocol(
@@ -358,7 +364,7 @@ class TauBenchEpisodeRunner:
                 "budget_delta": _snapshot_delta(before, after),
                 "episode_budget_delta": exact_episode_usage.to_dict(),
             })
-            raise NativeEpisodeRunError(type(exc).__name__) from exc
+            raise NativeEpisodeRunError(exc) from exc
 
     def _load_completed_episode_cache(self) -> None:
         episode_root = self.output_directory / "episodes"
@@ -378,11 +384,11 @@ class TauBenchEpisodeRunner:
                 incomplete = json.loads(incomplete_path.read_text(encoding="utf-8"))
                 key = incomplete.get("episode_key")
                 key_sha = incomplete.get("episode_key_sha256")
-                if isinstance(key, dict) and key_sha == sha256_json(key):
-                    raise ValueError(
-                        "an interrupted native episode has the same frozen task/seed/strategy/panel key; "
-                        "refusing an unregistered duplicate provider run"
-                    )
+                if isinstance(key, dict) and key_sha != sha256_json(key):
+                    raise ValueError("incomplete native episode has an invalid frozen episode key")
+                # An incomplete attempt is diagnostic evidence, not a cache hit.
+                # Re-dispatching this exact frozen key is safe; successful keys
+                # are still loaded below and reused without provider calls.
                 continue
             if not telemetry_path.exists() and not record_path.exists():
                 continue
@@ -410,7 +416,9 @@ class TauBenchEpisodeRunner:
                 if isinstance(saved_episode_usage, dict)
                 else _budget_snapshot_difference(after, before)
             )
-            self._completed_episode_cache[key_sha] = (record, usage, True)
+            self._completed_episode_cache[key_sha] = (
+                record, usage, not self.request_budget.live_usage_restored,
+            )
 
     def load_trajectory(self, episode: EpisodeRecord) -> Mapping[str, Any] | None:
         """Load one saved native simulation after enforcing output-directory containment."""
@@ -487,3 +495,30 @@ def _write_json_once(path: Path, value: Mapping[str, Any]) -> None:
     with path.open("x", encoding="utf-8", newline="\n") as handle:
         json.dump(value, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
+
+
+def _exception_details(exc: Exception) -> dict[str, Any]:
+    """Keep the failure reason and a short cause chain, with a bounded traceback."""
+    chain = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(chain) < 6:
+        seen.add(id(current))
+        chain.append({
+            "type": type(current).__name__,
+            "message": str(current)[:8_000],
+            "repr": repr(current)[:8_000],
+        })
+        current = current.__cause__ or current.__context__
+    cause = exc.__cause__ or exc.__context__
+    formatted = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return {
+        "failure_type": type(exc).__name__,
+        "failure_message": str(exc)[:8_000],
+        "failure_repr": repr(exc)[:8_000],
+        "cause_type": None if cause is None else type(cause).__name__,
+        "cause_message": None if cause is None else str(cause)[:8_000],
+        "exception_chain": chain,
+        "traceback": formatted[-16_000:],
+        "traceback_truncated": len(formatted) > 16_000,
+    }

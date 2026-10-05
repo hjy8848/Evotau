@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import sys
+import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from threading import Lock, RLock
 from time import perf_counter, sleep
 from types import ModuleType
@@ -252,6 +256,90 @@ class RequestBudget:
             f"evotau_call_name_{id(self)}", default=None,
         )
         self._call_usage: dict[str, dict[str, int | float]] = {}
+        self._live_usage_path: Path | None = None
+        self._live_usage_restored = False
+        self._live_usage_write_lock = Lock()
+
+    @property
+    def live_usage_restored(self) -> bool:
+        """Whether this budget restored provider calls from a previous process."""
+        return self._live_usage_restored
+
+    def enable_live_usage(self, path: str | Path) -> None:
+        """Restore and atomically persist cumulative provider telemetry after every call."""
+        target = Path(path).expanduser().absolute()
+        if self._live_usage_path is not None:
+            if self._live_usage_path != target:
+                raise ValueError("live API usage is already bound to another run directory")
+            return
+        self._live_usage_path = target
+        if target.exists():
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            if not isinstance(payload, Mapping) or payload.get("schema_version") != 1:
+                raise ValueError("live API usage artifact has an unsupported schema")
+            provider_usage = payload.get("provider_usage")
+            call_usage = payload.get("api_usage_by_call_name")
+            if not isinstance(provider_usage, Mapping) or not isinstance(call_usage, Mapping):
+                raise ValueError("live API usage artifact is incomplete")
+            self.restore_usage(BudgetSnapshot(**dict(provider_usage)))
+            restored: dict[str, dict[str, int | float]] = {}
+            integer_fields = (
+                "calls", "successes", "failures", "prompt_tokens", "completion_tokens",
+                "usage_responses", "usage_unavailable",
+            )
+            for call_name, counters in call_usage.items():
+                if not isinstance(call_name, str) or not isinstance(counters, Mapping):
+                    raise TypeError("live API call usage rows are malformed")
+                row: dict[str, int | float] = {}
+                for name in integer_fields:
+                    item = counters.get(name, 0)
+                    if type(item) is not int or item < 0:
+                        raise ValueError("live API usage counters must be non-negative integers")
+                    row[name] = item
+                elapsed = counters.get("total_elapsed_seconds", 0.0)
+                if (isinstance(elapsed, bool) or not isinstance(elapsed, (int, float))
+                        or elapsed < 0):
+                    raise ValueError("live API elapsed time must be non-negative")
+                row["total_elapsed_seconds"] = float(elapsed)
+                if row["successes"] + row["failures"] != row["calls"]:
+                    raise ValueError("live API success/failure counts are inconsistent")
+                restored[call_name] = row
+            with self._lock:
+                self._call_usage = restored
+            self._live_usage_restored = True
+        self._persist_live_usage()
+
+    def _persist_live_usage(self) -> None:
+        target = self._live_usage_path
+        if target is None:
+            return
+        # Serialize writes and take the newest snapshot only after acquiring this
+        # lock, so a slower thread cannot replace a newer snapshot with stale data.
+        with self._live_usage_write_lock:
+            payload = {
+                "schema_version": 1,
+                "provider_usage": self.snapshot().to_dict(),
+                "api_usage_by_call_name": self.api_usage_by_call_name(),
+            }
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".tmp", dir=target.parent,
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+                    json.dump(payload, stream, ensure_ascii=False, indent=2)
+                    stream.write("\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary_name, target)
+                directory_fd = os.open(target.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                if os.path.exists(temporary_name):
+                    os.unlink(temporary_name)
 
     def reserve_episode_dispatch(self) -> ProviderDispatchReservation | None:
         """Reserve one first request so parallel episodes cannot oversubscribe the cap."""
@@ -471,6 +559,7 @@ class RequestBudget:
                 row["usage_responses"] += 1
             else:
                 row["usage_unavailable"] += 1
+        self._persist_live_usage()
 
     def restore_usage(self, snapshot: BudgetSnapshot) -> None:
         """Restore cumulative accounting before a resumed run dispatches work."""

@@ -146,3 +146,19 @@ def test_one_generation_uses_pinned_tau_runtime_with_local_completion_stub(
     assert result["generations"][0]["timing"]["generation_wall_clock_seconds"] >= 0
     assert result["timing"]["total_wall_clock_seconds"] >= 0
     assert (output / "alternating-result.json").is_file()
+
+    calls_before_resume = len(calls)
+    attempts_before_resume = result["provider_usage"]["attempts"]
+    resumed_output, resumed_result = run_from_config(config_path, tau2_data_dir=data_dir)
+    assert resumed_output == output
+    assert len(calls) == calls_before_resume
+    assert resumed_result["provider_usage"]["attempts"] == attempts_before_resume
+    usage_counters = ("calls", "successes", "failures", "prompt_tokens", "completion_tokens")
+    assert {
+        name: {key: stats[key] for key in usage_counters}
+        for name, stats in resumed_result["api_usage_by_call_name"].items()
+    } == {
+        name: {key: stats[key] for key in usage_counters}
+        for name, stats in result["api_usage_by_call_name"].items()
+    }
+    assert resumed_result["resume_count"] == 1

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "manifest_sha256": "b13c1a737dc32e45390bfd176072e2b8bd1ca78189e29d8651292f498001cfe7",
+  "generation": 0,
+  "stage": "service_proposal_ready",
+  "frozen_customer": {
+    "role": "customer",
+    "strategy_id": "52c7d5108322c840",
+    "strategy": "After the agent completes a requested action (e.g., an exchange or return), ask a follow-up question about a related but unstated detail (such as which email address will receive the confirmation, or whether the replacement ships before the original is returned) to test whether the agent stays grounded in the actual account data and policy rather than inventing or guessing an answer."
+  },
+  "frozen_service": {
+    "role": "service",
+    "strategy_id": "63be7e41e020bc00",
+    "strategy": ""
+  },
+  "evolver_input_sha256": "ec10263c37e7d9766af4a4751fd733c1a2c7845bb10da5a76a5c4a3baff3ccd9",
+  "analysis": "The current service strategy is empty, and the agent relies solely on the fixed policy. Across the five trajectories, the agent performs well on grounded, well-specified requests (cancellation, returns, exchanges) but fails on an ambiguous request (task 67) where the user cannot identify their most recent order. In that failure, the agent correctly notes that order placement dates are not available in the tool data, but then repeatedly asks the user for information they do not have, and eventually transfers to a human agent, which is not a successful resolution. The customer strategy deliberately probes whether the agent stays grounded in actual account data and policy, asking about email addresses, shipping timing, packaging, and tax. The agent handles these probes well by refusing to speculate and only stating what is in the data. However, the failure on task 67 suggests a need for a more proactive, data-driven approach to disambiguate orders when the user cannot provide an order ID or date. The agent should use all available order attributes (status, items, payment amounts) to help the user identify the correct order, and should avoid transferring to a human agent when the request is within scope and can be resolved by reasoning over the available data. The strategy should emphasize using the full set of order details to narrow down options, and only transfer when truly out of scope.",
+  "strategy": "When a user cannot identify a specific order (e.g., no order ID, no date, no item recollection), do not repeatedly ask for information they lack or transfer to a human agent prematurely. Instead, proactively present all available order attributes from the tool data—status (pending/delivered), item names, item counts, and total payment amounts—and use these to help the user narrow down the correct order. For example, if the user is looking for their 'most recent' order, explain that order dates are not available, but use the status as a heuristic (pending orders are typically more recent than delivered ones) and list the pending orders with their item names and totals, asking the user to confirm which one matches their memory. If the user still cannot decide, ask targeted questions about the items or approximate total to disambiguate. Only transfer to a human agent if the request is genuinely outside the scope of the tools (e.g., asking for information not stored in the system). Additionally, when handling exchanges or returns, always confirm the exact email on file from the user profile data, and explicitly state that shipping timelines, packaging requirements, and tax details are not available in the system, rather than speculating. Before any database-modifying action, list all details and obtain explicit 'yes' confirmation, and remind the user to confirm they have provided all items to be changed.",
+  "strategy_id": "6b458d111e4b88bd"
+}

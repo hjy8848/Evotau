@@ -91,6 +91,42 @@ def test_request_budget_records_call_name_success_failure_tokens_and_latency() -
     assert usage["agent_response"]["usage_unavailable"] == 1
 
 
+def test_live_api_usage_survives_process_resume_without_double_counting(tmp_path) -> None:
+    usage_path = tmp_path / "api-usage-live.json"
+
+    def provider(*, model: str):
+        return {"usage": {"prompt_tokens": 8, "completion_tokens": 3}}
+
+    module = SimpleNamespace(completion=provider, DEFAULT_MAX_RETRIES=0)
+
+    def generate(*, model: str, call_name: str):
+        return module.completion(model=model)
+
+    module.generate = generate
+    first_process = RequestBudget(cap=None)
+    first_process.enable_live_usage(usage_path)
+    with first_process.instrument_tau_llm_utils(module):
+        module.generate(model="model-a", call_name="evotau_customer_evolver")
+
+    resumed_process = RequestBudget(cap=None)
+    resumed_process.enable_live_usage(usage_path)
+    assert resumed_process.live_usage_restored is True
+    assert resumed_process.snapshot().attempts == 1
+    assert resumed_process.api_usage_by_call_name()["evotau_customer_evolver"]["calls"] == 1
+    with resumed_process.instrument_tau_llm_utils(module):
+        module.generate(model="model-a", call_name="agent_response")
+
+    final_process = RequestBudget(cap=None)
+    final_process.enable_live_usage(usage_path)
+    assert final_process.snapshot().attempts == 2
+    assert final_process.snapshot().prompt_tokens == 16
+    assert final_process.snapshot().completion_tokens == 6
+    usage = final_process.api_usage_by_call_name()
+    assert usage["evotau_customer_evolver"]["calls"] == 1
+    assert usage["agent_response"]["calls"] == 1
+    assert sum(row["calls"] for row in usage.values()) == 2
+
+
 def test_episode_reservations_prevent_parallel_budget_oversubscription() -> None:
     calls: list[str] = []
     calls_lock = Lock()

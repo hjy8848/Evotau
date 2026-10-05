@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ CustomerEvolver = Callable[[Mapping[str, Any], int], Sequence[str]]
 ServiceEvolver = Callable[[Mapping[str, Any]], Mapping[str, str]]
 EpisodeRunner = Callable[..., EpisodeRecord]
 MAX_PARALLEL_EPISODES = 4
+_MAX_EVOLVER_RAW_RESPONSE_CHARS = 16_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +32,17 @@ class AlternatingResult:
     service: PromptStrategy
     generations: tuple[Mapping[str, Any], ...]
     final_evolution_episodes: tuple[EpisodeRecord, ...]
+
+
+class EvolverJSONError(ValueError):
+    """Strict JSON parse failure with bounded provider output for diagnostics."""
+
+    def __init__(self, *, call_name: str, raw_response: str, parse_error: str) -> None:
+        super().__init__(f"{call_name} returned invalid JSON: {parse_error}")
+        self.call_name = call_name
+        self.raw_response = raw_response[:_MAX_EVOLVER_RAW_RESPONSE_CHARS]
+        self.raw_response_truncated = len(raw_response) > _MAX_EVOLVER_RAW_RESPONSE_CHARS
+        self.parse_error = parse_error
 
 
 class LLMAlternatingEvolvers:
@@ -121,13 +134,42 @@ class LLMAlternatingEvolvers:
             num_retries=0,
             **dict(model_args),
         )
-        try:
-            value = json.loads(message.content or "")
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise ValueError("Evolver returned invalid JSON") from exc
+        value = _parse_evolver_json(message.content or "", call_name=call_name)
         if not isinstance(value, dict):
             raise TypeError("evolver responses must be JSON objects")
         return value
+
+
+def _strip_json_markdown_fence(content: str) -> str:
+    """Remove only a complete, standard JSON markdown fence; leave other text intact."""
+    if not isinstance(content, str):
+        return content
+    stripped = content.strip()
+    lines = stripped.splitlines()
+    if len(lines) >= 3 and lines[0].strip().lower() in {"```", "```json"} and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return content
+
+
+def _parse_evolver_json(raw_content: str, *, call_name: str) -> Any:
+    try:
+        return json.loads(raw_content)
+    except (TypeError, json.JSONDecodeError) as first_error:
+        cleaned = _strip_json_markdown_fence(raw_content)
+        if cleaned == raw_content:
+            raise EvolverJSONError(
+                call_name=call_name,
+                raw_response=str(raw_content),
+                parse_error=str(first_error),
+            ) from first_error
+        try:
+            return json.loads(cleaned)
+        except (TypeError, json.JSONDecodeError) as second_error:
+            raise EvolverJSONError(
+                call_name=call_name,
+                raw_response=str(raw_content),
+                parse_error=str(second_error),
+            ) from second_error
 
 
 def run_alternating_evolution(
@@ -198,6 +240,14 @@ def run_alternating_evolution(
         if not 0 <= start_generation <= generations:
             raise ValueError("alternating checkpoint generation is outside the frozen run")
 
+    stage_order = (
+        "customer_incumbent_complete", "customer_proposals_ready",
+        "customer_candidates_complete", "customer_selected",
+        "service_proposal_ready", "service_E_complete", "validation_complete",
+        "generation_complete",
+    )
+    stage_rank = {name: index for index, name in enumerate(stage_order)}
+
     for generation in range(start_generation, generations):
         generation_started = perf_counter()
         customer_phase_started = generation_started
@@ -205,63 +255,165 @@ def run_alternating_evolution(
         generation_seed = seed + generation
         customer_before = customer
         service_before = service
+        old_service = service
         budget_before = None if request_budget is None else request_budget.snapshot().to_dict()
+        generation_prefix = f"generation-{generation:04d}"
+        stage_file = None if output_root is None else output_root / f"{generation_prefix}-stage.json"
+        stage_state = _read_json_if_exists(stage_file)
+        if (stage_state is not None and (
+                stage_state.get("manifest_sha256") != manifest_sha256
+                or stage_state.get("generation") != generation
+                or stage_state.get("customer_before") != customer_before.to_dict()
+                or stage_state.get("service_before") != service_before.to_dict()
+                or stage_state.get("stage") not in stage_rank)):
+            raise ValueError("generation stage checkpoint does not match its frozen input")
+        stage_state_box = {"value": stage_state}
+
+        def record_stage(
+            stage: str, *, _file: Path | None = stage_file,
+            _generation: int = generation,
+            _customer: PromptStrategy = customer_before,
+            _service: PromptStrategy = service_before,
+            _state_box: dict[str, Any] = stage_state_box,
+            **values: Any,
+        ) -> None:
+            if _file is None:
+                return
+            saved_stage = _state_box["value"]
+            current_rank = -1 if saved_stage is None else stage_rank[saved_stage["stage"]]
+            if stage_rank[stage] < current_rank:
+                return
+            payload = {
+                "schema_version": 1,
+                "manifest_sha256": manifest_sha256,
+                "generation": _generation,
+                "stage": stage,
+                "customer_before": _customer.to_dict(),
+                "service_before": _service.to_dict(),
+                **values,
+            }
+            _write_json_atomic(_file, payload)
+            _state_box["value"] = payload
 
         incumbent_runs = _run_panel(
-            runner,
-            task_ids=e_tasks,
-            tasks=tasks,
-            seed=generation_seed,
-            customer=customer,
-            service=service,
+            runner, task_ids=e_tasks, tasks=tasks, seed=generation_seed,
+            customer=customer_before, service=service_before,
             panel_name=f"generation-{generation}-customer-incumbent",
             max_parallel_episodes=max_parallel_episodes,
         )
         incumbent_accuracy = _accuracy(incumbent_runs)
+        record_stage(
+            "customer_incumbent_complete", incumbent_accuracy=incumbent_accuracy,
+            incumbent_episodes=[_episode_ref(item) for item in incumbent_runs],
+        )
         proposal_context = {
             "generation": generation,
             "task_interactions": _context_episodes(incumbent_runs, runner, tasks),
             "incumbent_accuracy": incumbent_accuracy,
             "service_policy": domain_policy,
-            "current_customer_strategy": customer.text,
-            "current_service_strategy": service.text,
+            "current_customer_strategy": customer_before.text,
+            "current_service_strategy": service_before.text,
             "accuracy_history": history,
         }
-        candidate_texts = tuple(_provider_call(
-            request_budget, customer_evolver, proposal_context, customer_candidate_count,
-        ))[:customer_candidate_count]
-        candidates = tuple(PromptStrategy(text) for text in candidate_texts)
+        customer_input_sha = sha256_json(proposal_context)
+        customer_proposal_path = (
+            None if output_root is None else output_root / f"{generation_prefix}-customer-proposals.json"
+        )
+        if customer_proposal_path is not None and customer_proposal_path.exists():
+            customer_proposal_doc = json.loads(customer_proposal_path.read_text(encoding="utf-8"))
+            _validate_customer_proposal_document(
+                customer_proposal_doc, generation=generation,
+                manifest_sha256=manifest_sha256, customer=customer_before,
+                service=service_before, input_sha256=customer_input_sha,
+            )
+        else:
+            try:
+                candidate_texts = tuple(_provider_call(
+                    request_budget, customer_evolver, proposal_context, customer_candidate_count,
+                ))[:customer_candidate_count]
+            except EvolverJSONError as exc:
+                _append_evolver_failure(output_root, {
+                    "generation": generation,
+                    "stage": "customer_proposals",
+                    "call_name": exc.call_name,
+                    "raw_response": exc.raw_response,
+                    "raw_response_truncated": exc.raw_response_truncated,
+                    "parse_error": exc.parse_error,
+                })
+                raise
+            candidates = tuple(PromptStrategy(text) for text in candidate_texts)
+            customer_proposal_doc = {
+                "schema_version": 1,
+                "manifest_sha256": manifest_sha256,
+                "generation": generation,
+                "stage": "customer_proposals_ready",
+                "incumbent_customer": _strategy_document("customer", customer_before),
+                "frozen_service": _strategy_document("service", service_before),
+                "evolver_input_sha256": customer_input_sha,
+                "customer_candidates": [
+                    {
+                        "index": index,
+                        "strategy": candidate.text,
+                        "strategy_id": customer_strategy_id(candidate),
+                    }
+                    for index, candidate in enumerate(candidates)
+                ],
+            }
+            if customer_proposal_path is not None:
+                _write_json_once(customer_proposal_path, customer_proposal_doc)
+        _validate_customer_proposal_document(
+            customer_proposal_doc, generation=generation,
+            manifest_sha256=manifest_sha256, customer=customer_before,
+            service=service_before, input_sha256=customer_input_sha,
+        )
+        candidates = tuple(
+            PromptStrategy(item["strategy"])
+            for item in customer_proposal_doc["customer_candidates"]
+        )
+        record_stage(
+            "customer_proposals_ready",
+            customer_proposals_path=(
+                None if customer_proposal_path is None else customer_proposal_path.name
+            ),
+            customer_candidate_ids=[customer_strategy_id(item) for item in candidates],
+        )
+
         candidate_runs = tuple(
             _run_panel(
-                runner,
-                task_ids=e_tasks,
-                tasks=tasks,
-                seed=generation_seed,
-                customer=candidate,
-                service=service,
+                runner, task_ids=e_tasks, tasks=tasks, seed=generation_seed,
+                customer=candidate, service=service_before,
                 panel_name=f"generation-{generation}-customer-candidate-{index}",
                 max_parallel_episodes=max_parallel_episodes,
             )
             for index, candidate in enumerate(candidates)
         )
         candidate_accuracies = [_accuracy(runs) for runs in candidate_runs]
+        record_stage(
+            "customer_candidates_complete",
+            candidate_accuracies=candidate_accuracies,
+            candidate_episodes=[[_episode_ref(item) for item in runs] for runs in candidate_runs],
+        )
 
         selected_customer_source: str | int = "incumbent"
+        customer = customer_before
         selected_runs = incumbent_runs
         selected_accuracy = incumbent_accuracy
         for index, (candidate, runs, accuracy) in enumerate(
             zip(candidates, candidate_runs, candidate_accuracies, strict=True),
         ):
-            # Strict comparison makes an exact tie keep the incumbent. Candidate
-            # ties are stable: the first candidate at the lowest score wins.
+            # Strict comparison keeps incumbent on ties and preserves first-minimum order.
             if accuracy < selected_accuracy:
                 customer = candidate
                 selected_customer_source = index
                 selected_runs = runs
                 selected_accuracy = accuracy
-
+        record_stage(
+            "customer_selected", selected_customer=selected_customer_source,
+            selected_customer_id=customer_strategy_id(customer),
+            selected_accuracy=selected_accuracy,
+            selected_episodes=[_episode_ref(item) for item in selected_runs],
+        )
         customer_phase_elapsed = perf_counter() - customer_phase_started
-        old_service = service
         old_accuracy = selected_accuracy
         service_phase_started = perf_counter()
         service_context = {
@@ -269,16 +421,67 @@ def run_alternating_evolution(
             "task_interactions": _service_context_episodes(selected_runs, runner, tasks),
             "selected_customer_accuracy": selected_accuracy,
             "customer_strategy": customer.text,
-            "current_service_strategy": service.text,
+            "current_service_strategy": service_before.text,
             "service_policy": domain_policy,
             "accuracy_history": history,
         }
-        service_proposal = _provider_call(request_budget, service_evolver, service_context)
-        service_analysis = service_proposal.get("analysis", "")
-        proposed_text = service_proposal.get("strategy", service.text)
-        if not isinstance(service_analysis, str) or not isinstance(proposed_text, str):
-            raise TypeError("Service Evolver must return natural-language analysis and strategy")
-        proposed_service = PromptStrategy(proposed_text)
+        service_input_sha = sha256_json(service_context)
+        service_proposal_path = (
+            None if output_root is None else output_root / f"{generation_prefix}-service-proposal.json"
+        )
+        if service_proposal_path is not None and service_proposal_path.exists():
+            service_proposal_doc = json.loads(service_proposal_path.read_text(encoding="utf-8"))
+            _validate_service_proposal_document(
+                service_proposal_doc, generation=generation,
+                manifest_sha256=manifest_sha256, customer=customer,
+                service=service_before, input_sha256=service_input_sha,
+            )
+        else:
+            try:
+                service_proposal = _provider_call(request_budget, service_evolver, service_context)
+            except EvolverJSONError as exc:
+                _append_evolver_failure(output_root, {
+                    "generation": generation,
+                    "stage": "service_proposal",
+                    "call_name": exc.call_name,
+                    "raw_response": exc.raw_response,
+                    "raw_response_truncated": exc.raw_response_truncated,
+                    "parse_error": exc.parse_error,
+                })
+                raise
+            service_analysis = service_proposal.get("analysis", "")
+            proposed_text = service_proposal.get("strategy", service_before.text)
+            if not isinstance(service_analysis, str) or not isinstance(proposed_text, str):
+                raise TypeError("Service Evolver must return natural-language analysis and strategy")
+            proposed_service = PromptStrategy(proposed_text)
+            service_proposal_doc = {
+                "schema_version": 1,
+                "manifest_sha256": manifest_sha256,
+                "generation": generation,
+                "stage": "service_proposal_ready",
+                "frozen_customer": _strategy_document("customer", customer),
+                "frozen_service": _strategy_document("service", service_before),
+                "evolver_input_sha256": service_input_sha,
+                "analysis": service_analysis,
+                "strategy": proposed_service.text,
+                "strategy_id": service_strategy_id(proposed_service),
+            }
+            if service_proposal_path is not None:
+                _write_json_once(service_proposal_path, service_proposal_doc)
+        _validate_service_proposal_document(
+            service_proposal_doc, generation=generation,
+            manifest_sha256=manifest_sha256, customer=customer,
+            service=service_before, input_sha256=service_input_sha,
+        )
+        service_analysis = service_proposal_doc["analysis"]
+        proposed_service = PromptStrategy(service_proposal_doc["strategy"])
+        record_stage(
+            "service_proposal_ready",
+            service_proposal_path=(
+                None if service_proposal_path is None else service_proposal_path.name
+            ),
+            proposed_service_id=service_strategy_id(proposed_service),
+        )
 
         proposed_runs: tuple[EpisodeRecord, ...] = ()
         proposed_accuracy = old_accuracy
@@ -289,14 +492,10 @@ def run_alternating_evolution(
         validation_new_runs: tuple[EpisodeRecord, ...] = ()
         accepted = False
         service_reason = "The Service strategy did not change."
-        if proposed_service.text != service.text:
+        if proposed_service.text != service_before.text:
             proposed_runs = _run_panel(
-                runner,
-                task_ids=e_tasks,
-                tasks=tasks,
-                seed=generation_seed,
-                customer=customer,
-                service=proposed_service,
+                runner, task_ids=e_tasks, tasks=tasks, seed=generation_seed,
+                customer=customer, service=proposed_service,
                 panel_name=f"generation-{generation}-service-candidate",
                 max_parallel_episodes=max_parallel_episodes,
             )
@@ -307,46 +506,51 @@ def run_alternating_evolution(
                     "Rejected by native E accuracy: proposed Service accuracy did not exceed "
                     "the old Service accuracy."
                 )
+        record_stage(
+            "service_E_complete", proposed_accuracy=proposed_accuracy,
+            improved_on_E=improved_on_e,
+            service_candidate_episodes=[_episode_ref(item) for item in proposed_runs],
+        )
+
+        if proposed_service.text == service_before.text:
+            service_reason = "The Service strategy did not change."
+        elif improved_on_e:
+            validation_started = perf_counter()
+            validation_old_runs = _run_panel(
+                runner, task_ids=v_tasks, tasks=tasks, seed=seed,
+                customer=None, service=service_before,
+                panel_name=f"generation-{generation}-validation-old-native-customer",
+                max_parallel_episodes=max_parallel_episodes,
+            )
+            validation_new_runs = _run_panel(
+                runner, task_ids=v_tasks, tasks=tasks, seed=seed,
+                customer=None, service=proposed_service,
+                panel_name=f"generation-{generation}-validation-proposed-native-customer",
+                max_parallel_episodes=max_parallel_episodes,
+            )
+            validation_elapsed = perf_counter() - validation_started
+            validation_old_accuracy = _accuracy(validation_old_runs)
+            validation_new_accuracy = _accuracy(validation_new_runs)
+            if validation_new_accuracy >= validation_old_accuracy:
+                service = proposed_service
+                accepted = True
+                service_reason = "Accepted: E accuracy improved and native V accuracy did not decrease."
             else:
-                validation_started = perf_counter()
-                validation_old_runs = _run_panel(
-                    runner,
-                    task_ids=v_tasks,
-                    tasks=tasks,
-                    seed=seed,
-                    customer=None,
-                    service=old_service,
-                    panel_name=f"generation-{generation}-validation-old-native-customer",
-                    max_parallel_episodes=max_parallel_episodes,
-                )
-                validation_new_runs = _run_panel(
-                    runner,
-                    task_ids=v_tasks,
-                    tasks=tasks,
-                    seed=seed,
-                    customer=None,
-                    service=proposed_service,
-                    panel_name=f"generation-{generation}-validation-proposed-native-customer",
-                    max_parallel_episodes=max_parallel_episodes,
-                )
-                validation_elapsed = perf_counter() - validation_started
-                validation_old_accuracy = _accuracy(validation_old_runs)
-                validation_new_accuracy = _accuracy(validation_new_runs)
-                if validation_new_accuracy >= validation_old_accuracy:
-                    service = proposed_service
-                    accepted = True
-                    service_reason = "Accepted: E accuracy improved and native V accuracy did not decrease."
-                else:
-                    service_reason = "Rejected: native V accuracy decreased."
+                service_reason = "Rejected: native V accuracy decreased."
+        record_stage(
+            "validation_complete", validation_evaluated=validation_old_accuracy is not None,
+            validation_old_accuracy=validation_old_accuracy,
+            validation_new_accuracy=validation_new_accuracy,
+            validation_old_episodes=[_episode_ref(item) for item in validation_old_runs],
+            validation_new_episodes=[_episode_ref(item) for item in validation_new_runs],
+            accepted=accepted,
+        )
 
-        # For the final fresh challenge, keep evidence for the actual final
-        # (Customer, Service) pair. If a proposed Service is rejected, use the
-        # selected Customer's incumbent-Service episodes instead.
+        # For the final fresh challenge, keep evidence for the actual final pair.
         final_evolution_episodes = proposed_runs if accepted else selected_runs
-
         customer_phase = {
             "frozen_service": _strategy_document("service", old_service),
-            "evolver_input_sha256": sha256_json(proposal_context),
+            "evolver_input_sha256": customer_input_sha,
             "incumbent_accuracy": incumbent_accuracy,
             "candidate_accuracies": candidate_accuracies,
             "selected_accuracy": selected_accuracy,
@@ -355,6 +559,7 @@ def run_alternating_evolution(
             "candidates": [
                 {
                     "strategy": candidate.to_dict(),
+                    "strategy_id": customer_strategy_id(candidate),
                     "accuracy": accuracy,
                     "episodes": [_episode_ref(item) for item in runs],
                 }
@@ -366,7 +571,7 @@ def run_alternating_evolution(
         service_phase = {
             "frozen_customer": _strategy_document("customer", customer),
             "analysis": service_analysis,
-            "evolver_input_sha256": sha256_json(service_context),
+            "evolver_input_sha256": service_input_sha,
             "proposed_strategy": proposed_service.to_dict(),
             "old_accuracy": old_accuracy,
             "proposed_accuracy": proposed_accuracy,
@@ -400,12 +605,8 @@ def run_alternating_evolution(
                 "service_phase_wall_clock_seconds": round(
                     perf_counter() - service_phase_started, 6,
                 ),
-                "validation_wall_clock_seconds": round(
-                    validation_elapsed, 6,
-                ),
-                "generation_wall_clock_seconds": round(
-                    perf_counter() - generation_started, 6,
-                ),
+                "validation_wall_clock_seconds": round(validation_elapsed, 6),
+                "generation_wall_clock_seconds": round(perf_counter() - generation_started, 6),
             },
             "provider_budget": _budget_delta(
                 budget_before,
@@ -442,6 +643,7 @@ def run_alternating_evolution(
                     ],
                 },
             )
+        record_stage("generation_complete", generation_result=generation_doc)
 
     return AlternatingResult(
         initial_customer_state,
@@ -453,6 +655,94 @@ def run_alternating_evolution(
     )
 
 
+def _read_json_if_exists(path: Path | None) -> dict[str, Any] | None:
+    if path is None or not path.exists():
+        return None
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError(f"checkpoint {path.name} must contain a JSON object")
+    return value
+
+
+def _validate_customer_proposal_document(
+    value: Mapping[str, Any], *, generation: int, manifest_sha256: str | None,
+    customer: PromptStrategy, service: PromptStrategy, input_sha256: str,
+) -> None:
+    if (value.get("schema_version") != 1
+            or value.get("manifest_sha256") != manifest_sha256
+            or value.get("generation") != generation
+            or value.get("stage") != "customer_proposals_ready"
+            or value.get("incumbent_customer") != _strategy_document("customer", customer)
+            or value.get("frozen_service") != _strategy_document("service", service)
+            or value.get("evolver_input_sha256") != input_sha256):
+        raise ValueError("frozen Customer proposal does not match its generation input")
+    proposals = value.get("customer_candidates")
+    if not isinstance(proposals, list):
+        raise TypeError("frozen Customer proposals must be a list")
+    for index, proposal in enumerate(proposals):
+        if (not isinstance(proposal, Mapping) or proposal.get("index") != index
+                or not isinstance(proposal.get("strategy"), str)
+                or proposal.get("strategy_id") != customer_strategy_id(
+                    PromptStrategy(proposal["strategy"]),
+                )):
+            raise ValueError("frozen Customer proposal identity is invalid")
+
+
+def _validate_service_proposal_document(
+    value: Mapping[str, Any], *, generation: int, manifest_sha256: str | None,
+    customer: PromptStrategy, service: PromptStrategy, input_sha256: str,
+) -> None:
+    if (value.get("schema_version") != 1
+            or value.get("manifest_sha256") != manifest_sha256
+            or value.get("generation") != generation
+            or value.get("stage") != "service_proposal_ready"
+            or value.get("frozen_customer") != _strategy_document("customer", customer)
+            or value.get("frozen_service") != _strategy_document("service", service)
+            or value.get("evolver_input_sha256") != input_sha256
+            or not isinstance(value.get("analysis"), str)
+            or not isinstance(value.get("strategy"), str)):
+        raise ValueError("frozen Service proposal does not match its generation input")
+    proposed = PromptStrategy(value["strategy"])
+    if value.get("strategy_id") != service_strategy_id(proposed):
+        raise ValueError("frozen Service proposal strategy identity is invalid")
+
+
+def _append_evolver_failure(output_root: Path | None, value: Mapping[str, Any]) -> None:
+    if output_root is None:
+        return
+    path = output_root / "evolver-failures.json"
+    previous = _read_json_if_exists(path)
+    failures = [] if previous is None else previous.get("failures")
+    if not isinstance(failures, list):
+        raise TypeError("evolver failure artifact is malformed")
+    failures.append(dict(value))
+    _write_json_atomic(path, {"schema_version": 1, "failures": failures})
+
+
+def _write_json_once(path: Path, value: Mapping[str, Any]) -> None:
+    """Durably publish one immutable JSON proposal without exposing partial contents."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temp_name, path)
+        except FileExistsError as exc:
+            raise FileExistsError(f"immutable proposal already exists: {path}") from exc
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
 def propose_fresh_customer_challenge(
     result: AlternatingResult,
     customer_evolver: CustomerEvolver,
@@ -461,6 +751,8 @@ def propose_fresh_customer_challenge(
     runner: EpisodeRunner,
     domain_policy: str,
     request_budget: RequestBudget | None = None,
+    proposal_path: str | Path | None = None,
+    manifest_sha256: str | None = None,
 ) -> PromptStrategy:
     """Propose one fresh Customer strategy from the final saved E episodes."""
 
@@ -478,10 +770,47 @@ def propose_fresh_customer_challenge(
         "service_policy": domain_policy,
         "accuracy_history": [dict(item) for item in result.generations],
     }
-    candidates = tuple(_provider_call(request_budget, customer_evolver, context, 1))
+    input_sha256 = sha256_json(context)
+    path = None if proposal_path is None else Path(proposal_path)
+    if path is not None and path.exists():
+        proposal = json.loads(path.read_text(encoding="utf-8"))
+        if (proposal.get("schema_version") != 1
+                or proposal.get("stage") != "fresh_customer_proposal_ready"
+                or proposal.get("manifest_sha256") != manifest_sha256
+                or proposal.get("evolver_input_sha256") != input_sha256):
+            raise ValueError("frozen fresh Customer proposal does not match its final E input")
+        text = proposal.get("strategy")
+        if not isinstance(text, str):
+            raise ValueError("frozen fresh Customer proposal has no strategy text")
+        strategy = PromptStrategy(text)
+        if proposal.get("strategy_id") != customer_strategy_id(strategy):
+            raise ValueError("frozen fresh Customer proposal identity is invalid")
+        return strategy
+    try:
+        candidates = tuple(_provider_call(request_budget, customer_evolver, context, 1))
+    except EvolverJSONError as exc:
+        _append_evolver_failure(None if path is None else path.parent, {
+            "stage": "fresh_customer_proposal",
+            "call_name": exc.call_name,
+            "raw_response": exc.raw_response,
+            "raw_response_truncated": exc.raw_response_truncated,
+            "parse_error": exc.parse_error,
+        })
+        raise
     if not candidates:
-        return result.customer
-    return PromptStrategy(candidates[0])
+        selected = result.customer
+    else:
+        selected = PromptStrategy(candidates[0])
+    if path is not None:
+        _write_json_once(path, {
+            "schema_version": 1,
+            "manifest_sha256": manifest_sha256,
+            "stage": "fresh_customer_proposal_ready",
+            "evolver_input_sha256": input_sha256,
+            "strategy": selected.text,
+            "strategy_id": customer_strategy_id(selected),
+        })
+    return selected
 
 
 def run_final_endpoint_evaluation(
