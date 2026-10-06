@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "manifest_sha256": "746263f8a8fdf0626b4fc5ed4143b8872d3e46e851f476c67fb2ff088b5c44de",
+  "generation": 0,
+  "stage": "service_proposal_ready",
+  "carrier": "skill_memory_v1",
+  "frozen_customer": {
+    "role": "customer",
+    "strategy_id": "63be7e41e020bc00",
+    "strategy": ""
+  },
+  "frozen_service": {
+    "role": "service",
+    "carrier": "skill_memory_v1",
+    "strategy_id": "0b51396195500388",
+    "strategy": {
+      "skills": []
+    },
+    "skill_count": 0,
+    "rendered_skill_chars": 0,
+    "rendered_skill_tokens": null
+  },
+  "evolver_input_sha256": "7c3270962a2eacb2970466f32c8f0b3c6e8807a98c1b956a42a04352b9b894ac",
+  "input_service_memory": {
+    "skills": []
+  },
+  "input_service_memory_id": "0b51396195500388",
+  "analysis": "Evidence shows two policy-compliant successes (task 66: correctly refused same-product-type change and guided to cancellation; task 92: handled multi-order returns with confirmation) and one failure (task 29: complex cross-order 'swap delivered item for pending-order item' scenario). The successes are already adequately covered by the native policy (authentication, status checks, same-product-type restriction, explicit confirmation before updates, gathering all items before each call). The failure's root cause is ambiguous: plausible causes include making three tool calls in a single turn versus an unsanctioned modification of the pending order that altered its contents, and we cannot determine which (if either) the evaluator penalized. A similarly parallel multi-call turn in task 92 succeeded, making the multi-call explanation contradictory. Without knowing the hidden reference behavior, encoding guidance from this one-off complex failure risks overfitting and regressions. No reusable capability gap is clearly demonstrated beyond what the policy already specifies, so no skill change is warranted.",
+  "mutation": {
+    "analysis": "Evidence shows two policy-compliant successes (task 66: correctly refused same-product-type change and guided to cancellation; task 92: handled multi-order returns with confirmation) and one failure (task 29: complex cross-order 'swap delivered item for pending-order item' scenario). The successes are already adequately covered by the native policy (authentication, status checks, same-product-type restriction, explicit confirmation before updates, gathering all items before each call). The failure's root cause is ambiguous: plausible causes include making three tool calls in a single turn versus an unsanctioned modification of the pending order that altered its contents, and we cannot determine which (if either) the evaluator penalized. A similarly parallel multi-call turn in task 92 succeeded, making the multi-call explanation contradictory. Without knowing the hidden reference behavior, encoding guidance from this one-off complex failure risks overfitting and regressions. No reusable capability gap is clearly demonstrated beyond what the policy already specifies, so no skill change is warranted.",
+    "operation": "no_op",
+    "target_skill_id": null,
+    "skill": null
+  },
+  "proposed_service_memory": {
+    "skills": []
+  },
+  "strategy_id": "0b51396195500388",
+  "evolver_model": "openai/deepseek-v4-pro",
+  "reasoning_effort": "high",
+  "provider": "InferAI",
+  "source_task_ids": [
+    "66",
+    "92",
+    "29"
+  ],
+  "latency_seconds": 80.375784,
+  "provider_usage": {
+    "calls": 1,
+    "successes": 1,
+    "failures": 0,
+    "prompt_tokens": 23214,
+    "completion_tokens": 7068,
+    "usage_responses": 1,
+    "usage_unavailable": 0,
+    "total_elapsed_seconds": 80.365347,
+    "average_elapsed_seconds": 80.365347
+  },
+  "provider_budget_delta": {
+    "cap": null,
+    "attempts": 1,
+    "successes": 1,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 23214,
+    "completion_tokens": 7068,
+    "usage_responses": 1,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 0,
+        "successes": 0,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "usage_responses": 0,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      },
+      {
+        "model_id": "openai/deepseek-v4-pro",
+        "attempts": 1,
+        "successes": 1,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 23214,
+        "completion_tokens": 7068,
+        "usage_responses": 1,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      }
+    ]
+  }
+}
