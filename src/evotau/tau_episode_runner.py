@@ -28,7 +28,13 @@ from .records import (
     customer_strategy_id,
     service_strategy_id,
 )
-from .strategies import PromptStrategy, render_customer_strategy
+from .service_skills import ServiceSkillMemory
+from .strategies import (
+    PromptStrategy,
+    ServiceCarrier,
+    render_customer_strategy,
+    render_service_strategy,
+)
 from .tau_adapter import build_phase0_orchestrator, run_with_budget
 from .tau_provenance import sha256_json, write_manifest_once
 
@@ -116,9 +122,16 @@ class TauBenchEpisodeRunner:
         task_id: str,
         seed: int,
         customer: PromptStrategy | None,
-        service: PromptStrategy,
+        service: ServiceCarrier,
         panel_name: str,
     ) -> EpisodeRecord:
+        expected_carrier = (
+            ServiceSkillMemory
+            if self.manifest.service_carrier == "skill_memory_v1"
+            else PromptStrategy
+        )
+        if not isinstance(service, expected_carrier):
+            raise TypeError(f"episode Service must use the {self.manifest.service_carrier} carrier")
         with self.request_budget.track_episode_usage() as episode_usage:
             reservation = self.request_budget.reserve_episode_dispatch()
             with self.request_budget.use_episode_reservation(reservation):
@@ -133,7 +146,7 @@ class TauBenchEpisodeRunner:
 
     def has_completed_episode(
         self, *, task_id: str, seed: int, customer: PromptStrategy | None,
-        service: PromptStrategy, panel_name: str,
+        service: ServiceCarrier, panel_name: str,
     ) -> bool:
         key = {
             "task_id": str(task_id),
@@ -151,7 +164,7 @@ class TauBenchEpisodeRunner:
         task_id: str,
         seed: int,
         customer: PromptStrategy | None,
-        service: PromptStrategy,
+        service: ServiceCarrier,
         panel_name: str,
         episode_usage: EpisodeUsageTracker,
     ) -> EpisodeRecord:
@@ -207,7 +220,7 @@ class TauBenchEpisodeRunner:
         record_path = episode_directory / "episode-record.json"
         telemetry_path = episode_directory / "run-telemetry.json"
         before = self.request_budget.snapshot()
-        prompt_hashes: dict[str, str] = {}
+        prompt_hashes: dict[str, Any] = {}
         simulation_payload: dict[str, Any] | None = None
 
         def on_orchestrator(orchestrator: Any) -> None:
@@ -215,6 +228,29 @@ class TauBenchEpisodeRunner:
             prompt_hashes["agent"] = hashlib.sha256(
                 orchestrator.agent.system_prompt.encode("utf-8")
             ).hexdigest()
+            native_agent_class = type(orchestrator.agent).__mro__[1]
+            native_agent_property = getattr(native_agent_class, "system_prompt", None)
+            if (not isinstance(native_agent_property, property)
+                    or native_agent_property.fget is None):
+                raise TypeError("EvoTau Service wrapper no longer directly subclasses the native LLMAgent")
+            native_agent_prompt = native_agent_property.fget(orchestrator.agent)
+            service_block = render_service_strategy(service)
+            expected_agent_prompt = (
+                native_agent_prompt if not service_block
+                else f"{native_agent_prompt}\n\n{service_block}"
+            )
+            if orchestrator.agent.system_prompt != expected_agent_prompt:
+                raise ValueError("EvoTau Service overlay changed the native tau-bench system prompt")
+            prompt_hashes["service_native_system_prompt"] = hashlib.sha256(
+                native_agent_prompt.encode("utf-8")
+            ).hexdigest()
+            prompt_hashes["service_overlay"] = hashlib.sha256(
+                service_block.encode("utf-8")
+            ).hexdigest()
+            if hasattr(service, "skills"):
+                prompt_hashes["service_skill_count"] = len(service.skills)
+                prompt_hashes["service_skill_rendered_chars"] = len(service_block)
+                prompt_hashes["service_skill_rendered_tokens"] = None
             prompt_hashes["customer"] = hashlib.sha256(
                 orchestrator.user.system_prompt.encode("utf-8")
             ).hexdigest()

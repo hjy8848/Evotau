@@ -513,6 +513,20 @@ class ArtifactReader:
             if not isinstance(value, dict):
                 return
             strategy_text = value.get("text", value.get("strategy"))
+            if isinstance(strategy_text, dict) and isinstance(strategy_text.get("skills"), list):
+                strategy_id = value.get("strategy_id") or _strategy_id(strategy_text)
+                strategies[side][str(strategy_id)] = {
+                    "carrier": value.get("carrier", "skill_memory_v1"),
+                    "skills": strategy_text["skills"],
+                }
+                return
+            if "skills" in value and isinstance(value.get("skills"), list):
+                strategy_id = value.get("strategy_id") or _strategy_id(value)
+                strategies[side][str(strategy_id)] = {
+                    "carrier": value.get("carrier", "skill_memory_v1"),
+                    "skills": value["skills"],
+                }
+                return
             if not isinstance(strategy_text, str):
                 return
             strategy_id = value.get("strategy_id") or _strategy_id({"text": strategy_text})

@@ -14,6 +14,7 @@ from .budget import RequestBudget
 from .prompts import append_strategy_block
 from .strategies import (
     PromptStrategy,
+    ServiceCarrier,
     render_customer_strategy,
     render_service_strategy,
 )
@@ -75,9 +76,9 @@ def customer_user_class(
 
 def service_agent_class(
     base_agent_class: type,
-    strategy: PromptStrategy | None,
+    strategy: ServiceCarrier | None,
 ) -> type:
-    """Append the Service's open strategy overlay to the native agent prompt."""
+    """Append a free-form strategy or all active skills to the native prompt."""
 
     block = render_service_strategy(strategy)
 
@@ -101,7 +102,7 @@ def build_phase0_orchestrator(
     seed: int,
     max_steps: int = 64,
     customer_strategy: PromptStrategy | None = None,
-    service_strategy: PromptStrategy | None = None,
+    service_strategy: ServiceCarrier | None = None,
     enforce_communication_protocol: bool = False,
 ) -> Any:
     """Construct native Retail text components directly, without changing the runner."""

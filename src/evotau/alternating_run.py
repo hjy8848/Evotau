@@ -27,6 +27,7 @@ from .budget import RequestBudget
 from .episode_execution import StopBeforeEpisodeDispatch
 from .phase0 import load_config
 from .phase0_run import _write_json_once
+from .service_skills import ServiceSkillMemory
 from .strategies import PromptStrategy
 from .tau_adapter import verify_tau2_installation
 from .tau_episode_runner import TauBenchEpisodeRunner
@@ -129,11 +130,22 @@ def run_from_config(
         ),
         "run_validation": manifest.run_validation,
         "run_heldout": manifest.run_heldout,
+        "evolution_carriers": {
+            "customer_carrier": manifest.customer_carrier,
+            "service_carrier": manifest.service_carrier,
+            "service_skill_runtime": manifest.service_skill_runtime,
+            "service_mutation_ops": list(manifest.service_mutation_ops),
+            "max_service_mutations_per_generation": manifest.max_service_mutations_per_generation,
+        },
     }
     _write_or_verify_context(output_directory / "run-context.json", run_context)
 
     initial_customer = PromptStrategy(manifest.initial_customer_strategy)
-    initial_service = PromptStrategy(manifest.initial_service_strategy)
+    initial_service = (
+        ServiceSkillMemory()
+        if manifest.service_carrier == "skill_memory_v1"
+        else PromptStrategy(manifest.initial_service_strategy)
+    )
     episode_job_telemetry = EpisodeJobTelemetry(manifest.max_parallel_episodes)
     evolution_started = perf_counter()
     evolved = run_alternating_evolution(
@@ -150,14 +162,28 @@ def run_from_config(
         episode_job_telemetry=episode_job_telemetry,
         initial_customer=initial_customer,
         initial_service=initial_service,
+        service_carrier=manifest.service_carrier,
         runner=runner,
         customer_evolver=providers.customer_candidates,
-        service_evolver=providers.service_candidate,
+        service_evolver=(
+            providers.service_skill_mutation
+            if manifest.service_carrier == "skill_memory_v1"
+            else providers.service_candidate
+        ),
         domain_policy=runner.service_policy_text,
         request_budget=budget,
         output_directory=output_directory,
         checkpoint_path=checkpoint_path,
         manifest_sha256=manifest.sha256,
+        service_evolver_model=models["evolver"],
+        service_evolver_reasoning_effort=(
+            None if "reasoning_effort" not in evolver_args
+            else str(evolver_args["reasoning_effort"])
+        ),
+        service_evolver_provider=(
+            "InferAI Responses API" if evolver_args.get("api_protocol") == "responses"
+            else "τ-bench/LiteLLM configured provider"
+        ),
     )
 
     # The fresh challenge is generated from E-only evidence before any H task
@@ -231,6 +257,10 @@ def run_from_config(
         "initial_service": initial_service.to_dict(),
         "final_customer": evolved.customer.to_dict(),
         "final_service": evolved.service.to_dict(),
+        "final_service_carrier": manifest.service_carrier,
+        "final_service_provenance": [
+            item.to_dict() for item in getattr(evolved, "service_provenance", ())
+        ],
         "generations": list(evolved.generations),
         "fresh_adaptive_customer": (
             None if fresh_customer is None else fresh_customer.to_dict()
@@ -314,7 +344,7 @@ def _api_usage_by_role(
         "service": ("agent_response",),
         "evaluator": ("nl_assertions_eval",),
         "customer_evolver": ("evotau_customer_evolver",),
-        "service_evolver": ("evotau_service_evolver",),
+        "service_evolver": ("evotau_service_evolver", "evotau_service_skill_evolver"),
         "reviewer": (
             "llm_judge_review", "llm_judge_streaming_review",
             "classify_authentication", "llm_judge_hallucination_check",

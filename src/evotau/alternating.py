@@ -20,23 +20,65 @@ from .alternating_manifest import (
 from .budget import RequestBudget
 from .inferai_responses import generate_text as inferai_responses_generate_text
 from .records import EpisodeRecord, customer_strategy_id, service_strategy_id
-from .strategies import PromptStrategy
+from .service_skills import (
+    ServiceMutationOperation,
+    ServiceSkillMemory,
+    ServiceSkillMutation,
+    ServiceSkillProvenance,
+    apply_skill_mutation,
+    render_service_skill_memory,
+    service_skill_id_high_watermark,
+    update_skill_provenance,
+)
+from .strategies import PromptStrategy, ServiceCarrier
 from .tau_provenance import sha256_json
 
 CustomerEvolver = Callable[[Mapping[str, Any], int], Sequence[str]]
-ServiceEvolver = Callable[[Mapping[str, Any]], Mapping[str, str]]
+ServiceEvolver = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 EpisodeRunner = Callable[..., EpisodeRecord]
 _MAX_EVOLVER_RAW_RESPONSE_CHARS = 16_000
+
+SERVICE_SKILL_EVOLVER_SYSTEM_PROMPT = """You evolve a persistent Service Skill Memory from native τ-bench outcomes.
+
+Your job is not to rewrite the Service globally. Inspect the current Skill Memory, fixed Retail
+policy, real interaction trajectories, tool results, and native task-success outcomes. The supplied
+Service context contains observed interaction evidence and public task metadata; it does not contain
+the Customer's hidden user_scenario, reference answers, hidden evaluator targets, or held-out tasks.
+
+Decide whether this evidence supports one reusable behavioral or procedural repair. Choose exactly
+one operation:
+
+ADD: use when an important reusable capability gap is not covered by any existing skill.
+UPDATE: use when one existing skill is relevant but its trigger or guidance is incomplete,
+overbroad, too narrow, or causes regressions. Preserve that skill's identity and refine only it.
+NO_OP: use when evidence is weak, task-specific, contradictory, likely stochastic, or already
+adequately covered. Do not convert a one-off failure into permanent guidance.
+
+Prefer the smallest reusable change that explains the evidence. A skill must describe when it applies
+(trigger) and reusable Service behavior (guidance), not a task answer. Do not encode task-specific
+objects, IDs, people, addresses, answers, task IDs, or benchmark artifacts. Do not invent facts.
+Do not change the Retail policy, tools, backend, tasks, evaluator, or task objective. Learned guidance
+must remain subordinate to native policy and current tool/backend evidence. Do not add a skill ID;
+EvoTau assigns IDs for ADD and preserves IDs for UPDATE.
+
+Return only one JSON object with exactly these fields:
+{"analysis":"...","operation":"add|update|no_op","target_skill_id":null,"skill":{"trigger":"...","guidance":"..."}}
+
+For ADD, target_skill_id must be null and skill must contain only trigger and guidance.
+For UPDATE, target_skill_id must be the ID of one existing skill and skill must contain only trigger
+and guidance.
+For NO_OP, target_skill_id and skill must both be null. Do not return multiple operations."""
 
 
 @dataclass(frozen=True, slots=True)
 class AlternatingResult:
     initial_customer: PromptStrategy
-    initial_service: PromptStrategy
+    initial_service: ServiceCarrier
     customer: PromptStrategy
-    service: PromptStrategy
+    service: ServiceCarrier
     generations: tuple[Mapping[str, Any], ...]
     final_evolution_episodes: tuple[EpisodeRecord, ...]
+    service_provenance: tuple[ServiceSkillProvenance, ...] = ()
 
 
 class EpisodeJobTelemetry:
@@ -148,6 +190,19 @@ class LLMAlternatingEvolvers:
             raise TypeError("Service Evolver must return string analysis and strategy fields")
         return {"analysis": result["analysis"], "strategy": result["strategy"]}
 
+    def service_skill_mutation(self, context: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Propose one strict local SkillMemory mutation, without assigning IDs."""
+
+        result = self._provider_json_call(
+            self.model,
+            self.model_args,
+            SERVICE_SKILL_EVOLVER_SYSTEM_PROMPT,
+            dict(context),
+            call_name="evotau_service_skill_evolver",
+        )
+        mutation = ServiceSkillMutation.from_mapping(result)
+        return mutation.to_dict()
+
     def _provider_json_call(
         self,
         model: str,
@@ -257,7 +312,9 @@ def run_alternating_evolution(
     run_validation: bool = True,
     episode_job_telemetry: EpisodeJobTelemetry | None = None,
     initial_customer: PromptStrategy,
-    initial_service: PromptStrategy,
+    initial_service: ServiceCarrier,
+    service_carrier: str = "prompt_strategy",
+    initial_service_provenance: Sequence[ServiceSkillProvenance] = (),
     runner: EpisodeRunner,
     customer_evolver: CustomerEvolver,
     service_evolver: ServiceEvolver,
@@ -266,6 +323,9 @@ def run_alternating_evolution(
     output_directory: str | Path | None = None,
     checkpoint_path: str | Path | None = None,
     manifest_sha256: str | None = None,
+    service_evolver_model: str | None = None,
+    service_evolver_reasoning_effort: str | None = None,
+    service_evolver_provider: str | None = None,
 ) -> AlternatingResult:
     """Alternate Customer challenge and Service repair using native task accuracy."""
 
@@ -281,6 +341,26 @@ def run_alternating_evolution(
         raise ValueError(f"task loader is missing E/V tasks: {sorted(missing)}")
     if type(run_validation) is not bool:
         raise ValueError("run_validation must be boolean")
+    if service_carrier not in {"prompt_strategy", "skill_memory_v1"}:
+        raise ValueError("service_carrier must be prompt_strategy or skill_memory_v1")
+    expected_service_type = (
+        ServiceSkillMemory if service_carrier == "skill_memory_v1" else PromptStrategy
+    )
+    if not isinstance(initial_service, expected_service_type):
+        raise TypeError(f"initial_service must use the {service_carrier} carrier")
+    service_provenance = tuple(initial_service_provenance)
+    skill_id_high_watermark = (
+        service_skill_id_high_watermark(initial_service)
+        if isinstance(initial_service, ServiceSkillMemory) else 0
+    )
+    if service_carrier == "skill_memory_v1" and (
+            {item.skill_id for item in service_provenance}
+            != {item.skill_id for item in initial_service.skills}
+    ):
+        if initial_service.skills or service_provenance:
+            raise ValueError("initial Service skill provenance must match the active SkillMemory")
+    elif service_carrier == "prompt_strategy" and service_provenance:
+        raise ValueError("PromptStrategy baseline cannot carry SkillMemory provenance")
     fitness_seed = seed if evolution_fitness_seed is None else evolution_fitness_seed
     if (generations < 1 or customer_candidate_count < 1 or seed < 0
             or type(fitness_seed) is not int or fitness_seed < 0):
@@ -306,6 +386,8 @@ def run_alternating_evolution(
         checkpoint = json.loads(checkpoint_file.read_text(encoding="utf-8"))
         if checkpoint.get("manifest_sha256") != manifest_sha256:
             raise ValueError("alternating checkpoint belongs to a different frozen manifest")
+        if checkpoint.get("service_carrier", "prompt_strategy") != service_carrier:
+            raise ValueError("alternating checkpoint Service carrier differs from the frozen run")
         if checkpoint.get("initial_customer") != initial_customer_state.to_dict() or checkpoint.get(
             "initial_service",
         ) != initial_service_state.to_dict():
@@ -313,7 +395,24 @@ def run_alternating_evolution(
         generation_documents = list(checkpoint.get("generations", ()))
         history = [dict(item) for item in checkpoint.get("history", ())]
         customer = PromptStrategy(checkpoint["customer"]["text"])
-        service = PromptStrategy(checkpoint["service"]["text"])
+        service = _service_from_mapping(checkpoint["service"], service_carrier)
+        saved_provenance = tuple(
+            ServiceSkillProvenance.from_mapping(item)
+            for item in checkpoint.get("service_provenance", ())
+        )
+        if service_carrier == "skill_memory_v1":
+            if {item.skill_id for item in saved_provenance} != {
+                item.skill_id for item in service.skills
+            }:
+                raise ValueError("checkpoint Service provenance does not match its SkillMemory")
+            service_provenance = saved_provenance
+            saved_high_watermark = checkpoint.get(
+                "skill_id_high_watermark", service_skill_id_high_watermark(service),
+            )
+            if (type(saved_high_watermark) is not int
+                    or saved_high_watermark < service_skill_id_high_watermark(service)):
+                raise ValueError("checkpoint Skill ID high-watermark is invalid")
+            skill_id_high_watermark = saved_high_watermark
         final_evolution_episodes = tuple(
             EpisodeRecord.from_dict(item)
             for item in checkpoint.get("final_evolution_episodes", ())
@@ -338,6 +437,7 @@ def run_alternating_evolution(
         telemetry_before = job_telemetry.snapshot()
         customer_before = customer
         service_before = service
+        generation_skill_id_high_watermark = skill_id_high_watermark
         old_service = service
         budget_before = None if request_budget is None else request_budget.snapshot().to_dict()
         generation_prefix = f"generation-{generation:04d}"
@@ -356,7 +456,7 @@ def run_alternating_evolution(
             stage: str, *, _file: Path | None = stage_file,
             _generation: int = generation,
             _customer: PromptStrategy = customer_before,
-            _service: PromptStrategy = service_before,
+            _service: ServiceCarrier = service_before,
             _state_box: dict[str, Any] = stage_state_box,
             **values: Any,
         ) -> None:
@@ -396,9 +496,9 @@ def run_alternating_evolution(
             "incumbent_accuracy": incumbent_accuracy,
             "service_policy": domain_policy,
             "current_customer_strategy": customer_before.text,
-            "current_service_strategy": service_before.text,
             "accuracy_history": history,
         }
+        proposal_context.update(_service_context_fields(service_before, service_carrier))
         customer_input_sha = sha256_json(proposal_context)
         customer_proposal_path = (
             None if output_root is None else output_root / f"{generation_prefix}-customer-proposals.json"
@@ -512,22 +612,54 @@ def run_alternating_evolution(
             "task_interactions": _service_context_episodes(selected_runs, runner, tasks),
             "selected_customer_accuracy": selected_accuracy,
             "customer_strategy": customer.text,
-            "current_service_strategy": service_before.text,
             "service_policy": domain_policy,
             "accuracy_history": history,
         }
+        service_context.update(_service_context_fields(service_before, service_carrier))
+        if service_carrier == "skill_memory_v1":
+            service_context["accepted_service_evolution_history"] = [
+                {
+                    "generation": int(item["generation"]),
+                    "operation": item["service_phase"].get("operation"),
+                    "target_skill_id": item["service_phase"].get("target_skill_id"),
+                    "analysis": item["service_phase"].get("analysis", ""),
+                    "service_memory_id": item["service_after"].get("strategy_id"),
+                }
+                for item in generation_documents
+                if item.get("service_phase", {}).get("accepted") is True
+                and item.get("service_phase", {}).get("operation") in {"add", "update"}
+            ]
         service_input_sha = sha256_json(service_context)
         service_proposal_path = (
             None if output_root is None else output_root / f"{generation_prefix}-service-proposal.json"
         )
+        if output_root is not None and service_carrier == "skill_memory_v1":
+            _write_json_once(
+                output_root / "service-memory" / f"{generation_prefix}-input.json",
+                _service_memory_artifact(
+                    generation=generation,
+                    memory=service_before,
+                    provenance=service_provenance,
+                    parent_version_id=None,
+                    mutation_operation=None,
+                    source_task_ids=(),
+                    skill_id_high_watermark=generation_skill_id_high_watermark,
+                ),
+            )
         if service_proposal_path is not None and service_proposal_path.exists():
             service_proposal_doc = json.loads(service_proposal_path.read_text(encoding="utf-8"))
             _validate_service_proposal_document(
                 service_proposal_doc, generation=generation,
                 manifest_sha256=manifest_sha256, customer=customer,
                 service=service_before, input_sha256=service_input_sha,
+                service_carrier=service_carrier,
+                next_skill_id_number=generation_skill_id_high_watermark + 1,
             )
         else:
+            service_call_started = perf_counter()
+            service_budget_before = (
+                None if request_budget is None else request_budget.snapshot().to_dict()
+            )
             try:
                 service_proposal = _provider_call(request_budget, service_evolver, service_context)
             except EvolverJSONError as exc:
@@ -540,32 +672,131 @@ def run_alternating_evolution(
                     "parse_error": exc.parse_error,
                 })
                 raise
-            service_analysis = service_proposal.get("analysis", "")
-            proposed_text = service_proposal.get("strategy", service_before.text)
-            if not isinstance(service_analysis, str) or not isinstance(proposed_text, str):
-                raise TypeError("Service Evolver must return natural-language analysis and strategy")
-            proposed_service = PromptStrategy(proposed_text)
-            service_proposal_doc = {
-                "schema_version": 1,
-                "manifest_sha256": manifest_sha256,
-                "generation": generation,
-                "stage": "service_proposal_ready",
-                "frozen_customer": _strategy_document("customer", customer),
-                "frozen_service": _strategy_document("service", service_before),
-                "evolver_input_sha256": service_input_sha,
-                "analysis": service_analysis,
-                "strategy": proposed_service.text,
-                "strategy_id": service_strategy_id(proposed_service),
-            }
+            if service_carrier == "skill_memory_v1":
+                mutation = ServiceSkillMutation.from_mapping(service_proposal)
+                proposed_service = apply_skill_mutation(
+                    service_before,
+                    mutation,
+                    next_skill_id_number=generation_skill_id_high_watermark + 1,
+                )
+                service_analysis = mutation.analysis
+                proposal_usage = (
+                    None if request_budget is None else request_budget.api_usage_by_call_name().get(
+                        "evotau_service_skill_evolver",
+                    )
+                )
+                service_proposal_doc = {
+                    "schema_version": 1,
+                    "manifest_sha256": manifest_sha256,
+                    "generation": generation,
+                    "stage": "service_proposal_ready",
+                    "carrier": "skill_memory_v1",
+                    "frozen_customer": _strategy_document("customer", customer),
+                    "frozen_service": _strategy_document("service", service_before),
+                    "evolver_input_sha256": service_input_sha,
+                    "input_service_memory": service_before.to_dict(),
+                    "input_service_memory_id": service_strategy_id(service_before),
+                    "analysis": mutation.analysis,
+                    "mutation": mutation.to_dict(),
+                    "proposed_service_memory": proposed_service.to_dict(),
+                    "strategy_id": service_strategy_id(proposed_service),
+                    "evolver_model": service_evolver_model,
+                    "reasoning_effort": service_evolver_reasoning_effort,
+                    "provider": service_evolver_provider,
+                    "source_task_ids": list(e_tasks),
+                    "latency_seconds": round(perf_counter() - service_call_started, 6),
+                    "provider_usage": proposal_usage,
+                    "provider_budget_delta": _budget_delta(
+                        service_budget_before,
+                        None if request_budget is None else request_budget.snapshot().to_dict(),
+                    ),
+                }
+            else:
+                service_analysis = service_proposal.get("analysis", "")
+                proposed_text = service_proposal.get("strategy", service_before.text)
+                if not isinstance(service_analysis, str) or not isinstance(proposed_text, str):
+                    raise TypeError("Service Evolver must return natural-language analysis and strategy")
+                proposed_service = PromptStrategy(proposed_text)
+                service_proposal_doc = {
+                    "schema_version": 1,
+                    "manifest_sha256": manifest_sha256,
+                    "generation": generation,
+                    "stage": "service_proposal_ready",
+                    "frozen_customer": _strategy_document("customer", customer),
+                    "frozen_service": _strategy_document("service", service_before),
+                    "evolver_input_sha256": service_input_sha,
+                    "analysis": service_analysis,
+                    "strategy": proposed_service.text,
+                    "strategy_id": service_strategy_id(proposed_service),
+                }
             if service_proposal_path is not None:
                 _write_json_once(service_proposal_path, service_proposal_doc)
         _validate_service_proposal_document(
             service_proposal_doc, generation=generation,
             manifest_sha256=manifest_sha256, customer=customer,
             service=service_before, input_sha256=service_input_sha,
+            service_carrier=service_carrier,
+            next_skill_id_number=generation_skill_id_high_watermark + 1,
         )
         service_analysis = service_proposal_doc["analysis"]
-        proposed_service = PromptStrategy(service_proposal_doc["strategy"])
+        service_mutation: ServiceSkillMutation | None = None
+        if service_carrier == "skill_memory_v1":
+            service_mutation = ServiceSkillMutation.from_mapping(service_proposal_doc["mutation"])
+            proposed_service = ServiceSkillMemory.from_mapping(
+                service_proposal_doc["proposed_service_memory"],
+            )
+            if service_mutation.operation == ServiceMutationOperation.ADD:
+                skill_id_high_watermark = max(
+                    skill_id_high_watermark,
+                    service_skill_id_high_watermark(proposed_service),
+                )
+            assert isinstance(service_before, ServiceSkillMemory)
+            proposed_provenance = _proposed_skill_provenance(
+                service_provenance,
+                before=service_before,
+                after=proposed_service,
+                mutation=service_mutation,
+                generation=generation,
+                source_task_ids=e_tasks,
+            )
+            if output_root is not None:
+                version_artifact = _service_memory_artifact(
+                    generation=generation,
+                    memory=proposed_service,
+                    provenance=proposed_provenance,
+                    parent_version_id=service_strategy_id(service_before),
+                    mutation_operation=service_mutation.operation.value,
+                    source_task_ids=e_tasks,
+                    analysis=service_mutation.analysis,
+                    skill_id_high_watermark=skill_id_high_watermark,
+                )
+                version_artifact.update({
+                    "input_memory_id": service_strategy_id(service_before),
+                    "input_context_sha256": service_input_sha,
+                    "evolver_model": service_proposal_doc.get("evolver_model"),
+                    "reasoning_effort": service_proposal_doc.get("reasoning_effort"),
+                    "provider": service_proposal_doc.get("provider"),
+                    "provider_usage": service_proposal_doc.get("provider_usage"),
+                    "latency_seconds": service_proposal_doc.get("latency_seconds"),
+                    "mutation": service_mutation.to_dict(),
+                    "old_skill": _target_skill(
+                        service_before,
+                        service_mutation.target_skill_id
+                        if service_mutation.operation == ServiceMutationOperation.UPDATE else None,
+                    ),
+                    "new_skill": _target_skill(
+                        proposed_service,
+                        service_mutation.target_skill_id
+                        if service_mutation.operation == ServiceMutationOperation.UPDATE
+                        else _added_skill_id(service_before, proposed_service),
+                    ),
+                })
+                _write_json_once(
+                    output_root / "service-memory" / f"{generation_prefix}-proposed.json",
+                    version_artifact,
+                )
+        else:
+            proposed_service = PromptStrategy(service_proposal_doc["strategy"])
         record_stage(
             "service_proposal_ready",
             service_proposal_path=(
@@ -583,7 +814,8 @@ def run_alternating_evolution(
         validation_new_runs: tuple[EpisodeRecord, ...] = ()
         accepted = False
         service_reason = "The Service strategy did not change."
-        if proposed_service.text != service_before.text:
+        service_changed = not _same_service(service_before, proposed_service)
+        if service_changed:
             proposed_runs = _run_panel(
                 runner, task_ids=e_tasks, tasks=tasks, seed=evolution_seed,
                 customer=customer, service=proposed_service,
@@ -607,8 +839,13 @@ def run_alternating_evolution(
         acceptance_mode = (
             "validation_gated" if run_validation else "e_only_mechanism_smoke"
         )
-        if proposed_service.text == service_before.text:
-            service_reason = "The Service strategy did not change."
+        if not service_changed:
+            service_reason = (
+                "NO_OP: no E evaluation was run."
+                if service_mutation is not None
+                and service_mutation.operation == ServiceMutationOperation.NO_OP
+                else "The Service carrier did not change; no E evaluation was run."
+            )
         elif improved_on_e and run_validation:
             validation_started = perf_counter()
             validation_old_runs = _run_panel(
@@ -642,6 +879,71 @@ def run_alternating_evolution(
                 "native V validation was intentionally disabled."
             )
         acceptance_evaluated = True
+
+        transition_diagnostics: dict[str, Any] | None = None
+        if service_carrier == "skill_memory_v1" and proposed_runs:
+            transition_diagnostics = _paired_service_outcomes(selected_runs, proposed_runs)
+        if service_carrier == "skill_memory_v1":
+            assert isinstance(service_before, ServiceSkillMemory)
+            assert isinstance(proposed_service, ServiceSkillMemory)
+            assert service_mutation is not None
+            proposed_provenance = _proposed_skill_provenance(
+                service_provenance,
+                before=service_before,
+                after=proposed_service,
+                mutation=service_mutation,
+                generation=generation,
+                source_task_ids=e_tasks,
+            )
+            if output_root is not None:
+                if accepted and service_changed:
+                    _write_json_once(
+                        output_root / "service-memory" / f"{generation_prefix}-accepted.json",
+                        _service_memory_artifact(
+                            generation=generation,
+                            memory=proposed_service,
+                            provenance=proposed_provenance,
+                            parent_version_id=service_strategy_id(service_before),
+                            mutation_operation=service_mutation.operation.value,
+                            source_task_ids=e_tasks,
+                            analysis=service_analysis,
+                            skill_id_high_watermark=skill_id_high_watermark,
+                        ),
+                    )
+                _write_json_once(
+                    output_root / "service-memory" / f"{generation_prefix}-active.json",
+                    _service_memory_artifact(
+                        generation=generation,
+                        memory=service,
+                        provenance=proposed_provenance if accepted else service_provenance,
+                        parent_version_id=(
+                            service_strategy_id(service_before) if accepted else None
+                        ),
+                        mutation_operation=(
+                            service_mutation.operation.value if accepted else None
+                        ),
+                        source_task_ids=e_tasks if accepted else (),
+                        analysis=service_analysis if accepted else None,
+                        skill_id_high_watermark=skill_id_high_watermark,
+                    ),
+                )
+                _write_json_once(
+                    output_root / "service-memory" / f"{generation_prefix}-decision.json",
+                    {
+                        "generation": generation,
+                        "carrier": "skill_memory_v1",
+                        "input_memory_id": service_strategy_id(service_before),
+                        "proposed_memory_id": service_strategy_id(proposed_service),
+                        "operation": service_mutation.operation.value,
+                        "target_skill_id": service_mutation.target_skill_id,
+                        "accepted": accepted,
+                        "active_memory_id": service_strategy_id(service),
+                        "selection_reason": service_reason,
+                        "regression_diagnostics": transition_diagnostics,
+                    },
+                )
+            if accepted:
+                service_provenance = proposed_provenance
         record_stage(
             "validation_complete", validation_evaluated=validation_old_accuracy is not None,
             validation_skipped=not run_validation,
@@ -699,6 +1001,33 @@ def run_alternating_evolution(
             },
             "validation_evaluated": validation_old_accuracy is not None,
         }
+        if service_carrier == "skill_memory_v1":
+            assert isinstance(service_before, ServiceSkillMemory)
+            assert isinstance(proposed_service, ServiceSkillMemory)
+            assert service_mutation is not None
+            service_phase.update({
+                "carrier": "skill_memory_v1",
+                "operation": service_mutation.operation.value,
+                "target_skill_id": service_mutation.target_skill_id,
+                "input_service_memory": service_before.to_dict(),
+                "input_service_memory_id": service_strategy_id(service_before),
+                "proposed_service_memory": proposed_service.to_dict(),
+                "proposed_service_memory_id": service_strategy_id(proposed_service),
+                "active_service_memory": service.to_dict(),
+                "active_service_memory_id": service_strategy_id(service),
+                "skill_count_before": len(service_before.skills),
+                "skill_count_proposed": len(proposed_service.skills),
+                "skill_count_after": len(service.skills),
+                "rendered_skill_chars_before": len(render_service_skill_memory(service_before)),
+                "rendered_skill_chars_proposed": len(render_service_skill_memory(proposed_service)),
+                "rendered_skill_chars_after": len(render_service_skill_memory(service)),
+                "rendered_skill_tokens": None,
+                "regression_diagnostics": transition_diagnostics,
+                "proposed_skill_provenance": [item.to_dict() for item in proposed_provenance],
+                "active_skill_provenance": [item.to_dict() for item in service_provenance],
+                "skill_id_high_watermark_before": generation_skill_id_high_watermark,
+                "skill_id_high_watermark_after": skill_id_high_watermark,
+            })
         generation_doc = {
             "schema_version": 2,
             "generation": generation,
@@ -744,7 +1073,11 @@ def run_alternating_evolution(
             "service_accepted": accepted,
         })
         if output_root is not None:
-            _write_json_atomic(output_root / f"generation-{generation:04d}.json", generation_doc)
+            generation_path = output_root / f"generation-{generation:04d}.json"
+            if service_carrier == "skill_memory_v1":
+                _write_json_once(generation_path, generation_doc)
+            else:
+                _write_json_atomic(generation_path, generation_doc)
         if checkpoint_file is not None:
             _write_json_atomic(
                 checkpoint_file,
@@ -754,8 +1087,11 @@ def run_alternating_evolution(
                     "completed_generation": generation,
                     "initial_customer": initial_customer_state.to_dict(),
                     "initial_service": initial_service_state.to_dict(),
+                    "service_carrier": service_carrier,
                     "customer": customer.to_dict(),
                     "service": service.to_dict(),
+                    "service_provenance": [item.to_dict() for item in service_provenance],
+                    "skill_id_high_watermark": skill_id_high_watermark,
                     "generations": generation_documents,
                     "history": history,
                     "final_evolution_episodes": [
@@ -772,6 +1108,7 @@ def run_alternating_evolution(
         service,
         tuple(generation_documents),
         final_evolution_episodes,
+        tuple(service_provenance),
     )
 
 
@@ -786,7 +1123,7 @@ def _read_json_if_exists(path: Path | None) -> dict[str, Any] | None:
 
 def _validate_customer_proposal_document(
     value: Mapping[str, Any], *, generation: int, manifest_sha256: str | None,
-    customer: PromptStrategy, service: PromptStrategy, input_sha256: str,
+    customer: PromptStrategy, service: ServiceCarrier, input_sha256: str,
 ) -> None:
     if (value.get("schema_version") != 1
             or value.get("manifest_sha256") != manifest_sha256
@@ -810,21 +1147,170 @@ def _validate_customer_proposal_document(
 
 def _validate_service_proposal_document(
     value: Mapping[str, Any], *, generation: int, manifest_sha256: str | None,
-    customer: PromptStrategy, service: PromptStrategy, input_sha256: str,
+    customer: PromptStrategy, service: ServiceCarrier, input_sha256: str,
+    service_carrier: str = "prompt_strategy",
+    next_skill_id_number: int | None = None,
 ) -> None:
-    if (value.get("schema_version") != 1
-            or value.get("manifest_sha256") != manifest_sha256
-            or value.get("generation") != generation
-            or value.get("stage") != "service_proposal_ready"
-            or value.get("frozen_customer") != _strategy_document("customer", customer)
-            or value.get("frozen_service") != _strategy_document("service", service)
-            or value.get("evolver_input_sha256") != input_sha256
-            or not isinstance(value.get("analysis"), str)
-            or not isinstance(value.get("strategy"), str)):
+    common_invalid = (
+        value.get("schema_version") != 1
+        or value.get("manifest_sha256") != manifest_sha256
+        or value.get("generation") != generation
+        or value.get("stage") != "service_proposal_ready"
+        or value.get("frozen_customer") != _strategy_document("customer", customer)
+        or value.get("frozen_service") != _strategy_document("service", service)
+        or value.get("evolver_input_sha256") != input_sha256
+        or not isinstance(value.get("analysis"), str)
+    )
+    if common_invalid:
         raise ValueError("frozen Service proposal does not match its generation input")
+    if service_carrier == "skill_memory_v1":
+        if not isinstance(service, ServiceSkillMemory) or value.get("carrier") != service_carrier:
+            raise ValueError("frozen Service proposal uses the wrong carrier")
+        if (value.get("input_service_memory") != service.to_dict()
+                or value.get("input_service_memory_id") != service_strategy_id(service)):
+            raise ValueError("frozen SkillMemory proposal input identity is invalid")
+        mutation = ServiceSkillMutation.from_mapping(value.get("mutation", {}))
+        if value.get("analysis") != mutation.analysis:
+            raise ValueError("frozen SkillMemory proposal analysis differs from its mutation")
+        proposed = apply_skill_mutation(
+            service, mutation, next_skill_id_number=next_skill_id_number,
+        )
+        if (value.get("proposed_service_memory") != proposed.to_dict()
+                or value.get("strategy_id") != service_strategy_id(proposed)):
+            raise ValueError("frozen SkillMemory proposal output identity is invalid")
+        return
+    if (not isinstance(service, PromptStrategy)
+            or not isinstance(value.get("strategy"), str)):
+        raise TypeError("frozen PromptStrategy Service proposal does not match its generation input")
     proposed = PromptStrategy(value["strategy"])
     if value.get("strategy_id") != service_strategy_id(proposed):
         raise ValueError("frozen Service proposal strategy identity is invalid")
+
+
+def _service_from_mapping(value: Mapping[str, Any], carrier: str) -> ServiceCarrier:
+    if carrier == "prompt_strategy":
+        if set(value) != {"text"} or not isinstance(value.get("text"), str):
+            raise ValueError("PromptStrategy checkpoint must contain exactly a text field")
+        return PromptStrategy(value["text"])
+    if carrier == "skill_memory_v1":
+        return ServiceSkillMemory.from_mapping(value)
+    raise ValueError(f"unsupported Service carrier: {carrier}")
+
+
+def _service_context_fields(service: ServiceCarrier, carrier: str) -> dict[str, Any]:
+    if carrier == "prompt_strategy":
+        if not isinstance(service, PromptStrategy):
+            raise TypeError("PromptStrategy run received a non-PromptStrategy Service")
+        return {"current_service_strategy": service.text}
+    if not isinstance(service, ServiceSkillMemory):
+        raise TypeError("SkillMemory run received a non-SkillMemory Service")
+    return {
+        "current_service_skill_memory": service.to_dict(),
+        "current_service_skill_memory_id": service_strategy_id(service),
+    }
+
+
+def _same_service(left: ServiceCarrier, right: ServiceCarrier) -> bool:
+    return service_strategy_id(left) == service_strategy_id(right)
+
+
+def _service_memory_artifact(
+    *,
+    generation: int,
+    memory: ServiceSkillMemory,
+    provenance: Sequence[ServiceSkillProvenance],
+    parent_version_id: str | None,
+    mutation_operation: str | None,
+    source_task_ids: Sequence[str],
+    analysis: str | None = None,
+    skill_id_high_watermark: int | None = None,
+) -> dict[str, Any]:
+    rendered = render_service_skill_memory(memory)
+    return {
+        "schema_version": 1,
+        "generation": generation,
+        "carrier": "skill_memory_v1",
+        "memory_id": service_strategy_id(memory),
+        "memory": memory.to_dict(),
+        "provenance": [item.to_dict() for item in provenance],
+        "parent_version_id": parent_version_id,
+        "mutation_operation": mutation_operation,
+        "source_task_ids": list(source_task_ids),
+        "skill_id_high_watermark": (
+            service_skill_id_high_watermark(memory)
+            if skill_id_high_watermark is None else skill_id_high_watermark
+        ),
+        "analysis": analysis,
+        "skill_count": len(memory.skills),
+        "rendered_skill_chars": len(rendered),
+        "rendered_skill_tokens": None,
+    }
+
+
+def _target_skill(
+    memory: ServiceSkillMemory,
+    skill_id: str | None,
+) -> dict[str, str] | None:
+    if skill_id is None:
+        return None
+    skill = next((item for item in memory.skills if item.skill_id == skill_id), None)
+    return None if skill is None else skill.to_dict()
+
+
+def _added_skill_id(
+    before: ServiceSkillMemory,
+    after: ServiceSkillMemory,
+) -> str | None:
+    old_ids = {item.skill_id for item in before.skills}
+    additions = [item.skill_id for item in after.skills if item.skill_id not in old_ids]
+    if len(additions) != 1:
+        return None
+    return additions[0]
+
+
+def _proposed_skill_provenance(
+    provenance: Sequence[ServiceSkillProvenance],
+    *,
+    before: ServiceSkillMemory,
+    after: ServiceSkillMemory,
+    mutation: ServiceSkillMutation,
+    generation: int,
+    source_task_ids: Sequence[str],
+) -> tuple[ServiceSkillProvenance, ...]:
+    return update_skill_provenance(
+        provenance,
+        before=before,
+        after=after,
+        mutation=mutation,
+        generation=generation,
+        source_task_ids=source_task_ids,
+    )
+
+
+def _paired_service_outcomes(
+    before: Sequence[EpisodeRecord],
+    after: Sequence[EpisodeRecord],
+) -> dict[str, Any]:
+    old_by_task = {item.task_id: item for item in before}
+    new_by_task = {item.task_id: item for item in after}
+    if (len(old_by_task) != len(before) or len(new_by_task) != len(after)
+            or not old_by_task or set(old_by_task) != set(new_by_task)):
+        raise ValueError("Service mutation diagnostics require matching unique E task IDs")
+    counts = {"fail_to_pass": 0, "pass_to_fail": 0, "pass_to_pass": 0, "fail_to_fail": 0}
+    task_ids: dict[str, list[str]] = {key: [] for key in counts}
+    for task_id, old in old_by_task.items():
+        new = new_by_task[task_id]
+        if old.task_success is None or new.task_success is None:
+            raise ValueError("Service mutation diagnostics require native task-success values")
+        transition = (
+            "pass_to_pass" if old.task_success and new.task_success
+            else "pass_to_fail" if old.task_success
+            else "fail_to_pass" if new.task_success
+            else "fail_to_fail"
+        )
+        counts[transition] += 1
+        task_ids[transition].append(task_id)
+    return {"counts": counts, "task_ids": task_ids}
 
 
 def _append_evolver_failure(output_root: Path | None, value: Mapping[str, Any]) -> None:
@@ -886,10 +1372,13 @@ def propose_fresh_customer_challenge(
         "purpose": "Create one reusable Customer challenge skill for held-out evaluation.",
         "final_evolution_accuracy": _accuracy(result.final_evolution_episodes),
         "current_customer_strategy": result.customer.text,
-        "current_service_strategy": result.service.text,
         "service_policy": domain_policy,
         "accuracy_history": [dict(item) for item in result.generations],
     }
+    context.update(_service_context_fields(
+        result.service,
+        "skill_memory_v1" if isinstance(result.service, ServiceSkillMemory) else "prompt_strategy",
+    ))
     input_sha256 = sha256_json(context)
     path = None if proposal_path is None else Path(proposal_path)
     if path is not None and path.exists():
@@ -938,8 +1427,8 @@ def run_final_endpoint_evaluation(
     heldout_tasks: Mapping[str, Any],
     heldout_task_ids: Sequence[str],
     seed: int,
-    initial_service: PromptStrategy,
-    final_service: PromptStrategy,
+    initial_service: ServiceCarrier,
+    final_service: ServiceCarrier,
     fresh_customer: PromptStrategy,
     runner: EpisodeRunner,
     max_parallel_episodes: int = DEFAULT_MAX_PARALLEL_EPISODES,
@@ -952,7 +1441,7 @@ def run_final_endpoint_evaluation(
     _validate_max_parallel_episodes(max_parallel_episodes)
     if not task_ids or set(task_ids) - set(heldout_tasks):
         raise ValueError("final endpoint evaluation requires loaded H tasks")
-    identical_services = final_service.text == initial_service.text
+    identical_services = _same_service(final_service, initial_service)
     customers = (
         ("native_customer", None),
         ("fresh_adaptive_customer", fresh_customer),
@@ -1028,7 +1517,7 @@ def _run_panel(
     tasks: Mapping[str, Any],
     seed: int,
     customer: PromptStrategy | None,
-    service: PromptStrategy,
+    service: ServiceCarrier,
     panel_name: str,
     max_parallel_episodes: int = DEFAULT_MAX_PARALLEL_EPISODES,
     telemetry: EpisodeJobTelemetry | None = None,
@@ -1051,7 +1540,7 @@ def _run_panels(
     task_ids: Sequence[str],
     tasks: Mapping[str, Any],
     seed: int,
-    panels: Sequence[tuple[str, PromptStrategy | None, PromptStrategy]],
+    panels: Sequence[tuple[str, PromptStrategy | None, ServiceCarrier]],
     max_parallel_episodes: int = DEFAULT_MAX_PARALLEL_EPISODES,
     telemetry: EpisodeJobTelemetry | None = None,
 ) -> tuple[tuple[EpisodeRecord, ...], ...]:
@@ -1246,7 +1735,20 @@ def _episode_ref(episode: EpisodeRecord) -> dict[str, Any]:
     }
 
 
-def _strategy_document(role: str, strategy: PromptStrategy) -> dict[str, str]:
+def _strategy_document(role: str, strategy: PromptStrategy | ServiceCarrier) -> dict[str, Any]:
+    if role == "service" and isinstance(strategy, ServiceSkillMemory):
+        rendered = render_service_skill_memory(strategy)
+        return {
+            "role": role,
+            "carrier": "skill_memory_v1",
+            "strategy_id": service_strategy_id(strategy),
+            "strategy": strategy.to_dict(),
+            "skill_count": len(strategy.skills),
+            "rendered_skill_chars": len(rendered),
+            "rendered_skill_tokens": None,
+        }
+    if not isinstance(strategy, PromptStrategy):
+        raise TypeError("unknown Service strategy carrier")
     return {
         "role": role,
         "strategy_id": customer_strategy_id(strategy) if role == "customer"

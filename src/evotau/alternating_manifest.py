@@ -63,6 +63,11 @@ class AlternatingManifest:
     heldout_split_name: str = "test"
     enforce_communication_protocol: bool = False
     evaluation_type: str = "all"
+    customer_carrier: str = "prompt_strategy"
+    service_carrier: str = "prompt_strategy"
+    service_skill_runtime: str = "inject_all"
+    service_mutation_ops: tuple[str, ...] = ("add", "update", "no_op")
+    max_service_mutations_per_generation: int = 1
 
     def __post_init__(self) -> None:
         if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
@@ -106,6 +111,17 @@ class AlternatingManifest:
             raise TypeError("initial strategies must be natural-language strings")
         if type(self.enforce_communication_protocol) is not bool:
             raise ValueError("communication protocol mode must be boolean")
+        if self.customer_carrier != "prompt_strategy":
+            raise ValueError("V1 supports only the existing Customer PromptStrategy carrier")
+        if self.service_carrier not in {"prompt_strategy", "skill_memory_v1"}:
+            raise ValueError("unsupported Service evolution carrier")
+        if (type(self.max_service_mutations_per_generation) is not int
+                or self.service_skill_runtime != "inject_all"
+                or self.service_mutation_ops != ("add", "update", "no_op")
+                or self.max_service_mutations_per_generation != 1):
+            raise ValueError("SkillMemory V1 requires inject_all and one ADD/UPDATE/NO_OP per generation")
+        if self.service_carrier == "skill_memory_v1" and self.initial_service_strategy.strip():
+            raise ValueError("SkillMemory V1 must start empty without bootstrap Service skills")
         models = dict(self.role_models)
         if tuple(name for name, _ in self.role_models) != EVOLUTION_ROLE_NAMES:
             raise ValueError("models must freeze agent, customer, evaluator, and evolver")
@@ -156,6 +172,12 @@ class AlternatingManifest:
         run_heldout = experiment.get("run_heldout", True)
         if type(run_validation) is not bool or type(run_heldout) is not bool:
             raise ValueError("run_validation and run_heldout must be booleans")
+        evolution = experiment.get("evolution", {})
+        if not isinstance(evolution, Mapping):
+            raise TypeError("experiment.evolution must be a mapping")
+        mutation_ops = evolution.get("service_mutation_ops", ("add", "update", "no_op"))
+        if not isinstance(mutation_ops, (list, tuple)):
+            raise TypeError("service_mutation_ops must be a list")
         code = capture_code_provenance()
         return cls(
             experiment_id=str(experiment["id"]),
@@ -199,6 +221,13 @@ class AlternatingManifest:
             enforce_communication_protocol=experiment.get(
                 "enforce_communication_protocol", False,
             ),
+            customer_carrier=str(evolution.get("customer_carrier", "prompt_strategy")),
+            service_carrier=str(evolution.get("service_carrier", "prompt_strategy")),
+            service_skill_runtime=str(evolution.get("service_skill_runtime", "inject_all")),
+            service_mutation_ops=tuple(str(item) for item in mutation_ops),
+            max_service_mutations_per_generation=evolution.get(
+                "max_service_mutations_per_generation", 1,
+            ),
         )
 
     @property
@@ -210,7 +239,7 @@ class AlternatingManifest:
         return sha256_json(self.to_payload())
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "experiment_id": self.experiment_id,
             "phase": "alternating-self-evolution",
             "upstream": {
@@ -254,6 +283,15 @@ class AlternatingManifest:
             "output_path": self.output_path,
             "checkpoint_path": self.checkpoint_path,
         }
+        if self.service_carrier != "prompt_strategy":
+            payload["evolution"] = {
+                "customer_carrier": self.customer_carrier,
+                "service_carrier": self.service_carrier,
+                "service_skill_runtime": self.service_skill_runtime,
+                "service_mutation_ops": list(self.service_mutation_ops),
+                "max_service_mutations_per_generation": self.max_service_mutations_per_generation,
+            }
+        return payload
 
     def to_document(self) -> dict[str, Any]:
         payload = self.to_payload()

@@ -43,6 +43,30 @@ def service_strategy_view(strategy: Any) -> dict[str, Any]:
             "text": text,
             "technical": strategy,
         }
+    memory = strategy.get("strategy", strategy) if isinstance(strategy, dict) else None
+    if isinstance(memory, dict) and isinstance(memory.get("skills"), list):
+        skills = [
+            item for item in memory["skills"]
+            if isinstance(item, dict)
+            and isinstance(item.get("skill_id"), str)
+            and isinstance(item.get("trigger"), str)
+            and isinstance(item.get("guidance"), str)
+        ]
+        rendered = "\n\n".join(
+            f"## {item['skill_id']}\nTrigger: {item['trigger']}\nGuidance: {item['guidance']}"
+            for item in skills
+        )
+        return {
+            "available": True,
+            "carrier": "skill_memory_v1",
+            "summary": (
+                "空 SkillMemory；Service 使用 τ-bench 原生 prompt。"
+                if not skills else f"Service SkillMemory · {len(skills)} active skill(s)."
+            ),
+            "text": rendered,
+            "skills": skills,
+            "technical": strategy,
+        }
     return {
         "available": isinstance(strategy, dict),
         "summary": "Historical serialized strategy; it is not used by the current evolution method.",
@@ -169,6 +193,13 @@ def generation_view(commit: dict[str, Any]) -> dict[str, Any]:
         service_decision = service_phase.get("selection", {})
         accepted = service_phase.get("accepted") is True
         proposed_service = service_phase.get("proposed_strategy") or {}
+        proposed_service_text = proposed_service.get("text", proposed_service.get("strategy", ""))
+        if isinstance(proposed_service_text, dict) and isinstance(
+            proposed_service_text.get("skills"), list,
+        ):
+            proposed_service_text = _render_skill_memory(proposed_service_text["skills"])
+        elif isinstance(proposed_service, dict) and isinstance(proposed_service.get("skills"), list):
+            proposed_service_text = _render_skill_memory(proposed_service["skills"])
         return {
             **commit,
             "customer_evolved": customer_changed,
@@ -181,9 +212,7 @@ def generation_view(commit: dict[str, Any]) -> dict[str, Any]:
             "selection": {"reason": customer_selection.get("reason", "")},
             "service_accepted": accepted,
             "service_reason": service_decision.get("reason", ""),
-            "proposed_service_text": proposed_service.get(
-                "text", proposed_service.get("strategy", ""),
-            ),
+            "proposed_service_text": proposed_service_text,
             "decision_record": commit,
             "narrative": (
                 f"Customer: {customer_before.get('strategy', '')}",
@@ -210,6 +239,22 @@ def strategy_diff_rows(before: Any, after: Any, side: str) -> dict[str, Any]:
         return {"available": False, "rows": (), "added": (), "removed": ()}
     before_text = before.get("text", before.get("strategy"))
     after_text = after.get("text", after.get("strategy"))
+    before_skills = _skill_rows(before_text)
+    after_skills = _skill_rows(after_text)
+    if before_skills is not None and after_skills is not None:
+        ids = sorted(set(before_skills) | set(after_skills))
+        rows = tuple({
+            "field": skill_id,
+            "before": before_skills.get(skill_id, "(new skill)"),
+            "after": after_skills.get(skill_id, "(skill removed)"),
+            "changed": before_skills.get(skill_id) != after_skills.get(skill_id),
+        } for skill_id in ids)
+        return {
+            "available": True,
+            "rows": rows,
+            "added": tuple(sorted(set(after_skills) - set(before_skills))),
+            "removed": tuple(sorted(set(before_skills) - set(after_skills))),
+        }
     if isinstance(before_text, str) and isinstance(after_text, str):
         return {
             "available": True,
@@ -230,3 +275,23 @@ def strategy_diff_rows(before: Any, after: Any, side: str) -> dict[str, Any]:
         "changed": before.get(key) != after.get(key),
     } for key in keys)
     return {"available": True, "rows": rows, "added": (), "removed": ()}
+
+
+def _skill_rows(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict) or not isinstance(value.get("skills"), list):
+        return None
+    rows: dict[str, str] = {}
+    for item in value["skills"]:
+        if (not isinstance(item, dict) or not isinstance(item.get("skill_id"), str)
+                or not isinstance(item.get("trigger"), str)
+                or not isinstance(item.get("guidance"), str)):
+            continue
+        rows[item["skill_id"]] = f"Trigger: {item['trigger']}\nGuidance: {item['guidance']}"
+    return rows
+
+
+def _render_skill_memory(skills: list[Any]) -> str:
+    rows = _skill_rows({"skills": skills})
+    if not rows:
+        return "Empty SkillMemory"
+    return "\n\n".join(f"## {skill_id}\n{rows[skill_id]}" for skill_id in sorted(rows))
