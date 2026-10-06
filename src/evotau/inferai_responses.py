@@ -16,7 +16,7 @@ from .budget import RequestBudget
 
 _KEYCHAIN_SERVICE = "inferaiapi.com/v1"
 _KEYCHAIN_ACCOUNT = "openai-gpt-api-key"
-_REQUEST_TIMEOUT_SECONDS = 60.0
+_REQUEST_TIMEOUT_SECONDS = 180.0
 
 
 def generate_text(

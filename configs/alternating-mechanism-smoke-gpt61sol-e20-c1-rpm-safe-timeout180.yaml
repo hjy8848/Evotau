@@ -1,0 +1,103 @@
+experiment:
+  id: evotau-alternating-gpt61sol-e20-c1-mechanism-smoke-20261006-rpm-safe-timeout180
+  phase: alternating-self-evolution
+  upstream:
+    repository: sierra-research/tau2-bench
+    commit: b7ea9074c1cba482b30687fecdb5c8425fd6f619
+    package_version: 1.0.1
+  domain: retail
+  enforce_communication_protocol: false
+  evaluation_type: all
+  task_selection:
+    source_split: train
+    evolution:
+    - '66'
+    - '92'
+    - '29'
+    - '67'
+    - '106'
+    - '22'
+    - '69'
+    - '98'
+    - '93'
+    - '88'
+    - '4'
+    - '21'
+    - '8'
+    - '54'
+    - '107'
+    - '48'
+    - '52'
+    - '80'
+    - '35'
+    - '16'
+    validation:
+    - '44'
+    - '25'
+    - '78'
+    heldout:
+    - '74'
+    - '55'
+    - '18'
+    - '12'
+    - '97'
+    heldout_split: test
+    excluded:
+    - '46'
+    - '47'
+  seed: 1
+  generations: 2
+  customer_candidates: 1
+  clean_panel_size: 3
+  max_steps: 32
+  max_parallel_episodes: 1
+  request_budget_cap: null
+  real_provider_enabled: true
+  models:
+    agent: openai/deepseek-v4-flash
+    customer: openai/deepseek-v4-flash
+    evaluator: openai/deepseek-v4-flash
+    evolver: gpt-6.1-sol
+  model_args:
+    agent:
+      temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
+    customer:
+      temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
+    evaluator:
+      temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
+    evolver:
+      api_protocol: responses
+      reasoning_effort: high
+      api_base: https://inferaiapi.com/v1
+      api_key_env: INFERAI_API_KEY
+  customer_strategy: ''
+  service_strategy: ''
+  output_path: experiments/runs/evotau-alternating-gpt61sol-e20-c1-mechanism-smoke-20261006-rpm-safe-timeout180
+  checkpoint_path: experiments/checkpoints/evotau-alternating-gpt61sol-e20-c1-mechanism-smoke-20261006-rpm-safe-timeout180.json
+  source_blob_sha1:
+    data/tau2/domains/retail/tasks.json: e95a9f898b2d1f6568ea8faec78edc3767ce747d
+    data/tau2/domains/retail/split_tasks.json: 8b20704a17aa1940b1e58668f89dcef2ddaeeea3
+    data/tau2/domains/retail/db.json: 4d67b03b2d39ade5a7ab6facb2edd7ab3e013d48
+    data/tau2/domains/retail/policy.md: d127e6b074654926f337d0d98b0e669ebe90d19e
+    data/tau2/user_simulator/simulation_guidelines.md: b55a28a1d5eaf81e72bdc263307d9f512fe49a99
+    src/tau2/domains/retail/tools.py: eba01ab32dca0d4ef33328c22358b794d859f2b6
+    src/tau2/environment/environment.py: 0dce3d21826273e789eb25fa167b95ab148fa4f4
+    src/tau2/registry.py: 86a97a1deeea8a8e09cafeac4dfcff171b6454d4
+    src/tau2/orchestrator/orchestrator.py: da030140af392038aef48b149cd22607e600269d
+    src/tau2/user/user_simulator.py: 51ef4bba88e2565532ce02da1f36ab3021028178
+    src/tau2/agent/llm_agent.py: 652974ff98edb652c582453687977cff1742b7bd
+    src/tau2/runner/build.py: d3e02b3e22281189a534e4f336daf5c88a50534b
+    src/tau2/runner/simulation.py: 25330c9d831f548b72edfd959757faefb901da9a
+    src/tau2/data_model/simulation.py: 8c23c353ec48209d70554bcfe46c36e2415c7e85
+    src/tau2/evaluator/evaluator.py: 76c95a83e9049d70a5570b93989797c0626974b6
+    src/tau2/evaluator/evaluator_nl_assertions.py: 1f5397c5b8f8b105bf3d76027518d3bc3eb3e0f7
+    src/tau2/utils/llm_utils.py: cc704825a14d1a81a791b9ca2a08aa2eb8989f8c
+  evolution_fitness_seed: 1
+  run_validation: false
+  run_heldout: false
