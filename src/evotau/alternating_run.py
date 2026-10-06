@@ -94,9 +94,13 @@ def run_from_config(
 
     models = dict(manifest.role_models)
     role_args = role_model_args_for_runtime(manifest.role_model_args)
+    evolver_args = manifest.role_model_args_dict["evolver"]
+    if evolver_args.get("api_protocol") != "responses":
+        evolver_args = role_args["evolver"]
     providers = LLMAlternatingEvolvers(
         model=models["evolver"],
-        model_args=role_args["evolver"],
+        model_args=evolver_args,
+        request_budget=budget,
     )
     run_context = {
         "schema_version": 2,

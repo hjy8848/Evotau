@@ -1,4 +1,4 @@
-"""Atomic provider-attempt accounting for one Phase 0 episode."""
+"""Atomic provider-attempt accounting for τ-bench and EvoTau provider calls."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass
@@ -227,7 +227,7 @@ def _is_empty_completion(response: Any) -> bool:
 
 
 class RequestBudget:
-    """Count every call to the pinned tau-bench LiteLLM boundary before dispatch."""
+    """Count every provider request before τ-bench or EvoTau dispatches it."""
 
     def __init__(self, cap: int | None):
         if cap is not None and (type(cap) is not int or cap < 1):
@@ -483,6 +483,60 @@ class RequestBudget:
                 model_usage["usage_unavailable"] += 1
         if tracker is not None:
             tracker.completed(model_id, succeeded=succeeded, response=response)
+
+    @staticmethod
+    def _normalize_external_response(response: Any) -> Any:
+        """Translate OpenAI Responses usage fields to the shared budget schema."""
+
+        usage = RequestBudget._field(response, "usage")
+        if usage is None:
+            return response
+        prompt_tokens = RequestBudget._field(usage, "prompt_tokens")
+        if prompt_tokens is None:
+            prompt_tokens = RequestBudget._field(usage, "input_tokens")
+        completion_tokens = RequestBudget._field(usage, "completion_tokens")
+        if completion_tokens is None:
+            completion_tokens = RequestBudget._field(usage, "output_tokens")
+        return {
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            },
+        }
+
+    def dispatch_external_call(
+        self,
+        *,
+        model: str,
+        call_name: str,
+        dispatch: Callable[[], Any],
+    ) -> Any:
+        """Budget and record a provider request made outside tau-bench/LiteLLM."""
+
+        self._begin(model)
+        started = perf_counter()
+        try:
+            response = dispatch()
+        except BaseException:
+            elapsed = perf_counter() - started
+            self._finish(succeeded=False, model=model)
+            self._record_api_call(
+                call_name,
+                succeeded=False,
+                response=None,
+                elapsed_seconds=elapsed,
+            )
+            raise
+        accounting_response = self._normalize_external_response(response)
+        elapsed = perf_counter() - started
+        self._finish(succeeded=True, response=accounting_response, model=model)
+        self._record_api_call(
+            call_name,
+            succeeded=True,
+            response=accounting_response,
+            elapsed_seconds=elapsed,
+        )
+        return response
 
     def snapshot(self) -> BudgetSnapshot:
         with self._lock:

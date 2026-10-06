@@ -19,7 +19,7 @@ ROLE_NAMES = ("agent", "customer", "reviewer", "evaluator")
 EVOLUTION_ROLE_NAMES = ("agent", "customer", "evaluator", "evolver")
 MODEL_ARGUMENT_NAMES = frozenset({
     "temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty",
-    "api_base", "thinking_mode", "reasoning_effort",
+    "api_base", "thinking_mode", "reasoning_effort", "api_protocol", "api_key_env",
 })
 DEFAULT_ROLE_MODEL_ARGS = {
     role: {"temperature": 0.0} for role in (*ROLE_NAMES, "evolver")
@@ -161,6 +161,23 @@ def freeze_role_model_args(
             )
         normalized: list[tuple[str, float | int | str]] = []
         for name, value in sorted(params.items()):
+            if name == "api_protocol":
+                if value != "responses" or role != "evolver":
+                    raise ValueError(
+                        f"model_args.{role}.api_protocol supports 'responses' for evolver only"
+                    )
+                normalized.append((name, value))
+                continue
+            if name == "api_key_env":
+                if role != "evolver" or not isinstance(value, str) or not re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_]*", value,
+                ):
+                    raise ValueError(
+                        f"model_args.{role}.api_key_env must be an environment variable name "
+                        "for the evolver"
+                    )
+                normalized.append((name, value))
+                continue
             if name == "max_tokens":
                 if type(value) is not int or value <= 0:
                     raise ValueError(f"model_args.{role}.max_tokens must be a positive integer")
@@ -207,6 +224,15 @@ def freeze_role_model_args(
             if not low <= value <= high:
                 raise ValueError(f"model_args.{role}.{name} must be in {low}..{high}")
             normalized.append((name, value))
+        normalized_names = {name for name, _ in normalized}
+        if "api_protocol" in normalized_names:
+            if not {"api_base", "reasoning_effort"} <= normalized_names:
+                raise ValueError(
+                    "model_args.evolver.api_protocol='responses' requires api_base "
+                    "and reasoning_effort"
+                )
+        elif "api_key_env" in normalized_names:
+            raise ValueError("model_args.evolver.api_key_env requires api_protocol='responses'")
         frozen.append((role, tuple(normalized)))
     return tuple(frozen)
 

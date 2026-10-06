@@ -6,9 +6,10 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from evotau import alternating_run
-from evotau.alternating import run_alternating_evolution
+from evotau import alternating_run, inferai_responses
+from evotau.alternating import LLMAlternatingEvolvers, run_alternating_evolution
 from evotau.alternating_manifest import AlternatingManifest
+from evotau.budget import ProviderBudgetExceeded, RequestBudget
 from evotau.records import EpisodeRecord, EpisodeStatus
 from evotau.strategies import PromptStrategy
 from evotau.tau_provenance import role_model_args_for_runtime
@@ -47,9 +48,12 @@ def test_gpt_evolver_reasoning_effort_is_validated_and_forwarded_without_changin
     runtime_args = role_model_args_for_runtime(manifest.role_model_args)
 
     assert runtime_args["evolver"] == {
+        "api_key_env": "INFERAI_API_KEY",
         "api_base": "https://inferaiapi.com/v1",
+        "api_protocol": "responses",
         "reasoning_effort": "high",
     }
+    assert dict(manifest.role_models)["evolver"] == "gpt-6.1-sol"
     assert "temperature" not in runtime_args["evolver"]
     expected_deepseek_args = {
         "temperature": 0.0,
@@ -67,6 +71,85 @@ def test_gpt_evolver_reasoning_effort_is_validated_and_forwarded_without_changin
         }
         with pytest.raises(ValueError, match="reasoning_effort"):
             AlternatingManifest.from_mapping(invalid_config)
+
+
+def test_inferai_responses_evolver_uses_direct_transport_and_request_budget(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("INFERAI_API_KEY", "test-inferai-key")
+    captured: dict[str, object] = {}
+
+    def fake_post(url, payload, api_key, *, timeout):
+        captured.update({
+            "url": url,
+            "payload": payload,
+            "api_key": api_key,
+            "timeout": timeout,
+        })
+        return {
+            "output_text": '{"candidates":["Ask one grounded follow-up question."]}',
+            "usage": {"input_tokens": 19, "output_tokens": 8},
+        }
+
+    monkeypatch.setattr(inferai_responses, "_post_responses", fake_post)
+    monkeypatch.setattr(
+        LLMAlternatingEvolvers,
+        "_json_call",
+        staticmethod(lambda *_args, **_kwargs: pytest.fail("LiteLLM path must not run")),
+    )
+    budget = RequestBudget(cap=1)
+    evolver = LLMAlternatingEvolvers(
+        model="gpt-6.1-sol",
+        model_args={
+            "api_protocol": "responses",
+            "api_base": "https://inferaiapi.com/v1",
+            "api_key_env": "INFERAI_API_KEY",
+            "reasoning_effort": "high",
+        },
+        request_budget=budget,
+    )
+
+    result = evolver.customer_candidates({"incumbent_accuracy": 0.5}, 1)
+
+    assert result == ("Ask one grounded follow-up question.",)
+    assert captured["url"] == "https://inferaiapi.com/v1/responses"
+    assert captured["api_key"] == "test-inferai-key"
+    payload = captured["payload"]
+    assert payload["model"] == "gpt-6.1-sol"
+    assert payload["reasoning"] == {"effort": "high"}
+    assert "tools" not in payload
+    assert "temperature" not in payload
+    assert [message["role"] for message in payload["input"]] == ["system", "user"]
+    assert budget.snapshot().attempts == 1
+    assert budget.snapshot().prompt_tokens == 19
+    assert budget.snapshot().completion_tokens == 8
+    assert budget.api_usage_by_call_name()["evotau_customer_evolver"]["calls"] == 1
+
+
+def test_inferai_responses_budget_rejects_before_dispatch(monkeypatch) -> None:
+    monkeypatch.setenv("INFERAI_API_KEY", "test-inferai-key")
+    calls = 0
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {"output_text": '{"candidates": []}', "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+    monkeypatch.setattr(inferai_responses, "_post_responses", fake_post)
+    budget = RequestBudget(cap=1)
+    args = {
+        "api_protocol": "responses",
+        "api_base": "https://inferaiapi.com/v1",
+        "api_key_env": "INFERAI_API_KEY",
+        "reasoning_effort": "high",
+    }
+    provider = LLMAlternatingEvolvers(
+        model="gpt-6.1-sol", model_args=args, request_budget=budget,
+    )
+    provider.customer_candidates({}, 0)
+    with pytest.raises(ProviderBudgetExceeded, match="cap 1 reached"):
+        provider.customer_candidates({}, 0)
+    assert calls == 1
 
 
 def test_mechanism_smoke_accepts_strict_service_e_improvement_without_v() -> None:

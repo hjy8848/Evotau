@@ -18,6 +18,7 @@ from .alternating_manifest import (
     MAX_PARALLEL_EPISODES,
 )
 from .budget import RequestBudget
+from .inferai_responses import generate_text as inferai_responses_generate_text
 from .records import EpisodeRecord, customer_strategy_id, service_strategy_id
 from .strategies import PromptStrategy
 from .tau_provenance import sha256_json
@@ -89,14 +90,16 @@ class LLMAlternatingEvolvers:
         *,
         model: str,
         model_args: Mapping[str, Any],
+        request_budget: RequestBudget | None = None,
     ) -> None:
         self.model = model
         self.model_args = dict(model_args)
+        self.request_budget = request_budget
 
     def customer_candidates(
         self, context: Mapping[str, Any], count: int,
     ) -> tuple[str, ...]:
-        result = self._json_call(
+        result = self._provider_json_call(
             self.model,
             self.model_args,
             "You evolve the Customer as a task-grounded adaptive challenge generator. "
@@ -128,7 +131,7 @@ class LLMAlternatingEvolvers:
         return tuple(candidates)
 
     def service_candidate(self, context: Mapping[str, Any]) -> Mapping[str, str]:
-        result = self._json_call(
+        result = self._provider_json_call(
             self.model,
             self.model_args,
             "You evolve the Service from native τ-bench task outcomes. Study the fixed task policy, "
@@ -144,6 +147,38 @@ class LLMAlternatingEvolvers:
         if not isinstance(result.get("analysis"), str) or not isinstance(result.get("strategy"), str):
             raise TypeError("Service Evolver must return string analysis and strategy fields")
         return {"analysis": result["analysis"], "strategy": result["strategy"]}
+
+    def _provider_json_call(
+        self,
+        model: str,
+        model_args: Mapping[str, Any],
+        system_prompt: str,
+        context: Mapping[str, Any],
+        *,
+        call_name: str,
+    ) -> dict[str, Any]:
+        if model_args.get("api_protocol") != "responses":
+            return self._json_call(
+                model,
+                model_args,
+                system_prompt,
+                context,
+                call_name=call_name,
+            )
+        content = inferai_responses_generate_text(
+            model=model,
+            api_base=str(model_args["api_base"]),
+            api_key_env=str(model_args.get("api_key_env", "INFERAI_API_KEY")),
+            reasoning_effort=str(model_args["reasoning_effort"]),
+            system_prompt=system_prompt,
+            user_prompt=json.dumps(context, ensure_ascii=False, sort_keys=True),
+            call_name=call_name,
+            request_budget=self.request_budget,
+        )
+        value = _parse_evolver_json(content, call_name=call_name)
+        if not isinstance(value, dict):
+            raise TypeError("evolver responses must be JSON objects")
+        return value
 
     @staticmethod
     def _json_call(
