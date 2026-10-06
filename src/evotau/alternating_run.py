@@ -182,7 +182,9 @@ def run_from_config(
         ),
         service_evolver_provider=(
             "InferAI Responses API" if evolver_args.get("api_protocol") == "responses"
-            else "τ-bench/LiteLLM configured provider"
+            else str(dict(manifest.provider_provenance).get(
+                "provider", "τ-bench/LiteLLM configured provider",
+            ))
         ),
     )
 
@@ -411,7 +413,7 @@ def load_alternating_tasks(
     os.environ["TAU2_DATA_DIR"] = str(data_root)
     verify_tau2_installation()
     import tau2
-    from tau2.runner.helpers import get_tasks
+    from tau2.data_model.tasks import Task
 
     package_root = Path(tau2.__file__).resolve().parent
     for repository_path, digest in manifest.source_blob_sha1:
@@ -440,20 +442,143 @@ def load_alternating_tasks(
     train_ids = manifest.evolution_task_ids + (
         manifest.validation_task_ids if include_validation else ()
     )
-    tasks = list(get_tasks(
-        manifest.domain, task_split_name=manifest.split_name, task_ids=list(train_ids),
-    ))
-    if include_heldout:
-        tasks.extend(get_tasks(
-            manifest.domain,
-            task_split_name=manifest.heldout_split_name,
-            task_ids=list(manifest.heldout_task_ids),
-        ))
+    requested_ids = train_ids + (manifest.heldout_task_ids if include_heldout else ())
+    task_records = _load_selected_retail_task_records(
+        data_root / "tau2/domains/retail/tasks.json",
+        set(requested_ids),
+    )
+    tasks = [Task.model_validate(record) for record in task_records]
     by_id = {str(task.id): task for task in tasks}
-    expected = set(train_ids) | (test if include_heldout else set())
+    expected = set(requested_ids)
     if set(by_id) != expected:
         raise ValueError("τ-bench did not return exactly the requested task panel")
     return by_id
+
+
+def _load_selected_retail_task_records(
+    path: str | Path,
+    selected_task_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Stream Retail tasks and decode only selected records.
+
+    τ-bench's Retail loader validates every task before filtering by ID. The
+    pinned data format places ``id`` first in each object, so unselected records
+    can be skipped lexically without decoding their scenario or description.
+    """
+
+    def skip_whitespace(handle, captured: list[str] | None = None) -> None:
+        while True:
+            position = handle.tell()
+            char = handle.read(1)
+            if not char or not char.isspace():
+                handle.seek(position)
+                return
+            if captured is not None:
+                captured.append(char)
+
+    def read_json_string(handle) -> tuple[str, str]:
+        if handle.read(1) != '"':
+            raise ValueError("pinned Retail task records must use a JSON string key and ID")
+        raw = ['"']
+        escaped = False
+        while True:
+            char = handle.read(1)
+            if not char:
+                raise ValueError("unexpected end of pinned Retail task JSON string")
+            raw.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                token = "".join(raw)
+                value = json.loads(token)
+                if not isinstance(value, str):
+                    raise ValueError("Retail task object keys and IDs must be strings")
+                return token, value
+
+    def consume_object_tail(handle, *, collect: bool) -> str:
+        depth = 1
+        in_string = False
+        escaped = False
+        tail: list[str] = []
+        while depth:
+            char = handle.read(1)
+            if not char:
+                raise ValueError("unexpected end of pinned Retail task object")
+            if collect:
+                tail.append(char)
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char in "[{":
+                depth += 1
+            elif char in "]}":
+                depth -= 1
+        return "".join(tail)
+
+    selected: list[dict[str, Any]] = []
+    found: set[str] = set()
+    with Path(path).open(encoding="utf-8") as handle:
+        skip_whitespace(handle)
+        if handle.read(1) != "[":
+            raise ValueError("pinned Retail tasks must be a top-level JSON array")
+        first = True
+        while True:
+            skip_whitespace(handle)
+            char = handle.read(1)
+            if char == "]":
+                break
+            if first:
+                if char != "{":
+                    raise ValueError("pinned Retail tasks must contain JSON objects")
+            else:
+                if char != ",":
+                    raise ValueError("pinned Retail task array has an invalid separator")
+                skip_whitespace(handle)
+                if handle.read(1) != "{":
+                    raise ValueError("pinned Retail tasks must contain JSON objects")
+
+            prefix = ["{"]
+            skip_whitespace(handle, prefix)
+            key_raw, key = read_json_string(handle)
+            prefix.append(key_raw)
+            if key != "id":
+                raise ValueError(
+                    "pinned Retail task records must put the id field first for sealed loading"
+                )
+            skip_whitespace(handle, prefix)
+            colon = handle.read(1)
+            if colon != ":":
+                raise ValueError("pinned Retail task id field is missing a colon")
+            prefix.append(colon)
+            skip_whitespace(handle, prefix)
+            id_raw, task_id = read_json_string(handle)
+            prefix.append(id_raw)
+            collect = task_id in selected_task_ids
+            tail = consume_object_tail(handle, collect=collect)
+            if collect:
+                record = json.loads("".join(prefix) + tail)
+                if task_id in found:
+                    raise ValueError(f"duplicate task ID in pinned Retail data: {task_id}")
+                selected.append(record)
+                found.add(task_id)
+            first = False
+
+        skip_whitespace(handle)
+        if handle.read(1):
+            raise ValueError("pinned Retail task JSON contains trailing data")
+
+    missing = selected_task_ids - found
+    if missing:
+        raise ValueError(f"requested τ-bench task IDs were not found: {sorted(missing)}")
+    return selected
 
 
 def _write_or_verify_context(path: Path, value: dict[str, Any]) -> None:

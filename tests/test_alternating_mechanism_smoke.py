@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -71,6 +72,94 @@ def test_gpt_evolver_reasoning_effort_is_validated_and_forwarded_without_changin
         }
         with pytest.raises(ValueError, match="reasoning_effort"):
             AlternatingManifest.from_mapping(invalid_config)
+
+
+def test_deepseek_v4_pro_skill_memory_smoke_freezes_provider_and_reasoning_provenance() -> None:
+    config = _config("alternating-skill-memory-v1-deepseek-v4-pro-e20-c1.yaml")
+    experiment = config["experiment"]
+    manifest = AlternatingManifest.from_mapping(config)
+    runtime_args = role_model_args_for_runtime(manifest.role_model_args)
+
+    assert manifest.evolution_task_ids == (
+        "66", "92", "29", "67", "106", "22", "69", "98", "93", "88",
+        "4", "21", "8", "54", "107", "48", "52", "80", "35", "16",
+    )
+    assert len(manifest.evolution_task_ids) == 20
+    assert not set(manifest.evolution_task_ids) & set(manifest.validation_task_ids)
+    assert not set(manifest.evolution_task_ids) & set(manifest.heldout_task_ids)
+    assert not set(manifest.evolution_task_ids) & set(manifest.excluded_task_ids)
+    assert dict(manifest.role_models) == {
+        "agent": "openai/deepseek-v4-flash",
+        "customer": "openai/deepseek-v4-flash",
+        "evaluator": "openai/deepseek-v4-flash",
+        "evolver": "openai/deepseek-v4-pro",
+    }
+    expected_runtime_args = {
+        "api_base": "https://inferaiapi.com/v1",
+        "reasoning_effort": "high",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+    assert runtime_args["evolver"] == expected_runtime_args
+    assert "temperature" not in runtime_args["evolver"]
+    assert all(
+        runtime_args[role]["extra_body"] == {"thinking": {"type": "disabled"}}
+        for role in ("agent", "customer", "evaluator")
+    )
+    assert experiment["evolution_fitness_seed"] == 1
+    assert experiment["generations"] == 2
+    assert experiment["customer_candidates"] == 1
+    assert experiment["run_validation"] is False
+    assert experiment["run_heldout"] is False
+    assert experiment["max_parallel_episodes"] == 1
+    assert experiment["request_budget_cap"] is None
+    assert manifest.provider_provenance == tuple(sorted(experiment["provider_provenance"].items()))
+    assert manifest.to_document()["provider_provenance"]["provider"] == "InferAI"
+    assert (
+        manifest.to_document()["provider_provenance"]["reasoning_parameter_verified_by_provider"]
+        is False
+    )
+    gpt_experiment = _config("alternating-skill-memory-v1-gpt61sol-e20-c1.yaml")["experiment"]
+    assert experiment["output_path"] != gpt_experiment["output_path"]
+    assert experiment["checkpoint_path"] != gpt_experiment["checkpoint_path"]
+
+    invalid = _config("alternating-skill-memory-v1-deepseek-v4-pro-e20-c1.yaml")
+    invalid["experiment"]["provider_provenance"]["reasoning_parameter_verified_by_provider"] = "false"
+    with pytest.raises(TypeError, match="reasoning provider verification status"):
+        AlternatingManifest.from_mapping(invalid)
+
+
+def test_retail_task_stream_loader_never_decodes_unselected_scenario_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hidden_marker = "heldout-scenario-must-not-be-decoded"
+    task_file = tmp_path / "tasks.json"
+    task_file.write_text(
+        json.dumps([
+            {"id": "train-1", "description": {"text": "selected"}},
+            {
+                "id": "heldout-1",
+                "description": {"text": hidden_marker},
+                "user_scenario": {"instructions": hidden_marker},
+            },
+        ]),
+        encoding="utf-8",
+    )
+    decoded_json: list[str] = []
+    original_loads = json.loads
+
+    def tracking_loads(value: str, *args, **kwargs):
+        decoded_json.append(value)
+        return original_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr(alternating_run.json, "loads", tracking_loads)
+    selected = alternating_run._load_selected_retail_task_records(
+        task_file,
+        {"train-1"},
+    )
+
+    assert [task["id"] for task in selected] == ["train-1"]
+    assert all(hidden_marker not in value for value in decoded_json)
 
 
 def test_inferai_responses_evolver_uses_direct_transport_and_request_budget(

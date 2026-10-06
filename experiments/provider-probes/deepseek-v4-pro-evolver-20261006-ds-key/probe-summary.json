@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "experiment_id": "evotau-skill-memory-v1-deepseek-v4-pro-e20-c1-mechanism-smoke-20261006",
+  "stage": "A_provider_capability_probe",
+  "stage_a_passed": true,
+  "tau_bench_episodes_started": 0,
+  "task_evaluator_calls": 0,
+  "provider": "InferAI",
+  "credential_source": "macOS Keychain service inferaiapi.com/v1, account openai-api-key; secret never recorded",
+  "model": "deepseek-v4-pro",
+  "chat_completions_path": "tau2.utils.llm_utils.generate via LiteLLM -> https://inferaiapi.com/v1/chat/completions",
+  "reasoning_parameters_sent": {
+    "reasoning_effort": "high",
+    "extra_body": {
+      "thinking": {
+        "type": "enabled"
+      }
+    }
+  },
+  "reasoning_parameter_verified_by_provider": false,
+  "reasoning_evidence": "Small and large responses included reasoning_content; the successful large response usage reported 7770 reasoning tokens. InferAI did not independently echo or attest that the requested high effort level was honored.",
+  "small_probe": {
+    "provider_success": true,
+    "strict_json_parse_success": true,
+    "model_returned": "deepseek-v4-pro",
+    "latency_seconds": 3.419,
+    "finish_reason": "length",
+    "completion_cap": 64,
+    "note": "Exact tiny JSON was returned and parsed, though finish_reason=length shows the 64-token caller cap ended reasoning generation."
+  },
+  "large_probe_first_attempt": {
+    "provider_call_dispatched": true,
+    "provider_success": true,
+    "strict_json_parse_success": false,
+    "latency_seconds": 61.647,
+    "finish_reason": "length (captured from tau2 warning; raw finish metadata was not retained by first harness)",
+    "completion_cap": 4096,
+    "visible_output_chars": 0,
+    "num_retries": 0,
+    "classification": "Caller-imposed output token cap exhausted during reasoning before visible JSON; not a provider transport failure."
+  },
+  "large_probe_corrected_attempt": {
+    "provider_success": true,
+    "strict_json_and_mutation_parse_success": true,
+    "empty_memory_operation_valid": true,
+    "operation": "no_op",
+    "latency_seconds": 73.423,
+    "finish_reason": "stop",
+    "num_retries": 0,
+    "prompt_tokens": 109176,
+    "completion_tokens": 8006,
+    "reasoning_tokens": 7770,
+    "reasoning_content_chars": 35876,
+    "context_bytes": 356476,
+    "task_count": 20,
+    "context_sha256": "c7651617cc86cd7dbc8e4903df58b39ce91cebc6dc5deb3274bf827103f7f091",
+    "trajectory_interactions_preserved_exactly": true,
+    "hidden_user_scenario_fields_present": false,
+    "response_truncated": false
+  },
+  "provider_calls_dispatched": 3,
+  "provider_5xx_count": 0,
+  "provider_timeout_count": 0,
+  "automatic_retry_count": 0,
+  "total_provider_elapsed_seconds": 138.489,
+  "large_probe_skill_proposal_is_research_evidence": false
+}

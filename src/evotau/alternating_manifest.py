@@ -68,6 +68,7 @@ class AlternatingManifest:
     service_skill_runtime: str = "inject_all"
     service_mutation_ops: tuple[str, ...] = ("add", "update", "no_op")
     max_service_mutations_per_generation: int = 1
+    provider_provenance: tuple[tuple[str, str | bool], ...] = ()
 
     def __post_init__(self) -> None:
         if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
@@ -122,6 +123,25 @@ class AlternatingManifest:
             raise ValueError("SkillMemory V1 requires inject_all and one ADD/UPDATE/NO_OP per generation")
         if self.service_carrier == "skill_memory_v1" and self.initial_service_strategy.strip():
             raise ValueError("SkillMemory V1 must start empty without bootstrap Service skills")
+        provenance = dict(self.provider_provenance)
+        if len(provenance) != len(self.provider_provenance):
+            raise ValueError("provider provenance keys must be unique")
+        if provenance:
+            required = {
+                "provider",
+                "evolver_model_id",
+                "backend_checkpoint",
+                "reasoning_parameter_verified_by_provider",
+            }
+            if not required <= set(provenance):
+                raise ValueError(
+                    "provider provenance must record provider, Evolver model, backend checkpoint, "
+                    "and provider-side reasoning verification status"
+                )
+            if any(not isinstance(value, (str, bool)) for value in provenance.values()):
+                raise TypeError("provider provenance values must be strings or booleans")
+            if type(provenance["reasoning_parameter_verified_by_provider"]) is not bool:
+                raise TypeError("reasoning provider verification status must be boolean")
         models = dict(self.role_models)
         if tuple(name for name, _ in self.role_models) != EVOLUTION_ROLE_NAMES:
             raise ValueError("models must freeze agent, customer, evaluator, and evolver")
@@ -178,6 +198,13 @@ class AlternatingManifest:
         mutation_ops = evolution.get("service_mutation_ops", ("add", "update", "no_op"))
         if not isinstance(mutation_ops, (list, tuple)):
             raise TypeError("service_mutation_ops must be a list")
+        provider_provenance = experiment.get("provider_provenance", {})
+        if not isinstance(provider_provenance, Mapping):
+            raise TypeError("experiment.provider_provenance must be a mapping")
+        if any(not isinstance(key, str) for key in provider_provenance):
+            raise TypeError("provider provenance keys must be strings")
+        if any(not isinstance(value, (str, bool)) for value in provider_provenance.values()):
+            raise TypeError("provider provenance values must be strings or booleans")
         code = capture_code_provenance()
         return cls(
             experiment_id=str(experiment["id"]),
@@ -228,6 +255,7 @@ class AlternatingManifest:
             max_service_mutations_per_generation=evolution.get(
                 "max_service_mutations_per_generation", 1,
             ),
+            provider_provenance=tuple(sorted(provider_provenance.items())),
         )
 
     @property
@@ -291,6 +319,8 @@ class AlternatingManifest:
                 "service_mutation_ops": list(self.service_mutation_ops),
                 "max_service_mutations_per_generation": self.max_service_mutations_per_generation,
             }
+        if self.provider_provenance:
+            payload["provider_provenance"] = dict(self.provider_provenance)
         return payload
 
     def to_document(self) -> dict[str, Any]:
