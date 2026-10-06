@@ -1,5 +1,5 @@
 experiment:
-  id: evotau-alternating-retail-smoke
+  id: evotau-alternating-mechanism-smoke-deepseek-v4-flash-20261006
   phase: alternating-self-evolution
   upstream:
     repository: sierra-research/tau2-bench
@@ -11,44 +11,59 @@ experiment:
   task_selection:
     source_split: train
     evolution:
-    - '73'
+    - '66'
+    - '92'
+    - '29'
+    - '67'
+    - '106'
     validation:
-    - '93'
+    - '44'
+    - '25'
+    - '78'
     heldout:
-    - '5'
+    - '74'
+    - '55'
+    - '18'
+    - '12'
+    - '97'
     heldout_split: test
     excluded:
     - '46'
     - '47'
   seed: 1
-  evolution_fitness_seed: 1
-  generations: 2
+  generations: 3
   customer_candidates: 2
-  clean_panel_size: 1
+  clean_panel_size: 3
   max_steps: 32
-  max_parallel_episodes: 4
-  run_validation: true
-  run_heldout: true
+  max_parallel_episodes: 8
   request_budget_cap: null
-  real_provider_enabled: false
+  real_provider_enabled: true
   models:
-    agent: null
-    customer: null
-    evaluator: null
-    evolver: null
+    agent: openai/deepseek-v4-flash
+    customer: openai/deepseek-v4-flash
+    evaluator: openai/deepseek-v4-flash
+    evolver: openai/deepseek-v4-flash
   model_args:
     agent:
       temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
     customer:
       temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
     evaluator:
       temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
     evolver:
       temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
   customer_strategy: ''
   service_strategy: ''
-  output_path: experiments/runs/evotau-alternating-smoke
-  checkpoint_path: experiments/checkpoints/evotau-alternating-smoke.json
+  output_path: experiments/runs/evotau-alternating-mechanism-smoke-deepseek-v4-flash-20261006
+  checkpoint_path: experiments/checkpoints/evotau-alternating-mechanism-smoke-deepseek-v4-flash-20261006.json
   source_blob_sha1:
     data/tau2/domains/retail/tasks.json: e95a9f898b2d1f6568ea8faec78edc3767ce747d
     data/tau2/domains/retail/split_tasks.json: 8b20704a17aa1940b1e58668f89dcef2ddaeeea3
@@ -67,3 +82,6 @@ experiment:
     src/tau2/evaluator/evaluator.py: 76c95a83e9049d70a5570b93989797c0626974b6
     src/tau2/evaluator/evaluator_nl_assertions.py: 1f5397c5b8f8b105bf3d76027518d3bc3eb3e0f7
     src/tau2/utils/llm_utils.py: cc704825a14d1a81a791b9ca2a08aa2eb8989f8c
+  evolution_fitness_seed: 1
+  run_validation: false
+  run_heldout: false

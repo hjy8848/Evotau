@@ -21,6 +21,9 @@ from .tau_provenance import (
     sha256_json,
 )
 
+DEFAULT_MAX_PARALLEL_EPISODES = 4
+MAX_PARALLEL_EPISODES = 8
+
 
 @dataclass(frozen=True, slots=True)
 class AlternatingManifest:
@@ -52,6 +55,9 @@ class AlternatingManifest:
     initial_service_strategy: str
     output_path: str
     checkpoint_path: str
+    evolution_fitness_seed: int | None = None
+    run_validation: bool = True
+    run_heldout: bool = True
     domain: str = "retail"
     split_name: str = "train"
     heldout_split_name: str = "test"
@@ -79,11 +85,19 @@ class AlternatingManifest:
             raise ValueError("seed, generation count, and candidate count must be positive")
         if not 1 <= self.clean_panel_size <= len(self.validation_task_ids):
             raise ValueError("clean_panel_size must select tasks from the V panel")
+        if self.evolution_fitness_seed is not None and (
+            type(self.evolution_fitness_seed) is not int or self.evolution_fitness_seed < 0
+        ):
+            raise ValueError("evolution_fitness_seed must be a non-negative integer")
         if self.max_steps < 1:
             raise ValueError("max_steps must be positive")
         if (type(self.max_parallel_episodes) is not int
-                or not 1 <= self.max_parallel_episodes <= 4):
-            raise ValueError("max_parallel_episodes must be an integer from 1 to 4")
+                or not 1 <= self.max_parallel_episodes <= MAX_PARALLEL_EPISODES):
+            raise ValueError(
+                f"max_parallel_episodes must be an integer from 1 to {MAX_PARALLEL_EPISODES}"
+            )
+        if type(self.run_validation) is not bool or type(self.run_heldout) is not bool:
+            raise ValueError("run_validation and run_heldout must be booleans")
         if self.request_budget_cap is not None and self.request_budget_cap < 1:
             raise ValueError("request budget cap must be positive or null")
         if not isinstance(self.initial_customer_strategy, str) or not isinstance(
@@ -135,6 +149,13 @@ class AlternatingManifest:
         if type(enabled) is not bool:
             raise ValueError("real_provider_enabled must be boolean")
         cap = experiment.get("request_budget_cap")
+        evolution_fitness_seed = experiment.get("evolution_fitness_seed", experiment["seed"])
+        if type(evolution_fitness_seed) is not int:
+            raise ValueError("evolution_fitness_seed must be an integer")
+        run_validation = experiment.get("run_validation", True)
+        run_heldout = experiment.get("run_heldout", True)
+        if type(run_validation) is not bool or type(run_heldout) is not bool:
+            raise ValueError("run_validation and run_heldout must be booleans")
         code = capture_code_provenance()
         return cls(
             experiment_id=str(experiment["id"]),
@@ -153,7 +174,9 @@ class AlternatingManifest:
             customer_candidates=int(experiment.get("customer_candidates", 2)),
             clean_panel_size=int(experiment.get("clean_panel_size", 1)),
             max_steps=int(experiment.get("max_steps", 64)),
-            max_parallel_episodes=experiment.get("max_parallel_episodes", 4),
+            max_parallel_episodes=experiment.get(
+                "max_parallel_episodes", DEFAULT_MAX_PARALLEL_EPISODES,
+            ),
             request_budget_cap=None if cap is None else int(cap),
             real_provider_enabled=enabled,
             role_models=role_models,
@@ -167,6 +190,9 @@ class AlternatingManifest:
             initial_service_strategy=str(experiment.get("service_strategy") or ""),
             output_path=_relative_path(str(experiment["output_path"]), "output_path"),
             checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
+            evolution_fitness_seed=evolution_fitness_seed,
+            run_validation=run_validation,
+            run_heldout=run_heldout,
             domain=str(experiment.get("domain", "retail")),
             split_name=str(selection["source_split"]),
             heldout_split_name=str(selection.get("heldout_split", "test")),
@@ -207,11 +233,16 @@ class AlternatingManifest:
                 "heldout_split": self.heldout_split_name,
             },
             "seed": self.seed,
+            "evolution_fitness_seed": (
+                self.seed if self.evolution_fitness_seed is None else self.evolution_fitness_seed
+            ),
             "generations": self.generations,
             "customer_candidates": self.customer_candidates,
             "clean_panel_size": self.clean_panel_size,
             "max_steps": self.max_steps,
             "max_parallel_episodes": self.max_parallel_episodes,
+            "run_validation": self.run_validation,
+            "run_heldout": self.run_heldout,
             "request_budget_cap": self.request_budget_cap,
             "real_provider_enabled": self.real_provider_enabled,
             "role_models": dict(self.role_models),

@@ -9,6 +9,7 @@ from time import sleep
 import pytest
 
 from evotau.alternating import (
+    EpisodeJobTelemetry,
     EvolverJSONError,
     LLMAlternatingEvolvers,
     _parse_evolver_json,
@@ -95,6 +96,13 @@ class RestartableFakeRunner:
         self.success = success or (lambda _task, _customer, _service: True)
         self.calls = []
         self.reused_keys = []
+
+    def has_completed_episode(self, *, task_id, seed, customer, service, panel_name):
+        key = (
+            str(task_id), seed, customer_strategy_id(customer),
+            service_strategy_id(service), panel_name,
+        )
+        return key in self.cache
 
     def __call__(self, *, task_id, seed, customer, service, panel_name):
         key = (
@@ -227,6 +235,12 @@ def test_accuracy_selects_hardest_customer_then_accepts_service_gain(tmp_path) -
     assert service_phase["accepted"] is True
     assert result.service.text == "S1"
     assert all("user_scenario" in row["task"] for row in customer_contexts[0]["task_interactions"])
+    interaction = customer_contexts[0]["task_interactions"][0]
+    assert "tool_results" not in interaction
+    assert any(
+        message.get("role") == "tool"
+        for message in interaction["trajectory"]["messages"]
+    )
     assert service_contexts
     saved = __import__("json").loads((tmp_path / "generation-0000.json").read_text())
     assert saved["customer_phase"]["selected_accuracy"] == 0.0
@@ -262,7 +276,10 @@ def test_customer_accuracy_tie_keeps_incumbent_without_selection_judge() -> None
     assert len(runner.calls) == 2
 
 
-def _resume_test_inputs(tmp_path, *, customer_evolver, service_evolver, runner):
+def _resume_test_inputs(
+    tmp_path, *, customer_evolver, service_evolver, runner,
+    max_parallel_episodes=1, telemetry=None,
+):
     tasks = {
         "e1": FakeTask("e1", "Evolution one", "Customer goal one."),
         "e2": FakeTask("e2", "Evolution two", "Customer goal two."),
@@ -276,7 +293,8 @@ def _resume_test_inputs(tmp_path, *, customer_evolver, service_evolver, runner):
         generations=1,
         customer_candidate_count=2,
         clean_panel_size=1,
-        max_parallel_episodes=1,
+        max_parallel_episodes=max_parallel_episodes,
+        episode_job_telemetry=telemetry,
         initial_customer=PromptStrategy("C0"),
         initial_service=PromptStrategy("S0"),
         runner=runner,
@@ -299,6 +317,7 @@ def test_customer_proposals_and_completed_candidate_episode_survive_resume(tmp_p
         cache=cache, trajectories=trajectories, failed_once=failed_once,
         fail_key=failed_key,
     )
+    first_telemetry = EpisodeJobTelemetry(4)
     evolver_calls = {"customer": 0, "service": 0}
 
     def customer_evolver(_context, _count):
@@ -313,6 +332,7 @@ def test_customer_proposals_and_completed_candidate_episode_survive_resume(tmp_p
         _resume_test_inputs(
             tmp_path, customer_evolver=customer_evolver,
             service_evolver=service_evolver, runner=first_runner,
+            max_parallel_episodes=4, telemetry=first_telemetry,
         )
 
     proposal_path = tmp_path / "generation-0000-customer-proposals.json"
@@ -324,9 +344,11 @@ def test_customer_proposals_and_completed_candidate_episode_survive_resume(tmp_p
     resumed_runner = RestartableFakeRunner(
         cache=cache, trajectories=trajectories, failed_once=failed_once,
     )
+    resumed_telemetry = EpisodeJobTelemetry(4)
     result = _resume_test_inputs(
         tmp_path, customer_evolver=customer_evolver,
         service_evolver=service_evolver, runner=resumed_runner,
+        max_parallel_episodes=4, telemetry=resumed_telemetry,
     )
     final_ids = [
         item["strategy_id"]
@@ -336,6 +358,7 @@ def test_customer_proposals_and_completed_candidate_episode_survive_resume(tmp_p
     assert evolver_calls == {"customer": 1, "service": 1}
     assert ("e1", 1, frozen_ids[0], service_strategy_id(PromptStrategy("S0")),
             "generation-0-customer-candidate-0") in resumed_runner.reused_keys
+    assert resumed_telemetry.snapshot()["episode_jobs_cache_hits"] > 0
     assert json.loads((tmp_path / "generation-0000-stage.json").read_text())["stage"] == (
         "generation_complete"
     )
@@ -667,3 +690,141 @@ def test_run_panel_single_task_stays_single_and_accepts_default_cap() -> None:
     assert calls == ["only"]
     assert len(episodes) == 1
     assert episodes[0].task_id == "only"
+
+
+def test_evolution_fitness_seed_is_frozen_across_generations_and_not_heldout_seed() -> None:
+    tasks = {
+        "e": FakeTask("e", "Evolution", "Goal."),
+        "v": FakeTask("v", "Validation", "Native goal."),
+        "h": FakeTask("h", "Held out", "Held-out goal."),
+    }
+
+    def success(task_id: str, _customer: str, service: str) -> bool:
+        return task_id == "v" or (task_id == "e" and service == "S1")
+
+    runner = FakeRunner(success)
+    result = run_alternating_evolution(
+        tasks=tasks,
+        evolution_task_ids=("e",),
+        validation_task_ids=("v",),
+        seed=3,
+        evolution_fitness_seed=9,
+        generations=2,
+        customer_candidate_count=1,
+        clean_panel_size=1,
+        max_parallel_episodes=1,
+        initial_customer=PromptStrategy("C0"),
+        initial_service=PromptStrategy("S0"),
+        runner=runner,
+        customer_evolver=lambda _context, _count: ["C1"],
+        service_evolver=lambda _context: {"analysis": "repair", "strategy": "S1"},
+        domain_policy=runner.service_policy_text,
+    )
+
+    e_calls = [call for call in runner.calls if call["task_id"] == "e"]
+    v_calls = [call for call in runner.calls if call["task_id"] == "v"]
+    assert {call["seed"] for call in e_calls} == {9}
+    assert {call["panel_name"].split("-")[1] for call in e_calls} == {"0", "1"}
+    assert {call["seed"] for call in v_calls} == {3}
+    assert all(generation["evolution_fitness_seed"] == 9 for generation in result.generations)
+
+    heldout = run_final_endpoint_evaluation(
+        heldout_tasks={"h": tasks["h"]},
+        heldout_task_ids=("h",),
+        seed=71,
+        initial_service=PromptStrategy("S0"),
+        final_service=result.service,
+        fresh_customer=PromptStrategy("fresh"),
+        runner=runner,
+        max_parallel_episodes=1,
+    )
+    h_calls = [call for call in runner.calls if call["task_id"] == "h"]
+    assert {call["seed"] for call in h_calls} == {71}
+    assert heldout["seed"] == 71
+
+
+def test_customer_candidates_share_one_bounded_task_queue_with_stable_group_order() -> None:
+    task_ids = tuple(f"t{index}" for index in range(5))
+    tasks = {task_id: FakeTask(task_id, task_id, "Goal.") for task_id in task_ids}
+    lock = Lock()
+    first_candidate_wave = Barrier(2)
+    active_candidates = 0
+    peak_candidates = 0
+    completed_candidate_zero = 0
+    candidate_one_finished_early = False
+    completion_order: list[tuple[int, str]] = []
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        nonlocal active_candidates, peak_candidates
+        nonlocal completed_candidate_zero, candidate_one_finished_early
+        candidate_index = None
+        if "customer-candidate-" in panel_name:
+            candidate_index = int(panel_name.rsplit("-", 1)[1])
+            with lock:
+                active_candidates += 1
+                peak_candidates = max(peak_candidates, active_candidates)
+        try:
+            if candidate_index is not None:
+                if task_id == "t0":
+                    first_candidate_wave.wait(timeout=3)
+                sleep(0.06 if candidate_index == 0 else 0.005)
+                with lock:
+                    if candidate_index == 1 and completed_candidate_zero < len(task_ids):
+                        candidate_one_finished_early = True
+                    if candidate_index == 0:
+                        completed_candidate_zero += 1
+                    completion_order.append((candidate_index, task_id))
+            return EpisodeRecord(
+                episode_id=f"{panel_name}-{task_id}",
+                task_id=task_id,
+                seed=seed,
+                customer_strategy_id="native" if customer is None else customer.text,
+                service_strategy_id=service.text,
+                status=EpisodeStatus.COMPLETE,
+                task_success=True,
+                native_reward=1.0,
+                termination_reason="user_stop",
+                trajectory_ref=None,
+                raw_review={},
+            )
+        finally:
+            if candidate_index is not None:
+                with lock:
+                    active_candidates -= 1
+
+    telemetry = EpisodeJobTelemetry(4)
+    result = run_alternating_evolution(
+        tasks=tasks,
+        evolution_task_ids=task_ids,
+        validation_task_ids=(),
+        seed=1,
+        evolution_fitness_seed=1,
+        generations=1,
+        customer_candidate_count=2,
+        clean_panel_size=1,
+        max_parallel_episodes=4,
+        run_validation=False,
+        episode_job_telemetry=telemetry,
+        initial_customer=PromptStrategy("C0"),
+        initial_service=PromptStrategy("S0"),
+        runner=runner,
+        customer_evolver=lambda _context, _count: ["C1", "C2"],
+        service_evolver=lambda _context: {"analysis": "no change", "strategy": "S0"},
+        domain_policy="fixed policy",
+    )
+
+    assert peak_candidates > 1
+    assert peak_candidates <= 4
+    assert candidate_one_finished_early
+    assert (1, "t0") in completion_order
+    candidates = result.generations[0]["customer_phase"]["candidates"]
+    assert [row["strategy"]["text"] for row in candidates] == ["C1", "C2"]
+    assert [
+        [episode["task_id"] for episode in row["episodes"]]
+        for row in candidates
+    ] == [list(task_ids), list(task_ids)]
+    snapshot = telemetry.snapshot()
+    assert snapshot["episode_jobs_total"] == 15
+    assert snapshot["episode_jobs_cache_hits"] == 0
+    assert snapshot["configured_max_parallel_episodes"] == 4
+    assert snapshot["peak_parallel_episodes"] <= 4

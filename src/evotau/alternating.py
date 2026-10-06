@@ -9,9 +9,14 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from time import perf_counter
 from typing import Any
 
+from .alternating_manifest import (
+    DEFAULT_MAX_PARALLEL_EPISODES,
+    MAX_PARALLEL_EPISODES,
+)
 from .budget import RequestBudget
 from .records import EpisodeRecord, customer_strategy_id, service_strategy_id
 from .strategies import PromptStrategy
@@ -20,7 +25,6 @@ from .tau_provenance import sha256_json
 CustomerEvolver = Callable[[Mapping[str, Any], int], Sequence[str]]
 ServiceEvolver = Callable[[Mapping[str, Any]], Mapping[str, str]]
 EpisodeRunner = Callable[..., EpisodeRecord]
-MAX_PARALLEL_EPISODES = 4
 _MAX_EVOLVER_RAW_RESPONSE_CHARS = 16_000
 
 
@@ -32,6 +36,38 @@ class AlternatingResult:
     service: PromptStrategy
     generations: tuple[Mapping[str, Any], ...]
     final_evolution_episodes: tuple[EpisodeRecord, ...]
+
+
+class EpisodeJobTelemetry:
+    """Thread-safe counts for bounded episode jobs, including cache reuse."""
+
+    def __init__(self, configured_max_parallel_episodes: int) -> None:
+        self.configured_max_parallel_episodes = configured_max_parallel_episodes
+        self._lock = Lock()
+        self._active = 0
+        self._total = 0
+        self._cache_hits = 0
+        self._peak = 0
+
+    def start(self, *, cache_hit: bool) -> None:
+        with self._lock:
+            self._total += 1
+            self._cache_hits += int(cache_hit)
+            self._active += 1
+            self._peak = max(self._peak, self._active)
+
+    def finish(self) -> None:
+        with self._lock:
+            self._active -= 1
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "episode_jobs_total": self._total,
+                "episode_jobs_cache_hits": self._cache_hits,
+                "configured_max_parallel_episodes": self.configured_max_parallel_episodes,
+                "peak_parallel_episodes": self._peak,
+            }
 
 
 class EvolverJSONError(ValueError):
@@ -181,7 +217,10 @@ def run_alternating_evolution(
     generations: int,
     customer_candidate_count: int,
     clean_panel_size: int,
-    max_parallel_episodes: int = MAX_PARALLEL_EPISODES,
+    max_parallel_episodes: int = DEFAULT_MAX_PARALLEL_EPISODES,
+    evolution_fitness_seed: int | None = None,
+    run_validation: bool = True,
+    episode_job_telemetry: EpisodeJobTelemetry | None = None,
     initial_customer: PromptStrategy,
     initial_service: PromptStrategy,
     runner: EpisodeRunner,
@@ -196,15 +235,23 @@ def run_alternating_evolution(
     """Alternate Customer challenge and Service repair using native task accuracy."""
 
     e_tasks = tuple(str(item) for item in evolution_task_ids)
-    v_tasks = tuple(str(item) for item in validation_task_ids[:clean_panel_size])
-    if not e_tasks or not v_tasks or len(set(e_tasks)) != len(e_tasks):
-        raise ValueError("alternating evolution needs unique E tasks and a small V clean panel")
+    v_tasks = (
+        tuple(str(item) for item in validation_task_ids[:clean_panel_size])
+        if run_validation else ()
+    )
+    if not e_tasks or len(set(e_tasks)) != len(e_tasks) or (run_validation and not v_tasks):
+        raise ValueError("alternating evolution needs unique E tasks and a V panel when enabled")
     missing = (set(e_tasks) | set(v_tasks)) - set(tasks)
     if missing:
         raise ValueError(f"task loader is missing E/V tasks: {sorted(missing)}")
-    if generations < 1 or customer_candidate_count < 1 or seed < 0:
+    if type(run_validation) is not bool:
+        raise ValueError("run_validation must be boolean")
+    fitness_seed = seed if evolution_fitness_seed is None else evolution_fitness_seed
+    if (generations < 1 or customer_candidate_count < 1 or seed < 0
+            or type(fitness_seed) is not int or fitness_seed < 0):
         raise ValueError("seed, generation count, and candidate count must be non-negative")
     _validate_max_parallel_episodes(max_parallel_episodes)
+    job_telemetry = episode_job_telemetry or EpisodeJobTelemetry(max_parallel_episodes)
 
     output_root = None if output_directory is None else Path(output_directory)
     if output_root is not None:
@@ -253,6 +300,8 @@ def run_alternating_evolution(
         customer_phase_started = generation_started
         validation_elapsed = 0.0
         generation_seed = seed + generation
+        evolution_seed = fitness_seed
+        telemetry_before = job_telemetry.snapshot()
         customer_before = customer
         service_before = service
         old_service = service
@@ -296,10 +345,11 @@ def run_alternating_evolution(
             _state_box["value"] = payload
 
         incumbent_runs = _run_panel(
-            runner, task_ids=e_tasks, tasks=tasks, seed=generation_seed,
+            runner, task_ids=e_tasks, tasks=tasks, seed=evolution_seed,
             customer=customer_before, service=service_before,
             panel_name=f"generation-{generation}-customer-incumbent",
             max_parallel_episodes=max_parallel_episodes,
+            telemetry=job_telemetry,
         )
         incumbent_accuracy = _accuracy(incumbent_runs)
         record_stage(
@@ -378,14 +428,21 @@ def run_alternating_evolution(
             customer_candidate_ids=[customer_strategy_id(item) for item in candidates],
         )
 
-        candidate_runs = tuple(
-            _run_panel(
-                runner, task_ids=e_tasks, tasks=tasks, seed=generation_seed,
-                customer=candidate, service=service_before,
-                panel_name=f"generation-{generation}-customer-candidate-{index}",
-                max_parallel_episodes=max_parallel_episodes,
-            )
-            for index, candidate in enumerate(candidates)
+        candidate_runs = _run_panels(
+            runner,
+            task_ids=e_tasks,
+            tasks=tasks,
+            seed=evolution_seed,
+            panels=tuple(
+                (
+                    f"generation-{generation}-customer-candidate-{index}",
+                    candidate,
+                    service_before,
+                )
+                for index, candidate in enumerate(candidates)
+            ),
+            max_parallel_episodes=max_parallel_episodes,
+            telemetry=job_telemetry,
         )
         candidate_accuracies = [_accuracy(runs) for runs in candidate_runs]
         record_stage(
@@ -494,10 +551,11 @@ def run_alternating_evolution(
         service_reason = "The Service strategy did not change."
         if proposed_service.text != service_before.text:
             proposed_runs = _run_panel(
-                runner, task_ids=e_tasks, tasks=tasks, seed=generation_seed,
+                runner, task_ids=e_tasks, tasks=tasks, seed=evolution_seed,
                 customer=customer, service=proposed_service,
                 panel_name=f"generation-{generation}-service-candidate",
                 max_parallel_episodes=max_parallel_episodes,
+                telemetry=job_telemetry,
             )
             proposed_accuracy = _accuracy(proposed_runs)
             improved_on_e = proposed_accuracy > old_accuracy
@@ -514,19 +572,21 @@ def run_alternating_evolution(
 
         if proposed_service.text == service_before.text:
             service_reason = "The Service strategy did not change."
-        elif improved_on_e:
+        elif improved_on_e and run_validation:
             validation_started = perf_counter()
             validation_old_runs = _run_panel(
                 runner, task_ids=v_tasks, tasks=tasks, seed=seed,
                 customer=None, service=service_before,
                 panel_name=f"generation-{generation}-validation-old-native-customer",
                 max_parallel_episodes=max_parallel_episodes,
+                telemetry=job_telemetry,
             )
             validation_new_runs = _run_panel(
                 runner, task_ids=v_tasks, tasks=tasks, seed=seed,
                 customer=None, service=proposed_service,
                 panel_name=f"generation-{generation}-validation-proposed-native-customer",
                 max_parallel_episodes=max_parallel_episodes,
+                telemetry=job_telemetry,
             )
             validation_elapsed = perf_counter() - validation_started
             validation_old_accuracy = _accuracy(validation_old_runs)
@@ -537,8 +597,17 @@ def run_alternating_evolution(
                 service_reason = "Accepted: E accuracy improved and native V accuracy did not decrease."
             else:
                 service_reason = "Rejected: native V accuracy decreased."
+        elif improved_on_e:
+            service_reason = (
+                "Not accepted: V validation is disabled for this mechanism smoke; "
+                "the proposed strategy remains diagnostic."
+            )
+        acceptance_evaluated = not (
+            proposed_service.text != service_before.text and improved_on_e and not run_validation
+        )
         record_stage(
             "validation_complete", validation_evaluated=validation_old_accuracy is not None,
+            validation_skipped=not run_validation,
             validation_old_accuracy=validation_old_accuracy,
             validation_new_accuracy=validation_new_accuracy,
             validation_old_episodes=[_episode_ref(item) for item in validation_old_runs],
@@ -577,6 +646,7 @@ def run_alternating_evolution(
             "proposed_accuracy": proposed_accuracy,
             "improved_on_E": improved_on_e,
             "accepted": accepted,
+            "acceptance_evaluated": acceptance_evaluated,
             "validation_old_accuracy": validation_old_accuracy,
             "validation_new_accuracy": validation_new_accuracy,
             "challenge_episodes": [_episode_ref(item) for item in proposed_runs],
@@ -589,11 +659,14 @@ def run_alternating_evolution(
                 "reference_episodes": [_episode_ref(item) for item in validation_old_runs],
                 "candidate_episodes": [_episode_ref(item) for item in validation_new_runs],
             },
+            "validation_evaluated": validation_old_accuracy is not None,
         }
         generation_doc = {
             "schema_version": 2,
             "generation": generation,
             "seed": generation_seed,
+            "evolution_fitness_seed": fitness_seed,
+            "validation_seed": seed if run_validation else None,
             "customer_before": _strategy_document("customer", customer_before),
             "service_before": _strategy_document("service", service_before),
             "customer_after": _strategy_document("customer", customer),
@@ -607,6 +680,16 @@ def run_alternating_evolution(
                 ),
                 "validation_wall_clock_seconds": round(validation_elapsed, 6),
                 "generation_wall_clock_seconds": round(perf_counter() - generation_started, 6),
+                "episode_jobs_total": (
+                    job_telemetry.snapshot()["episode_jobs_total"]
+                    - telemetry_before["episode_jobs_total"]
+                ),
+                "episode_jobs_cache_hits": (
+                    job_telemetry.snapshot()["episode_jobs_cache_hits"]
+                    - telemetry_before["episode_jobs_cache_hits"]
+                ),
+                "configured_max_parallel_episodes": max_parallel_episodes,
+                "peak_parallel_episodes": job_telemetry.snapshot()["peak_parallel_episodes"],
             },
             "provider_budget": _budget_delta(
                 budget_before,
@@ -822,7 +905,8 @@ def run_final_endpoint_evaluation(
     final_service: PromptStrategy,
     fresh_customer: PromptStrategy,
     runner: EpisodeRunner,
-    max_parallel_episodes: int = MAX_PARALLEL_EPISODES,
+    max_parallel_episodes: int = DEFAULT_MAX_PARALLEL_EPISODES,
+    telemetry: EpisodeJobTelemetry | None = None,
     output_path: str | Path | None = None,
 ) -> Mapping[str, Any]:
     """Compare S0 and ST endpoints without rerunning identical Service cells."""
@@ -848,6 +932,7 @@ def run_final_endpoint_evaluation(
             service=initial_service,
             panel_name=f"heldout-{customer_label}-S0",
             max_parallel_episodes=max_parallel_episodes,
+            telemetry=telemetry,
         )
         s0_episodes_by_customer[customer_label] = episodes
         rows.append({
@@ -875,6 +960,7 @@ def run_final_endpoint_evaluation(
                 service=final_service,
                 panel_name=f"heldout-{customer_label}-ST",
                 max_parallel_episodes=max_parallel_episodes,
+                telemetry=telemetry,
             )
             rows.append({
                 "customer_condition": customer_label,
@@ -907,51 +993,106 @@ def _run_panel(
     customer: PromptStrategy | None,
     service: PromptStrategy,
     panel_name: str,
-    max_parallel_episodes: int = MAX_PARALLEL_EPISODES,
+    max_parallel_episodes: int = DEFAULT_MAX_PARALLEL_EPISODES,
+    telemetry: EpisodeJobTelemetry | None = None,
 ) -> tuple[EpisodeRecord, ...]:
+    result = _run_panels(
+        runner,
+        task_ids=task_ids,
+        tasks=tasks,
+        seed=seed,
+        panels=((panel_name, customer, service),),
+        max_parallel_episodes=max_parallel_episodes,
+        telemetry=telemetry,
+    )
+    return result[0]
+
+
+def _run_panels(
+    runner: EpisodeRunner,
+    *,
+    task_ids: Sequence[str],
+    tasks: Mapping[str, Any],
+    seed: int,
+    panels: Sequence[tuple[str, PromptStrategy | None, PromptStrategy]],
+    max_parallel_episodes: int = DEFAULT_MAX_PARALLEL_EPISODES,
+    telemetry: EpisodeJobTelemetry | None = None,
+) -> tuple[tuple[EpisodeRecord, ...], ...]:
     _validate_max_parallel_episodes(max_parallel_episodes)
     ordered_task_ids = tuple(str(task_id) for task_id in task_ids)
-    if len(set(ordered_task_ids)) != len(ordered_task_ids):
-        raise ValueError(f"{panel_name} task IDs must be unique")
+    if not ordered_task_ids or len(set(ordered_task_ids)) != len(ordered_task_ids):
+        raise ValueError("episode panel task IDs must be non-empty and unique")
+    if not panels:
+        return ()
+    job_telemetry = telemetry or EpisodeJobTelemetry(max_parallel_episodes)
 
-    def run_one(task_id: str) -> EpisodeRecord:
+    def run_one(panel_index: int, task_id: str) -> EpisodeRecord:
+        panel_name, customer, service = panels[panel_index]
         if task_id not in tasks:
             raise ValueError(f"task {task_id!r} was not loaded for {panel_name}")
-        episode = runner(
+        cache_checker = getattr(runner, "has_completed_episode", None)
+        cache_hit = bool(cache_checker(
             task_id=task_id,
             seed=seed,
             customer=customer,
             service=service,
             panel_name=panel_name,
+        )) if callable(cache_checker) else False
+        job_telemetry.start(cache_hit=cache_hit)
+        try:
+            episode = runner(
+                task_id=task_id,
+                seed=seed,
+                customer=customer,
+                service=service,
+                panel_name=panel_name,
+            )
+            if not isinstance(episode, EpisodeRecord):
+                raise TypeError("τ-bench runner must return an EpisodeRecord")
+            if episode.task_id != task_id or episode.seed != seed:
+                raise ValueError("τ-bench runner returned a different task or seed")
+            return episode
+        finally:
+            job_telemetry.finish()
+
+    completed: list[list[EpisodeRecord | None]] = [
+        [None] * len(ordered_task_ids) for _ in panels
+    ]
+    # Round-robin candidate jobs so the bounded queue admits all candidates early.
+    jobs = [
+        (panel_index, task_index, task_id)
+        for task_index, task_id in enumerate(ordered_task_ids)
+        for panel_index in range(len(panels))
+    ]
+    if len(jobs) <= 1 or max_parallel_episodes == 1:
+        for panel_index, task_index, task_id in jobs:
+            completed[panel_index][task_index] = run_one(panel_index, task_id)
+    else:
+        executor = ThreadPoolExecutor(
+            max_workers=min(max_parallel_episodes, len(jobs)),
+            thread_name_prefix="evotau-episode",
         )
-        if not isinstance(episode, EpisodeRecord):
-            raise TypeError("τ-bench runner must return an EpisodeRecord")
-        if episode.task_id != task_id or episode.seed != seed:
-            raise ValueError("τ-bench runner returned a different task or seed")
-        return episode
-
-    if len(ordered_task_ids) <= 1 or max_parallel_episodes == 1:
-        return tuple(run_one(task_id) for task_id in ordered_task_ids)
-
-    completed: dict[int, EpisodeRecord] = {}
-    executor = ThreadPoolExecutor(
-        max_workers=min(max_parallel_episodes, len(ordered_task_ids)),
-        thread_name_prefix="evotau-episode",
+        futures = {
+            executor.submit(run_one, panel_index, task_id): (
+                panel_index, task_index,
+            )
+            for panel_index, task_index, task_id in jobs
+        }
+        try:
+            for future in as_completed(futures):
+                panel_index, task_index = futures[future]
+                completed[panel_index][task_index] = future.result()
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+    if any(episode is None for panel in completed for episode in panel):
+        raise RuntimeError("bounded episode queue did not return every scheduled job")
+    return tuple(
+        tuple(episode for episode in panel if episode is not None) for panel in completed
     )
-    futures = {
-        executor.submit(run_one, task_id): index
-        for index, task_id in enumerate(ordered_task_ids)
-    }
-    try:
-        for future in as_completed(futures):
-            completed[futures[future]] = future.result()
-    except BaseException:
-        for future in futures:
-            future.cancel()
-        raise
-    finally:
-        executor.shutdown(wait=True, cancel_futures=True)
-    return tuple(completed[index] for index in range(len(ordered_task_ids)))
 
 
 def _validate_max_parallel_episodes(value: int) -> None:
@@ -1000,7 +1141,6 @@ def _project_context_episodes(
             "service_strategy_id": episode.service_strategy_id,
             "seed": episode.seed,
             "trajectory": _trajectory_context(trajectory),
-            "tool_results": _tool_results(trajectory),
             "native_evaluation": {
                 "task_success": episode.task_success,
                 "reward": episode.native_reward,
@@ -1047,16 +1187,6 @@ def _trajectory_context(trajectory: Mapping[str, Any] | None) -> dict[str, Any]:
         "messages": projected,
         "termination_reason": trajectory.get("termination_reason"),
     }
-
-
-def _tool_results(trajectory: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    if not isinstance(trajectory, Mapping):
-        return []
-    results = []
-    for message in _trajectory_context(trajectory)["messages"]:
-        if message.get("role") == "tool" or message.get("tool_call_id"):
-            results.append(message)
-    return results
 
 
 def _accuracy(episodes: Sequence[EpisodeRecord]) -> float:

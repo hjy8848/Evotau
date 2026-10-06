@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from .alternating import (
+    EpisodeJobTelemetry,
     LLMAlternatingEvolvers,
     _write_json_atomic,
     propose_fresh_customer_challenge,
@@ -70,7 +71,12 @@ def run_from_config(
     )
     budget = RequestBudget(manifest.request_budget_cap)
     budget.enable_live_usage(output_directory / "api-usage-live.json")
-    evolution_tasks = load_alternating_tasks(manifest, data_dir, include_heldout=False)
+    evolution_tasks = load_alternating_tasks(
+        manifest,
+        data_dir,
+        include_validation=manifest.run_validation,
+        include_heldout=False,
+    )
     runner = TauBenchEpisodeRunner(
         manifest=manifest,
         config=config,
@@ -80,8 +86,11 @@ def run_from_config(
         stop_before_next_episode_file=stop_before_next_episode_file,
         task_objects=evolution_tasks,
     )
-    if set(runner.tasks) != set(manifest.evolution_task_ids + manifest.validation_task_ids):
-        raise ValueError("evolution runner loaded a task outside E or V")
+    expected_evolution_tasks = set(manifest.evolution_task_ids)
+    if manifest.run_validation:
+        expected_evolution_tasks.update(manifest.validation_task_ids)
+    if set(runner.tasks) != expected_evolution_tasks:
+        raise ValueError("evolution runner loaded a task outside the enabled E/V panels")
 
     models = dict(manifest.role_models)
     role_args = role_model_args_for_runtime(manifest.role_model_args)
@@ -103,14 +112,25 @@ def run_from_config(
             "V": list(manifest.validation_task_ids),
             "H": list(manifest.heldout_task_ids),
         },
-        "heldout_policy": "H task content is loaded only after evolution and fresh challenge generation.",
+        "heldout_policy": (
+            "H task content is loaded only after evolution and fresh challenge generation."
+            if manifest.run_heldout
+            else "H task content is not loaded in this mechanism-smoke run."
+        ),
         "reviewer_enabled": False,
         "max_parallel_episodes": manifest.max_parallel_episodes,
+        "evolution_fitness_seed": (
+            manifest.seed if manifest.evolution_fitness_seed is None
+            else manifest.evolution_fitness_seed
+        ),
+        "run_validation": manifest.run_validation,
+        "run_heldout": manifest.run_heldout,
     }
     _write_or_verify_context(output_directory / "run-context.json", run_context)
 
     initial_customer = PromptStrategy(manifest.initial_customer_strategy)
     initial_service = PromptStrategy(manifest.initial_service_strategy)
+    episode_job_telemetry = EpisodeJobTelemetry(manifest.max_parallel_episodes)
     evolution_started = perf_counter()
     evolved = run_alternating_evolution(
         tasks=runner.tasks,
@@ -121,6 +141,9 @@ def run_from_config(
         customer_candidate_count=manifest.customer_candidates,
         clean_panel_size=manifest.clean_panel_size,
         max_parallel_episodes=manifest.max_parallel_episodes,
+        evolution_fitness_seed=manifest.evolution_fitness_seed,
+        run_validation=manifest.run_validation,
+        episode_job_telemetry=episode_job_telemetry,
         initial_customer=initial_customer,
         initial_service=initial_service,
         runner=runner,
@@ -135,46 +158,59 @@ def run_from_config(
 
     # The fresh challenge is generated from E-only evidence before any H task
     # object or H trajectory is loaded into this process.
-    fresh_customer = propose_fresh_customer_challenge(
-        evolved,
-        providers.customer_candidates,
-        tasks=runner.tasks,
-        runner=runner,
-        domain_policy=runner.service_policy_text,
-        request_budget=budget,
-        proposal_path=output_directory / "fresh-customer-proposal.json",
-        manifest_sha256=manifest.sha256,
-    )
+    fresh_customer = None
+    if manifest.run_heldout:
+        fresh_customer = propose_fresh_customer_challenge(
+            evolved,
+            providers.customer_candidates,
+            tasks=runner.tasks,
+            runner=runner,
+            domain_policy=runner.service_policy_text,
+            request_budget=budget,
+            proposal_path=output_directory / "fresh-customer-proposal.json",
+            manifest_sha256=manifest.sha256,
+        )
     evolution_wall_clock_seconds = perf_counter() - evolution_started
     validation_wall_clock_seconds = sum(
         float(item.get("timing", {}).get("validation_wall_clock_seconds", 0.0))
         for item in evolved.generations
     )
-    heldout_started = perf_counter()
-    heldout_tasks = load_alternating_tasks(manifest, data_dir, include_heldout=True)
-    heldout_runner = TauBenchEpisodeRunner(
-        manifest=manifest,
-        config=config,
-        data_dir=data_dir,
-        request_budget=budget,
-        output_directory=output_directory,
-        include_heldout=True,
-        stop_before_next_episode_file=stop_before_next_episode_file,
-        task_objects=heldout_tasks,
-    )
-    heldout_tasks = {task_id: heldout_tasks[task_id] for task_id in manifest.heldout_task_ids}
-    heldout_evaluation = run_final_endpoint_evaluation(
-        heldout_tasks=heldout_tasks,
-        heldout_task_ids=manifest.heldout_task_ids,
-        seed=manifest.seed + manifest.generations + 50_000,
-        initial_service=initial_service,
-        final_service=evolved.service,
-        fresh_customer=fresh_customer,
-        runner=heldout_runner,
-        max_parallel_episodes=manifest.max_parallel_episodes,
-        output_path=output_directory / "heldout-endpoint-evaluation.json",
-    )
-    heldout_wall_clock_seconds = perf_counter() - heldout_started
+    heldout_evaluation = None
+    heldout_wall_clock_seconds = 0.0
+    if manifest.run_heldout:
+        heldout_started = perf_counter()
+        heldout_tasks = load_alternating_tasks(
+            manifest,
+            data_dir,
+            include_validation=manifest.run_validation,
+            include_heldout=True,
+        )
+        heldout_runner = TauBenchEpisodeRunner(
+            manifest=manifest,
+            config=config,
+            data_dir=data_dir,
+            request_budget=budget,
+            output_directory=output_directory,
+            include_heldout=True,
+            stop_before_next_episode_file=stop_before_next_episode_file,
+            task_objects=heldout_tasks,
+        )
+        heldout_tasks = {task_id: heldout_tasks[task_id] for task_id in manifest.heldout_task_ids}
+        if fresh_customer is None:
+            raise RuntimeError("held-out evaluation requires a fresh adaptive Customer")
+        heldout_evaluation = run_final_endpoint_evaluation(
+            heldout_tasks=heldout_tasks,
+            heldout_task_ids=manifest.heldout_task_ids,
+            seed=manifest.seed + manifest.generations + 50_000,
+            initial_service=initial_service,
+            final_service=evolved.service,
+            fresh_customer=fresh_customer,
+            runner=heldout_runner,
+            max_parallel_episodes=manifest.max_parallel_episodes,
+            telemetry=episode_job_telemetry,
+            output_path=output_directory / "heldout-endpoint-evaluation.json",
+        )
+        heldout_wall_clock_seconds = perf_counter() - heldout_started
     api_usage_by_call_name = budget.api_usage_by_call_name()
     execution_state = _finish_execution_attempt(execution_state_path)
     completed_episodes = len(tuple((output_directory / "episodes").glob("*/episode-record.json")))
@@ -192,8 +228,21 @@ def run_from_config(
         "final_customer": evolved.customer.to_dict(),
         "final_service": evolved.service.to_dict(),
         "generations": list(evolved.generations),
-        "fresh_adaptive_customer": fresh_customer.to_dict(),
+        "fresh_adaptive_customer": (
+            None if fresh_customer is None else fresh_customer.to_dict()
+        ),
         "heldout_endpoint_evaluation": heldout_evaluation,
+        "evolution_fitness_seed": (
+            manifest.seed if manifest.evolution_fitness_seed is None
+            else manifest.evolution_fitness_seed
+        ),
+        "validation_enabled": manifest.run_validation,
+        "validation_evaluated": any(
+            generation.get("service_phase", {}).get("validation_evaluated", False)
+            for generation in evolved.generations
+        ),
+        "heldout_evaluated": manifest.run_heldout,
+        "episode_job_telemetry": episode_job_telemetry.snapshot(),
         "provider_usage": budget.snapshot().to_dict(),
         "api_usage_by_call_name": api_usage_by_call_name,
         "api_usage_by_role": _api_usage_by_role(api_usage_by_call_name),
@@ -206,6 +255,7 @@ def run_from_config(
             "heldout_wall_clock_seconds": round(heldout_wall_clock_seconds, 6),
             "total_wall_clock_seconds": execution_state["total_wall_clock_seconds"],
             "current_process_wall_clock_seconds": round(perf_counter() - run_started, 6),
+            **episode_job_telemetry.snapshot(),
         },
     }
     _write_json_atomic(output_directory / "alternating-result.json", final_result)
@@ -314,10 +364,13 @@ def load_alternating_tasks(
     manifest: AlternatingManifest,
     data_dir: str | Path,
     *,
+    include_validation: bool = True,
     include_heldout: bool,
 ) -> dict[str, Any]:
     """Load only the requested panel; before final evaluation, H contributes IDs only."""
 
+    if type(include_validation) is not bool or type(include_heldout) is not bool:
+        raise ValueError("task panel inclusion flags must be booleans")
     data_root = Path(data_dir).expanduser().resolve()
     if not data_root.is_dir():
         raise ValueError(f"τ-bench data directory does not exist: {data_root}")
@@ -350,7 +403,9 @@ def load_alternating_tasks(
     if set(manifest.excluded_task_ids) & (evolution | validation | test):
         raise ValueError("excluded task IDs cannot appear in E, V, or H")
 
-    train_ids = manifest.evolution_task_ids + manifest.validation_task_ids
+    train_ids = manifest.evolution_task_ids + (
+        manifest.validation_task_ids if include_validation else ()
+    )
     tasks = list(get_tasks(
         manifest.domain, task_split_name=manifest.split_name, task_ids=list(train_ids),
     ))
