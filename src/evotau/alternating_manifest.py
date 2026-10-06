@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .tau_provenance import (
@@ -69,6 +69,7 @@ class AlternatingManifest:
     service_mutation_ops: tuple[str, ...] = ("add", "update", "no_op")
     max_service_mutations_per_generation: int = 1
     provider_provenance: tuple[tuple[str, str | bool], ...] = ()
+    config_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
@@ -256,7 +257,25 @@ class AlternatingManifest:
                 "max_service_mutations_per_generation", 1,
             ),
             provider_provenance=tuple(sorted(provider_provenance.items())),
+            config_sha256=sha256_json(raw),
         )
+
+    def bind_saved_provenance(self, saved: Mapping[str, Any]) -> AlternatingManifest:
+        """Keep the original identity only when every actual run input still matches."""
+        payload = {key: value for key, value in saved.items() if key != "manifest_sha256"}
+        if saved.get("manifest_sha256") != sha256_json(payload):
+            raise ValueError("existing frozen manifest has an invalid fingerprint")
+        provenance = saved.get("evotau")
+        if not isinstance(provenance, Mapping):
+            raise TypeError("existing frozen manifest is missing code provenance")
+        bound = replace(
+            self,
+            evotau_git_commit=provenance.get("git_commit"),
+            evotau_working_tree_clean=provenance.get("working_tree_clean"),
+        )
+        if bound.to_document() != saved:
+            raise ValueError("existing run directory belongs to different frozen execution inputs")
+        return bound
 
     @property
     def role_model_args_dict(self) -> dict[str, dict[str, float | int | str]]:
@@ -321,6 +340,8 @@ class AlternatingManifest:
             }
         if self.provider_provenance:
             payload["provider_provenance"] = dict(self.provider_provenance)
+        if self.config_sha256 is not None:
+            payload["config_sha256"] = self.config_sha256
         return payload
 
     def to_document(self) -> dict[str, Any]:

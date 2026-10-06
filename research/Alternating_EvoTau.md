@@ -1,84 +1,55 @@
-# EvoTau: alternating self-evolution on τ-bench
+# EvoTau: accuracy-driven alternating evolution
 
-## Research definition
-
-EvoTau fixes τ-bench as its task and environment substrate. Its research addition is a Customer–Service alternating loop:
+## Method and fixed inputs
 
 ```text
-(C_t, S_t) → (C_(t+1), S_t) → (C_(t+1), S_(t+1)) → …
+(C_t, S_t) → (C_(t+1), S_t) → (C_(t+1), S_(t+1))
 ```
 
-With S frozen, Customer evolution searches for task-grounded interaction strategies that reveal the Service's current failure boundary. This covers natural cooperative difficulty and natural policy conflict without separate Customer systems or predefined challenge classes. With the selected Customer frozen, Service evolution studies actual τ-bench trajectories and proposes a natural-language strategy update.
+Customer proposes task-grounded, reusable interaction strategies. Holding Service fixed, the incumbent and candidates are evaluated on the same E panel and `evolution_fitness_seed`. A candidate replaces the incumbent only if native E accuracy is strictly lower. Ties keep the incumbent. Missing native scores stop fitness computation rather than being scored as failure.
 
-The method is prompt-first. The strategy carrier is open natural language; the first version does not encode customer behavior axes, mutation operators, rule records, challenge budgets, taxonomy-based fitness, or a strict multi-panel repair gate. Failures, non-improvements, and strategy drift remain visible research outcomes. Constraints protect benchmark integrity and information isolation, rather than determining which interaction behaviors may be generated.
+Holding the selected Customer fixed, Service Evolver studies observed E conversations, tool results, native outcomes and the unchanged Retail policy. It proposes either a PromptStrategy rewrite or one local SkillMemory ADD/UPDATE/NO_OP. SkillMemory starts empty, injects all active skills, retains stable skill IDs and provenance, and applies at most one mutation per generation. Rejected proposals do not become runtime skills.
 
-## Fixed substrate and split boundary
+Service is accepted only for strictly higher E accuracy under the same selected Customer. With `run_validation: true`, aggregate native-Customer V accuracy must also not decrease relative to the current S_t. This does not prohibit every individual pass→fail transition. With V disabled, acceptance is explicitly E-only mechanism smoke.
 
-τ-bench continues to provide tasks and scenarios, Retail policy, initial backend state and state transitions, tools, orchestrator, native Customer/Service runtime, evaluator, reviewer, and benchmark data. EvoTau appends strategy text to the native Customer and Service prompts and invokes the pinned τ-bench runtime. It does not modify upstream task truth, policy, tool code, backend semantics, or evaluation.
+The benchmark's task, original scenario, policy, tools, backend, native LLMAgent/UserSimulator and evaluator remain unchanged. Evolution updates external behavior guidance, not model weights. There are four model roles: agent, customer, evaluator and evolver. There is no Reviewer, Customer Judge, Service Judge, failure taxonomy, TaskContract or behavioral blacklist in alternating selection. Native evaluation may invoke an LLM for NL assertions.
 
-E and V are loaded from the official train split. Evolvers and selection judges receive only E task intent/scenario, the current strategies, visible trajectories and tool outcomes, native task result, reviewer feedback, and relevant prior generation feedback. They do not receive reference actions, evaluation criteria, gold answers, H task objects, or H trajectories. H is loaded after evolution and fresh adaptive-Customer generation. Final evaluation compares S₀ and S_T under both native τ-bench Customer and an E-derived fresh adaptive Customer.
+## Information boundary and panels
 
-Service updates are judged first on the same evolved-Customer challenge. A small native-Customer V panel then prevents an update from converting a previously successful reference case into a failure. The clean reference is the current generation's S_t, not a permanently frozen S₀. There is no failure ontology or independent audit protocol between observed trajectory and evolution.
+Customer Evolver can read its E source scenarios. Service Evolver cannot read hidden `user_scenario` or Customer Judge reasons: its context contains observed conversation/tool messages, native outcomes, policy, current strategies, numeric accuracy history and accepted Service evolution history. MultiToolMessage results are expanded into visible tool messages. Raw provider data and gold evaluator targets are omitted from projected evidence.
 
-## Source execution map
+E and V come from Retail train, H from test, and panels/exclusions are disjoint and frozen. Optional H evaluation loads H content only after evolution and E-only fresh-Customer generation. The endpoint comparison crosses S₀/S_T with native/fresh Customers, reusing identical conditions. `run_heldout: false` prevents H task loading entirely.
+
+## Execution map
 
 ```text
 evotau-evolve / alternating_run.run_from_config
-  ├─ AlternatingManifest + pinned E/V loader
+  ├─ frozen manifest + split/pin verification + invocation provenance
   ├─ TauBenchEpisodeRunner
-  │    └─ tau_adapter → τ-bench Orchestrator/run_simulation/evaluator/reviewer
+  │    └─ native Orchestrator → sequential turns → native evaluator (reviewer disabled)
   └─ alternating.run_alternating_evolution
-       ├─ Customer Evolver → candidate prompt overlays
-       ├─ E episode runs with S_t frozen → Customer judge → C_(t+1)
-       ├─ Service Evolver sees selected Customer trajectory
-       ├─ E replay under proposed Service → same-challenge judge
-       ├─ small native-Customer V comparison against S_t
+       ├─ incumbent E → Customer Evolver → candidate E → strict minimum accuracy
+       ├─ Service Evolver → proposal E → strict accuracy improvement
+       ├─ optional native-Customer V accuracy gate
        └─ generation artifact + checkpoint
-            ↓
-       fresh Customer proposal from E only
-            ↓
-       load H → compare S₀/S_T × native/fresh Customer
+            ↓ optional
+       E-derived fresh Customer → load H → endpoint comparison
 ```
 
-The central callable is `evotau.alternating.run_alternating_evolution`. The command-line handoff is `evotau.alternating_run.run_from_config`. A generation artifact contains before/after Customer and Service snapshots, E episode references, selection reasons, clean-panel episode references, and provider-usage deltas. The episode runner retains the full native simulation, record, and per-call usage telemetry.
+A bounded ThreadPoolExecutor runs tasks within a panel (and Customer candidate panels) while preserving input result order. It never overlaps Customer/Service phases or generations and never parallelizes the turns inside an episode. Provider accounting, reservations, per-episode usage and diagnostics use the existing shared budget with thread-local contexts. Successful identical task/seed/C/S conditions are reused across panels; a per-condition lock coalesces concurrent duplicates. Panel references preserve which generations evaluated each condition.
 
-## What changed from the former design
+## Failure and reproducibility
 
-Removed from the active method: V1/V2 fixed-axis Customer types and mutation operators; V3 behavior parser and keyword/regex rejection; challenge budgets; the fixed Retail MVP failure taxonomy as an evolution prerequisite; failure confirmation/strict attribution in Customer selection; structured policy-rule Service patches and patch token ceiling; the multi-stage Service transition and repair gate; Pilot condition machinery and its static/random/frozen variants; strict preregistration, power, and old RQ1–RQ3 analysis tied to those mechanisms.
+The original manifest remains immutable. Source and selected-config fingerprints, model settings, benchmark pins and task selection govern resume compatibility. Original Git commit/dirty provenance is retained; every invocation records current Git provenance separately. Merely committing results or adding an unrelated config does not prevent unchanged-source resume. Changed runtime source or experiment conditions require a fresh run and cannot reuse historical scores.
 
-Retained because they support execution or observation: the pinned τ-bench adapter and native evaluator/reviewer; source/task fingerprints and frozen role settings; request/token accounting; E/V/H panel loader; complete episodes, checkpoint and manifest; and the local Console's run launch, artifact and trajectory views. The current Console reads Phase 0 and alternating-run schemas. Older experiment directories remain untouched as files, but their retired Pilot, failure-taxonomy, and cross-play schemas are not carried forward as a second runtime or reader.
+Completed episodes require valid native scoring and saved native trajectories. A failed/unscored episode is not cached or admitted to selection. Per-attempt artifacts retain the original exception, partial conversation and sanitized provider response metadata. Evolver input artifacts retain exact research prompts/context. Execution state finishes as complete, failed or paused; resume does not repeat completed conditions. Failures do not trigger hidden retries, model substitution, fabricated dialogue termination or task omission.
 
-The one-episode Phase 0 command remains a connectivity check only. It does not run evolution and is not a second strategy method.
+For inspection, start with `run-execution-state.json` and `api-usage-live.json`, then the referenced `episodes/*/incomplete-run.json` or `evolver-calls/*/failure.json`. Complete decisions are in `generation-XXXX.json`; candidate/stage artifacts explain progress before a generation is committed. Native simulations retain benchmark outcomes, while Evolver contexts expose only permitted evidence. Console display supports current schema v2 and incomplete conversations.
 
-## Evidence and open risks
+## What the evidence can establish
 
-### Verified in software
+Offline tests establish wiring, isolation, selection, concurrency, accounting, checkpoint/cache behavior, and outgoing request serialization. They do not establish live-provider reasoning compliance, model ability or successful evolution. The historical [2026-10-06 audit](audits/2026-10-06-idea-implementation-audit.md) describes real runs and their limitations; [the fix report](audits/2026-10-06-audit-fixes.md) maps its engineering findings to regressions.
 
-- Unit tests verify that Customer and Service receive open prompt overlays and τ-bench base prompts remain intact.
-- Fake-runner tests verify that the Service is fixed through Customer search; the selected Customer is fixed through Service search; the clean comparison uses the generation's S_t; multiple generations chain from the previous pair; and H content is absent from evolution/fresh-Customer contexts.
-- Artifact tests verify generation snapshots and checkpoint persistence.
-- A deterministic offline native-runtime smoke was run successfully. It completed one alternating generation and 8 native τ-bench episodes across Customer selection, the Service challenge, the E-only fresh challenge, and four H endpoint cells. The fixture judge rejected the Service proposal, so the conditional clean V comparison correctly did not run. The Retail orchestrator executed `find_user_id_by_email`; native scoring and review ran. Only HTTP model completions were stubbed locally. The smoke uses `max_steps=2` and does not demonstrate task completion. The fixture judges retained the Customer incumbent and rejected the Service proposal because the fixture trajectories were identical; these are wiring outcomes, not model-quality evidence.
+Use separate measurements: Customer pressure compares accuracy before/after challenge with Service fixed; Service repair compares old/proposed Service under the same selected Customer. Native and fresh H are generalization evidence only when enabled. Fixed E-only search can overfit, aggregate V can conceal paired regressions, and fixed-seed API sampling may remain nondeterministic at the provider. Cache reuse is therefore one evaluation of a condition, not repeated-trial evidence.
 
-### Inferred from the implementation
-
-- A live run follows the same transition sequence with provider-backed role models because all EvoTau and τ-bench calls use the shared τ completion boundary and frozen role settings.
-- H remains inaccessible to evolvers during normal CLI execution because the H task loader is called only after E-only fresh-Customer generation.
-
-### Main risks
-
-- The selection judges can be inconsistent or reward persuasive explanations over a better trajectory.
-- Open text can drift from the original task or invent facts; the first version records this for analysis rather than blocking generation.
-- A small V panel only catches obvious clean-task regressions.
-- One task per panel in the example is a wiring smoke, not a generalization result.
-- The local deterministic completion stub cannot establish live provider compatibility, model quality, or positive evolution.
-
-## Operator map
-
-| Question | Where to look |
-|---|---|
-| Where does Customer evolve? | `LLMAlternatingEvolvers.customer_candidates`, called from the Customer phase in `run_alternating_evolution`. |
-| Where does Service evolve? | `LLMAlternatingEvolvers.service_candidate`, called after selecting C_(t+1). |
-| What does τ-bench do? | Task/scenario, policy, backend, tools, conversation runtime, native evaluation and reviewer. |
-| What did EvoTau add? | Prompt strategy overlays, trajectory-based LLM evolution/selection, the alternating loop, split isolation and artifacts. |
-| Where does one generation start? | `run_alternating_evolution`, loop body at `for generation in range(...)`. |
-| If evolution does not happen, where to inspect? | `generation-XXXX.json`: Customer candidates/selection, Service analysis/proposal/selection, E challenge episode records and V clean panel. Then inspect the referenced native simulation and usage telemetry. |
+Open text can still drift or invent facts; prompt grounding and information isolation do not prove semantic correctness. NO_OP and rejection remain legitimate research outcomes. Repairing transport or accounting does not establish that SkillMemory will learn useful skills. After the thinking-parameter fix, a new manifest/output and live parameter check are necessary before interpreting new provider results.

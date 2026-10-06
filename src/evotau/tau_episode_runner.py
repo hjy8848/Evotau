@@ -13,6 +13,7 @@ from threading import Lock
 from typing import Any
 from uuid import uuid4
 
+from .alternating import _write_json_atomic, _write_json_once
 from .alternating_manifest import AlternatingManifest
 from .budget import (
     BudgetSnapshot,
@@ -22,6 +23,7 @@ from .budget import (
 )
 from .communication import observe_communication_protocol
 from .episode_execution import StopBeforeEpisodeDispatch
+from .provider_diagnostics import safe_error
 from .records import (
     EpisodeRecord,
     EpisodeStatus,
@@ -36,15 +38,24 @@ from .strategies import (
     render_service_strategy,
 )
 from .tau_adapter import build_phase0_orchestrator, run_with_budget
-from .tau_provenance import sha256_json, write_manifest_once
+from .tau_provenance import (
+    role_model_args_for_runtime,
+    sha256_json,
+    write_manifest_once,
+)
 
 
 class NativeEpisodeRunError(RuntimeError):
     """A native run failed while preserving its actionable original exception text."""
 
-    def __init__(self, original: Exception) -> None:
+    def __init__(
+        self, original: Exception, *, task_id: str, panel_name: str, diagnostics_ref: str,
+    ) -> None:
+        self.task_id = task_id
+        self.panel_name = panel_name
+        self.diagnostics_ref = diagnostics_ref
         self.original_type = type(original).__name__
-        self.original_message = str(original)
+        self.original_message = safe_error(original)
         super().__init__(f"{self.original_type}: {self.original_message}")
 
 
@@ -74,11 +85,12 @@ class TauBenchEpisodeRunner:
             raise ValueError(
                 "alternating runs require frozen agent, customer, evaluator, and evolver models"
             )
-        self.model_args = {role: dict(args) for role, args in manifest.role_model_args}
+        self.model_args = role_model_args_for_runtime(manifest.role_model_args)
         experiment = config.get("experiment", {})
         config_manifest = AlternatingManifest.from_mapping(config)
-        if experiment.get("id") != manifest.experiment_id or config_manifest.sha256 != manifest.sha256:
+        if experiment.get("id") != manifest.experiment_id:
             raise ValueError("run configuration does not match the frozen alternating manifest")
+        config_manifest.bind_saved_provenance(manifest.to_document())
         self.manifest = manifest
         self.request_budget = request_budget
         self.data_root = Path(data_dir).expanduser().resolve()
@@ -104,11 +116,12 @@ class TauBenchEpisodeRunner:
             str, tuple[EpisodeRecord, BudgetSnapshot, bool]
         ] = {}
         self._completed_episode_cache_lock = Lock()
+        self._condition_locks: dict[str, Lock] = {}
+        self._panel_reference_lock = Lock()
         manifest_path = self.output_directory / "manifest.json"
         if manifest_path.exists():
             saved = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if saved != manifest.to_document():
-                raise ValueError("existing run directory belongs to a different frozen manifest")
+            self.manifest = manifest.bind_saved_provenance(saved)
         else:
             other_files = tuple(self.output_directory.iterdir())
             if other_files:
@@ -132,31 +145,71 @@ class TauBenchEpisodeRunner:
         )
         if not isinstance(service, expected_carrier):
             raise TypeError(f"episode Service must use the {self.manifest.service_carrier} carrier")
-        with self.request_budget.track_episode_usage() as episode_usage:
-            reservation = self.request_budget.reserve_episode_dispatch()
-            with self.request_budget.use_episode_reservation(reservation):
-                return self._run_episode(
-                    task_id=task_id,
-                    seed=seed,
-                    customer=customer,
-                    service=service,
-                    panel_name=panel_name,
-                    episode_usage=episode_usage,
-                )
+        if str(task_id) not in self.tasks or seed < 0 or not panel_name.strip():
+            raise ValueError("native episode task, seed and panel name must be valid")
+        key_sha = sha256_json(self._episode_key(task_id, seed, customer, service))
+        with self._completed_episode_cache_lock:
+            condition_lock = self._condition_locks.setdefault(key_sha, Lock())
+        # Identical concurrent jobs share a completed condition. Reservation is
+        # acquired only after the cache check, never for a cached episode.
+        with condition_lock:
+            with self._completed_episode_cache_lock:
+                cached = self._completed_episode_cache.get(key_sha)
+            reused = cached is not None
+            if cached is not None:
+                record, usage, recovered = cached
+                if recovered:
+                    self.request_budget.absorb_usage(usage)
+                    with self._completed_episode_cache_lock:
+                        self._completed_episode_cache[key_sha] = (record, usage, False)
+            else:
+                with self.request_budget.track_episode_usage() as episode_usage:
+                    reservation = self.request_budget.reserve_episode_dispatch()
+                    with self.request_budget.use_episode_reservation(reservation):
+                        record = self._run_episode(
+                            task_id=task_id, seed=seed, customer=customer, service=service,
+                            panel_name=panel_name, episode_usage=episode_usage,
+                        )
+            self._record_panel_reference(panel_name, key_sha, record, reused=reused)
+            return record
+
+    @staticmethod
+    def _episode_key(
+        task_id: str, seed: int, customer: PromptStrategy | None, service: ServiceCarrier,
+    ) -> dict[str, Any]:
+        return {
+            "task_id": str(task_id), "seed": seed,
+            "customer_strategy_id": customer_strategy_id(customer),
+            "service_strategy_id": service_strategy_id(service),
+        }
 
     def has_completed_episode(
         self, *, task_id: str, seed: int, customer: PromptStrategy | None,
         service: ServiceCarrier, panel_name: str,
     ) -> bool:
-        key = {
-            "task_id": str(task_id),
-            "seed": seed,
-            "customer_strategy_id": customer_strategy_id(customer),
-            "service_strategy_id": service_strategy_id(service),
-            "panel_name": panel_name,
-        }
+        key = self._episode_key(task_id, seed, customer, service)
         with self._completed_episode_cache_lock:
             return sha256_json(key) in self._completed_episode_cache
+
+    def _record_panel_reference(
+        self, panel_name: str, key_sha: str, record: EpisodeRecord, *, reused: bool,
+    ) -> None:
+        path = self.output_directory / "episode-panel-references.json"
+        reference_key = sha256_json({"panel_name": panel_name, "condition_sha256": key_sha})
+        with self._panel_reference_lock:
+            document = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {
+                "schema_version": 1, "manifest_sha256": self.manifest.sha256, "references": {},
+            }
+            if document.get("manifest_sha256") != self.manifest.sha256:
+                raise ValueError("panel references belong to a different frozen manifest")
+            references = document["references"]
+            if reference_key not in references:
+                references[reference_key] = {
+                    "panel_name": panel_name, "condition_sha256": key_sha,
+                    "episode_id": record.episode_id, "task_id": record.task_id,
+                    "seed": record.seed, "reused": reused,
+                }
+                _write_json_atomic(path, document)
 
     def _run_episode(
         self,
@@ -174,32 +227,8 @@ class TauBenchEpisodeRunner:
             raise ValueError(f"task {task_id!r} is outside the frozen task panels") from exc
         if seed < 0 or not panel_name.strip():
             raise ValueError("native episode seed and panel name must be valid")
-        episode_key = {
-            "task_id": str(task_id),
-            "seed": seed,
-            "customer_strategy_id": customer_strategy_id(customer),
-            "service_strategy_id": service_strategy_id(service),
-            "panel_name": panel_name,
-        }
+        episode_key = self._episode_key(task_id, seed, customer, service)
         episode_key_sha256 = sha256_json(episode_key)
-        with self._completed_episode_cache_lock:
-            cached = self._completed_episode_cache.get(episode_key_sha256)
-            if cached is not None and cached[2]:
-                self._completed_episode_cache[episode_key_sha256] = (
-                    cached[0], cached[1], False,
-                )
-        if cached is not None:
-            record, usage, recovered = cached
-            if recovered:
-                try:
-                    self.request_budget.absorb_usage(usage)
-                except Exception:
-                    with self._completed_episode_cache_lock:
-                        self._completed_episode_cache[episode_key_sha256] = (
-                            record, usage, True,
-                        )
-                    raise
-            return record
         if self.stop_before_next_episode_file is not None:
             signal = self.stop_before_next_episode_file
             if signal.is_symlink():
@@ -222,6 +251,7 @@ class TauBenchEpisodeRunner:
         before = self.request_budget.snapshot()
         prompt_hashes: dict[str, Any] = {}
         simulation_payload: dict[str, Any] | None = None
+        orchestrator = None
 
         def on_orchestrator(orchestrator: Any) -> None:
 
@@ -287,120 +317,154 @@ class TauBenchEpisodeRunner:
             simulation_payload = simulation.model_dump(mode="json")
             _write_json_once(simulation_path, simulation_payload)
 
-        try:
-            orchestrator = build_phase0_orchestrator(
-                task=deepcopy(task),
-                agent_model=self.models["agent"],
-                customer_model=self.models["customer"],
-                agent_model_args=self.model_args["agent"],
-                customer_model_args=self.model_args["customer"],
-                seed=seed,
-                max_steps=self.manifest.max_steps,
-                customer_strategy=customer,
-                service_strategy=service,
-                enforce_communication_protocol=self.manifest.enforce_communication_protocol,
-            )
-            on_orchestrator(orchestrator)
-            simulation = run_with_budget(
-                orchestrator,
-                self.request_budget,
-                evaluator_model=self.models["evaluator"],
-                evaluator_model_args=self.model_args["evaluator"],
-                run_reviewer=False,
-                on_simulation=on_simulation,
-            )
-            simulation_payload = simulation.model_dump(mode="json")
-            if simulation_payload.get("task_id") is None or str(simulation_payload["task_id"]) != str(task_id):
-                raise ValueError("native τ-bench returned a simulation for a different task")
-            actual_seed = simulation_payload.get("seed")
-            if actual_seed is not None and int(actual_seed) != seed:
-                raise ValueError("native τ-bench returned a simulation for a different seed")
-            if simulation_payload.get("reward_info") is None:
-                reward = None
-            else:
-                reward = simulation_payload["reward_info"].get("reward")
-            if isinstance(reward, bool) or not isinstance(reward, (float, int)) or not math.isfinite(reward):
-                native_reward = None
-                task_success = None
-                status = EpisodeStatus.UNCERTAIN
-            else:
-                native_reward = float(reward)
-                task_success = native_reward >= 1.0
-                status = EpisodeStatus.COMPLETE
-
-            if simulation_payload is None:
-                raise RuntimeError("native τ-bench did not provide a serialized simulation")
-            protocol_observation = observe_communication_protocol(
-                simulation_payload.get("messages") or (),
-                enforcement_enabled=self.manifest.enforce_communication_protocol,
-            )
-            episode_id = str(simulation_payload.get("id") or attempt_id)
-            record = EpisodeRecord(
-                episode_id=episode_id,
-                task_id=str(task_id),
-                seed=seed,
-                customer_strategy_id=customer_strategy_id(customer),
-                service_strategy_id=service_strategy_id(service),
-                status=status,
-                task_success=task_success,
-                native_reward=native_reward,
-                termination_reason=simulation_payload.get("termination_reason"),
-                trajectory_ref=simulation_path.relative_to(self.output_directory).as_posix(),
-                tool_calls=_count_tool_calls(simulation_payload.get("messages") or ()),
-                enforce_communication_protocol=self.manifest.enforce_communication_protocol,
-                mixed_text_tool_call_messages=(
-                    protocol_observation["mixed_text_tool_call_message_count"]
-                ),
-                raw_review={},
-            )
-            after = self.request_budget.snapshot()
-            exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
-            _write_json_once(telemetry_path, {
-                "attempt_id": attempt_id,
-                "simulation_id": episode_id,
-                "episode_key": episode_key,
-                "episode_key_sha256": episode_key_sha256,
-                "panel_name": panel_name,
-                "customer_strategy_id": record.customer_strategy_id,
-                "service_strategy_id": record.service_strategy_id,
-                "rendered_prompt_sha256": prompt_hashes,
-                "budget_before": before.to_dict(),
-                "budget_after": after.to_dict(),
-                "budget_delta": _snapshot_delta(before, after),
-                "episode_budget_delta": exact_episode_usage.to_dict(),
-                "communication_protocol_observation": protocol_observation,
-            })
-            _write_json_once(record_path, record.to_dict())
-            with self._completed_episode_cache_lock:
-                self._completed_episode_cache[episode_key_sha256] = (
-                    record, exact_episode_usage, False,
+        with self.request_budget.record_provider_calls(episode_directory / "provider-calls.jsonl"):
+            try:
+                orchestrator = build_phase0_orchestrator(
+                    task=deepcopy(task),
+                    agent_model=self.models["agent"],
+                    customer_model=self.models["customer"],
+                    agent_model_args=self.model_args["agent"],
+                    customer_model_args=self.model_args["customer"],
+                    seed=seed,
+                    max_steps=self.manifest.max_steps,
+                    customer_strategy=customer,
+                    service_strategy=service,
+                    enforce_communication_protocol=self.manifest.enforce_communication_protocol,
                 )
-            return record
-        except Exception as exc:
-            after = self.request_budget.snapshot()
-            exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
-            _write_json_once(episode_directory / "incomplete-run.json", {
-                "attempt_id": attempt_id,
-                "task_id": str(task_id),
-                "seed": seed,
-                "episode_key": episode_key,
-                "episode_key_sha256": episode_key_sha256,
-                "panel_name": panel_name,
-                **_exception_details(exc),
-                "native_simulation_saved": simulation_path.exists(),
-                "communication_protocol_observation": (
-                    None if simulation_payload is None else observe_communication_protocol(
-                        simulation_payload.get("messages") or (),
-                        enforcement_enabled=self.manifest.enforce_communication_protocol,
+                on_orchestrator(orchestrator)
+                simulation = run_with_budget(
+                    orchestrator,
+                    self.request_budget,
+                    evaluator_model=self.models["evaluator"],
+                    evaluator_model_args=self.model_args["evaluator"],
+                    run_reviewer=False,
+                    on_simulation=on_simulation,
+                )
+                simulation_payload = simulation.model_dump(mode="json")
+                if simulation_payload.get("task_id") is None or str(simulation_payload["task_id"]) != str(task_id):
+                    raise ValueError("native τ-bench returned a simulation for a different task")
+                actual_seed = simulation_payload.get("seed")
+                if actual_seed is not None and int(actual_seed) != seed:
+                    raise ValueError("native τ-bench returned a simulation for a different seed")
+                if simulation_payload.get("reward_info") is None:
+                    reward = None
+                else:
+                    reward = simulation_payload["reward_info"].get("reward")
+                if isinstance(reward, bool) or not isinstance(reward, (float, int)) or not math.isfinite(reward):
+                    raise ValueError("native task-success score is missing or invalid; episode is unscored")
+                else:
+                    native_reward = float(reward)
+                    task_success = native_reward >= 1.0
+                    status = EpisodeStatus.COMPLETE
+
+                if simulation_payload is None:
+                    raise RuntimeError("native τ-bench did not provide a serialized simulation")
+                protocol_observation = observe_communication_protocol(
+                    simulation_payload.get("messages") or (),
+                    enforcement_enabled=self.manifest.enforce_communication_protocol,
+                )
+                episode_id = str(simulation_payload.get("id") or attempt_id)
+                record = EpisodeRecord(
+                    episode_id=episode_id,
+                    task_id=str(task_id),
+                    seed=seed,
+                    customer_strategy_id=customer_strategy_id(customer),
+                    service_strategy_id=service_strategy_id(service),
+                    status=status,
+                    task_success=task_success,
+                    native_reward=native_reward,
+                    termination_reason=simulation_payload.get("termination_reason"),
+                    trajectory_ref=simulation_path.relative_to(self.output_directory).as_posix(),
+                    tool_calls=_count_tool_calls(simulation_payload.get("messages") or ()),
+                    enforce_communication_protocol=self.manifest.enforce_communication_protocol,
+                    mixed_text_tool_call_messages=(
+                        protocol_observation["mixed_text_tool_call_message_count"]
+                    ),
+                    raw_review={},
+                )
+                after = self.request_budget.snapshot()
+                exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
+                _write_json_once(telemetry_path, {
+                    "attempt_id": attempt_id,
+                    "simulation_id": episode_id,
+                    "episode_key": episode_key,
+                    "episode_key_sha256": episode_key_sha256,
+                    "panel_name": panel_name,
+                    "customer_strategy_id": record.customer_strategy_id,
+                    "service_strategy_id": record.service_strategy_id,
+                    "rendered_prompt_sha256": prompt_hashes,
+                    "budget_before": before.to_dict(),
+                    "budget_after": after.to_dict(),
+                    "budget_delta": _snapshot_delta(before, after),
+                    "episode_budget_delta": exact_episode_usage.to_dict(),
+                    "communication_protocol_observation": protocol_observation,
+                })
+                _write_json_once(record_path, record.to_dict())
+                with self._completed_episode_cache_lock:
+                    self._completed_episode_cache[episode_key_sha256] = (
+                        record, exact_episode_usage, False,
                     )
-                ),
-                "rendered_prompt_sha256": prompt_hashes,
-                "budget_before": before.to_dict(),
-                "budget_after": after.to_dict(),
-                "budget_delta": _snapshot_delta(before, after),
-                "episode_budget_delta": exact_episode_usage.to_dict(),
-            })
-            raise NativeEpisodeRunError(exc) from exc
+                return record
+            except BaseException as exc:
+                partial_error = None
+                partial_path = episode_directory / "partial-simulation.json"
+                if orchestrator is not None:
+                    try:
+                        getter = getattr(orchestrator, "get_trajectory", None)
+                        messages = getter() if callable(getter) else getattr(orchestrator, "trajectory", [])
+                        _write_json_once(partial_path, {
+                            "id": str(getattr(orchestrator, "simulation_id", None) or attempt_id),
+                            "task_id": str(task_id), "seed": seed, "status": "incomplete",
+                            "attempt_id": attempt_id,
+                            "messages": [
+                                message.model_dump(mode="json") if hasattr(message, "model_dump")
+                                else dict(message) for message in messages
+                            ],
+                        })
+                    except Exception as diagnostic_error:  # noqa: BLE001 - preserve the original native error
+                        partial_error = safe_error(diagnostic_error)
+                after = self.request_budget.snapshot()
+                exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
+                _write_json_once(episode_directory / "incomplete-run.json", {
+                    "attempt_id": attempt_id,
+                    "task_id": str(task_id),
+                    "seed": seed,
+                    "episode_key": episode_key,
+                    "episode_key_sha256": episode_key_sha256,
+                    "panel_name": panel_name,
+                    **_exception_details(exc),
+                    "native_simulation_saved": simulation_path.exists(),
+                    "partial_trajectory_ref": (
+                        partial_path.relative_to(self.output_directory).as_posix()
+                        if partial_path.exists() else None
+                    ),
+                    "partial_trajectory_error": partial_error,
+                    "provider_calls_ref": (
+                        (episode_directory / "provider-calls.jsonl")
+                        .relative_to(self.output_directory).as_posix()
+                    ),
+                    "communication_protocol_observation": (
+                        None if simulation_payload is None else observe_communication_protocol(
+                            simulation_payload.get("messages") or (),
+                            enforcement_enabled=self.manifest.enforce_communication_protocol,
+                        )
+                    ),
+                    "rendered_prompt_sha256": prompt_hashes,
+                    "budget_before": before.to_dict(),
+                    "budget_after": after.to_dict(),
+                    "budget_delta": _snapshot_delta(before, after),
+                    "episode_budget_delta": exact_episode_usage.to_dict(),
+                })
+                if not isinstance(exc, Exception):
+                    exc.task_id = str(task_id)
+                    exc.panel_name = panel_name
+                    exc.diagnostics_ref = (episode_directory / "incomplete-run.json").relative_to(self.output_directory).as_posix()
+                    raise
+                raise NativeEpisodeRunError(
+                    exc, task_id=str(task_id), panel_name=panel_name,
+                    diagnostics_ref=(episode_directory / "incomplete-run.json")
+                    .relative_to(self.output_directory).as_posix(),
+                ) from exc
 
     def _load_completed_episode_cache(self) -> None:
         episode_root = self.output_directory / "episodes"
@@ -437,6 +501,14 @@ class TauBenchEpisodeRunner:
             if not isinstance(key, dict) or key_sha != sha256_json(key):
                 continue
             record = EpisodeRecord.from_dict(json.loads(record_path.read_text(encoding="utf-8")))
+            if record.task_id not in self.tasks:
+                # Initial E/V resume must not deserialize H conversations. The
+                # final runner can load them after fresh challenge generation.
+                continue
+            if record.status != EpisodeStatus.COMPLETE or type(record.task_success) is not bool:
+                raise ValueError("native cache contains an incomplete or unscored episode")
+            if set(key) != {"task_id", "seed", "customer_strategy_id", "service_strategy_id"}:
+                raise ValueError("native cache uses a different condition schema")
             self.load_trajectory(record)
             if key_sha in self._completed_episode_cache:
                 raise ValueError("native episode cache contains duplicate frozen episode keys")
@@ -474,6 +546,8 @@ class TauBenchEpisodeRunner:
                 or str(payload.get("task_id")) != episode.task_id
                 or int(payload.get("seed", -1)) != episode.seed):
             raise ValueError("saved native simulation does not match its EpisodeRecord")
+        if not isinstance(payload.get("messages"), list):
+            raise TypeError("saved native simulation is missing its message list")
         return payload
 
 
@@ -526,14 +600,7 @@ def _budget_snapshot_difference(after: BudgetSnapshot, before: BudgetSnapshot) -
     return BudgetSnapshot(cap=after.cap, model_usage=tuple(model_rows), **differences)
 
 
-def _write_json_once(path: Path, value: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8", newline="\n") as handle:
-        json.dump(value, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-
-
-def _exception_details(exc: Exception) -> dict[str, Any]:
+def _exception_details(exc: BaseException) -> dict[str, Any]:
     """Keep the failure reason and a short cause chain, with a bounded traceback."""
     chain = []
     current: BaseException | None = exc
@@ -542,19 +609,19 @@ def _exception_details(exc: Exception) -> dict[str, Any]:
         seen.add(id(current))
         chain.append({
             "type": type(current).__name__,
-            "message": str(current)[:8_000],
-            "repr": repr(current)[:8_000],
+            "message": safe_error(current),
+            "repr": safe_error(Exception(repr(current))),
         })
         current = current.__cause__ or current.__context__
     cause = exc.__cause__ or exc.__context__
     formatted = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return {
         "failure_type": type(exc).__name__,
-        "failure_message": str(exc)[:8_000],
-        "failure_repr": repr(exc)[:8_000],
+        "failure_message": safe_error(exc),
+        "failure_repr": safe_error(Exception(repr(exc))),
         "cause_type": None if cause is None else type(cause).__name__,
-        "cause_message": None if cause is None else str(cause)[:8_000],
+        "cause_message": None if cause is None else safe_error(cause),
         "exception_chain": chain,
-        "traceback": formatted[-16_000:],
+        "traceback": safe_error(Exception(formatted[-16_000:]), limit=16_000),
         "traceback_truncated": len(formatted) > 16_000,
     }

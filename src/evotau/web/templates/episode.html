@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}EvoTau · Episode {{ episode.episode_id }}{% endblock %}
 {% block content %}
+{% if episode.status == 'incomplete' %}<div class="panel">此次运行中断，以下是中断前保存的对话；结果尚未评分。{% if episode.failure_message %}<pre>{{ episode.failure_message }}</pre>{% endif %}</div>{% endif %}
 <section class="page-heading"><div><div class="eyebrow">Episode trace · {{ episode.panel_name or 'panel unavailable' }}</div><h1 class="mono">{{ episode.episode_id }}</h1><p>Task {{ episode.task_id }} · Seed {{ episode.seed if episode.seed is not none else 'Unavailable' }} · Generation {{ episode.generation if episode.generation is not none else 'Unavailable' }}</p></div><div class="page-actions"><a class="button button-secondary" href="/runs/{{ run.run_id|urlencode }}/episodes">All episodes</a><span class="badge badge-neutral">{{ episode.tool_calls }} tool calls</span></div></section>
 <div class="episode-layout">
  <aside class="panel episode-list" aria-label="Episode list">

@@ -7,11 +7,13 @@ import os
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from .alternating_manifest import (
     DEFAULT_MAX_PARALLEL_EPISODES,
@@ -19,7 +21,13 @@ from .alternating_manifest import (
 )
 from .budget import RequestBudget
 from .inferai_responses import generate_text as inferai_responses_generate_text
-from .records import EpisodeRecord, customer_strategy_id, service_strategy_id
+from .provider_diagnostics import safe_error, safe_request_args
+from .records import (
+    EpisodeRecord,
+    EpisodeStatus,
+    customer_strategy_id,
+    service_strategy_id,
+)
 from .service_skills import (
     ServiceMutationOperation,
     ServiceSkillMemory,
@@ -133,10 +141,12 @@ class LLMAlternatingEvolvers:
         model: str,
         model_args: Mapping[str, Any],
         request_budget: RequestBudget | None = None,
+        output_directory: str | Path | None = None,
     ) -> None:
         self.model = model
         self.model_args = dict(model_args)
         self.request_budget = request_budget
+        self.output_directory = None if output_directory is None else Path(output_directory)
 
     def customer_candidates(
         self, context: Mapping[str, Any], count: int,
@@ -204,6 +214,48 @@ class LLMAlternatingEvolvers:
         return mutation.to_dict()
 
     def _provider_json_call(
+        self,
+        model: str,
+        model_args: Mapping[str, Any],
+        system_prompt: str,
+        context: Mapping[str, Any],
+        *,
+        call_name: str,
+    ) -> dict[str, Any]:
+        if self.output_directory is None:
+            return self._dispatch_json_call(
+                model, model_args, system_prompt, context, call_name=call_name,
+            )
+        directory = self.output_directory / "evolver-calls" / uuid4().hex
+        _write_json_once(directory / "input.json", {
+            "schema_version": 1, "call_name": call_name, "model": model,
+            "request_args": safe_request_args(model_args),
+            "system_prompt": system_prompt, "context": dict(context),
+            "input_sha256": sha256_json(context),
+        })
+        scope = (
+            nullcontext() if self.request_budget is None
+            else self.request_budget.record_provider_calls(directory / "provider-calls.jsonl")
+        )
+        try:
+            with scope:
+                result = self._dispatch_json_call(
+                    model, model_args, system_prompt, context, call_name=call_name,
+                )
+            _write_json_once(directory / "output.json", {"status": "parsed", "response": result})
+            return result
+        except BaseException as exc:
+            _write_json_once(directory / "failure.json", {
+                "status": "failed", "failure_type": type(exc).__name__,
+                "failure_message": safe_error(exc),
+                "raw_response": getattr(exc, "raw_response", None),
+                "raw_response_truncated": getattr(exc, "raw_response_truncated", None),
+            })
+            exc.call_name = call_name
+            exc.diagnostics_ref = (directory / "failure.json").relative_to(self.output_directory).as_posix()
+            raise
+
+    def _dispatch_json_call(
         self,
         model: str,
         model_args: Mapping[str, Any],
@@ -1577,6 +1629,8 @@ def _run_panels(
                 raise TypeError("τ-bench runner must return an EpisodeRecord")
             if episode.task_id != task_id or episode.seed != seed:
                 raise ValueError("τ-bench runner returned a different task or seed")
+            if episode.status != EpisodeStatus.COMPLETE or type(episode.task_success) is not bool:
+                raise ValueError("panel requires a complete native task-success score for every episode")
             return episode
         finally:
             job_telemetry.finish()
@@ -1659,6 +1713,8 @@ def _project_context_episodes(
     rows = []
     for episode in episodes:
         trajectory = None if loader is None else loader(episode)
+        if callable(loader) and not isinstance(trajectory, Mapping):
+            raise TypeError(f"saved trajectory is missing for episode {episode.episode_id}")
         rows.append({
             "task": _task_context(
                 tasks[episode.task_id], include_user_scenario=include_user_scenario,
@@ -1693,17 +1749,19 @@ def _task_context(task: Any, *, include_user_scenario: bool) -> dict[str, Any]:
 def _trajectory_context(trajectory: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(trajectory, Mapping):
         return {"messages": [], "termination_reason": None}
-    messages = trajectory.get("messages", ())
+    messages = trajectory.get("messages")
+    if not isinstance(messages, (list, tuple)):
+        raise TypeError("saved trajectory is missing its message list")
     projected = []
     for message in messages if isinstance(messages, Sequence) else ():
-        if isinstance(message, Mapping):
-            projected.append({
-                key: message[key]
-                for key in ("role", "content", "name", "tool_calls", "tool_call_id")
-                if key in message
-            })
-        elif hasattr(message, "model_dump"):
-            data = message.model_dump(mode="json")
+        data = message.model_dump(mode="json") if hasattr(message, "model_dump") else message
+        if not isinstance(data, Mapping):
+            continue
+        if data.get("role") == "multi_tool":
+            projected.extend(_trajectory_context({
+                "messages": data.get("tool_messages", ()),
+            })["messages"])
+        else:
             projected.append({
                 key: data[key]
                 for key in ("role", "content", "name", "tool_calls", "tool_call_id")
@@ -1718,6 +1776,11 @@ def _trajectory_context(trajectory: Mapping[str, Any] | None) -> dict[str, Any]:
 def _accuracy(episodes: Sequence[EpisodeRecord]) -> float:
     if not episodes:
         raise ValueError("accuracy requires at least one task episode")
+    if any(
+        episode.status != EpisodeStatus.COMPLETE or type(episode.task_success) is not bool
+        for episode in episodes
+    ):
+        raise ValueError("accuracy requires a complete native task-success score for every episode")
     return sum(episode.task_success is True for episode in episodes) / len(episodes)
 
 
@@ -1786,9 +1849,21 @@ def _budget_delta(before: Mapping[str, Any] | None, after: Mapping[str, Any] | N
 def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(payload, encoding="utf-8")
-    os.replace(temporary, path)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory_descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _provider_call(budget: RequestBudget | None, callback: Callable[..., Any], *args: Any) -> Any:

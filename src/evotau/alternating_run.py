@@ -27,11 +27,13 @@ from .budget import RequestBudget
 from .episode_execution import StopBeforeEpisodeDispatch
 from .phase0 import load_config
 from .phase0_run import _write_json_once
+from .provider_diagnostics import safe_error
 from .service_skills import ServiceSkillMemory
 from .strategies import PromptStrategy
 from .tau_adapter import verify_tau2_installation
 from .tau_episode_runner import TauBenchEpisodeRunner
 from .tau_provenance import (
+    capture_code_provenance,
     role_model_args_for_runtime,
     sha256_json,
     verify_git_blob_sha1,
@@ -61,8 +63,7 @@ def run_from_config(
     output_directory.mkdir(parents=True, exist_ok=True)
     manifest_path = output_directory / "manifest.json"
     if manifest_path.exists():
-        if json.loads(manifest_path.read_text(encoding="utf-8")) != manifest.to_document():
-            raise ValueError("existing run directory belongs to a different frozen manifest")
+        manifest = manifest.bind_saved_provenance(json.loads(manifest_path.read_text(encoding="utf-8")))
     elif any(output_directory.iterdir()):
         raise FileExistsError("refusing to bind an existing run directory without its manifest")
     else:
@@ -70,232 +71,252 @@ def run_from_config(
     execution_state_path, execution_state = _begin_execution_attempt(
         output_directory, manifest.sha256,
     )
-    budget = RequestBudget(manifest.request_budget_cap)
-    budget.enable_live_usage(output_directory / "api-usage-live.json")
-    evolution_tasks = load_alternating_tasks(
-        manifest,
-        data_dir,
-        include_validation=manifest.run_validation,
-        include_heldout=False,
-    )
-    runner = TauBenchEpisodeRunner(
-        manifest=manifest,
-        config=config,
-        data_dir=data_dir,
-        request_budget=budget,
-        output_directory=output_directory,
-        stop_before_next_episode_file=stop_before_next_episode_file,
-        task_objects=evolution_tasks,
-    )
-    expected_evolution_tasks = set(manifest.evolution_task_ids)
-    if manifest.run_validation:
-        expected_evolution_tasks.update(manifest.validation_task_ids)
-    if set(runner.tasks) != expected_evolution_tasks:
-        raise ValueError("evolution runner loaded a task outside the enabled E/V panels")
-
-    models = dict(manifest.role_models)
-    role_args = role_model_args_for_runtime(manifest.role_model_args)
-    evolver_args = manifest.role_model_args_dict["evolver"]
-    if evolver_args.get("api_protocol") != "responses":
-        evolver_args = role_args["evolver"]
-    providers = LLMAlternatingEvolvers(
-        model=models["evolver"],
-        model_args=evolver_args,
-        request_budget=budget,
-    )
-    run_context = {
-        "schema_version": 2,
-        "manifest_sha256": manifest.sha256,
-        "config_sha256": sha256_json(config),
-        "provider_models": {
-            "customer_evolver": models["evolver"],
-            "service_evolver": models["evolver"],
-            "task_evaluator": models["evaluator"],
-        },
-        "task_panels": {
-            "E": list(manifest.evolution_task_ids),
-            "V": list(manifest.validation_task_ids),
-            "H": list(manifest.heldout_task_ids),
-        },
-        "heldout_policy": (
-            "H task content is loaded only after evolution and fresh challenge generation."
-            if manifest.run_heldout
-            else "H task content is not loaded in this mechanism-smoke run."
-        ),
-        "reviewer_enabled": False,
-        "max_parallel_episodes": manifest.max_parallel_episodes,
-        "evolution_fitness_seed": (
-            manifest.seed if manifest.evolution_fitness_seed is None
-            else manifest.evolution_fitness_seed
-        ),
-        "run_validation": manifest.run_validation,
-        "run_heldout": manifest.run_heldout,
-        "evolution_carriers": {
-            "customer_carrier": manifest.customer_carrier,
-            "service_carrier": manifest.service_carrier,
-            "service_skill_runtime": manifest.service_skill_runtime,
-            "service_mutation_ops": list(manifest.service_mutation_ops),
-            "max_service_mutations_per_generation": manifest.max_service_mutations_per_generation,
-        },
-    }
-    _write_or_verify_context(output_directory / "run-context.json", run_context)
-
-    initial_customer = PromptStrategy(manifest.initial_customer_strategy)
-    initial_service = (
-        ServiceSkillMemory()
-        if manifest.service_carrier == "skill_memory_v1"
-        else PromptStrategy(manifest.initial_service_strategy)
-    )
-    episode_job_telemetry = EpisodeJobTelemetry(manifest.max_parallel_episodes)
-    evolution_started = perf_counter()
-    evolved = run_alternating_evolution(
-        tasks=runner.tasks,
-        evolution_task_ids=manifest.evolution_task_ids,
-        validation_task_ids=manifest.validation_task_ids,
-        seed=manifest.seed,
-        generations=manifest.generations,
-        customer_candidate_count=manifest.customer_candidates,
-        clean_panel_size=manifest.clean_panel_size,
-        max_parallel_episodes=manifest.max_parallel_episodes,
-        evolution_fitness_seed=manifest.evolution_fitness_seed,
-        run_validation=manifest.run_validation,
-        episode_job_telemetry=episode_job_telemetry,
-        initial_customer=initial_customer,
-        initial_service=initial_service,
-        service_carrier=manifest.service_carrier,
-        runner=runner,
-        customer_evolver=providers.customer_candidates,
-        service_evolver=(
-            providers.service_skill_mutation
-            if manifest.service_carrier == "skill_memory_v1"
-            else providers.service_candidate
-        ),
-        domain_policy=runner.service_policy_text,
-        request_budget=budget,
-        output_directory=output_directory,
-        checkpoint_path=checkpoint_path,
-        manifest_sha256=manifest.sha256,
-        service_evolver_model=models["evolver"],
-        service_evolver_reasoning_effort=(
-            None if "reasoning_effort" not in evolver_args
-            else str(evolver_args["reasoning_effort"])
-        ),
-        service_evolver_provider=(
-            "InferAI Responses API" if evolver_args.get("api_protocol") == "responses"
-            else str(dict(manifest.provider_provenance).get(
-                "provider", "τ-bench/LiteLLM configured provider",
-            ))
-        ),
-    )
-
-    # The fresh challenge is generated from E-only evidence before any H task
-    # object or H trajectory is loaded into this process.
-    fresh_customer = None
-    if manifest.run_heldout:
-        fresh_customer = propose_fresh_customer_challenge(
-            evolved,
-            providers.customer_candidates,
-            tasks=runner.tasks,
-            runner=runner,
-            domain_policy=runner.service_policy_text,
-            request_budget=budget,
-            proposal_path=output_directory / "fresh-customer-proposal.json",
-            manifest_sha256=manifest.sha256,
-        )
-    evolution_wall_clock_seconds = perf_counter() - evolution_started
-    validation_wall_clock_seconds = sum(
-        float(item.get("timing", {}).get("validation_wall_clock_seconds", 0.0))
-        for item in evolved.generations
-    )
-    heldout_evaluation = None
-    heldout_wall_clock_seconds = 0.0
-    if manifest.run_heldout:
-        heldout_started = perf_counter()
-        heldout_tasks = load_alternating_tasks(
+    stage = "initialization"
+    try:
+        stage = "task_loading"
+        budget = RequestBudget(manifest.request_budget_cap)
+        budget.enable_live_usage(output_directory / "api-usage-live.json")
+        evolution_tasks = load_alternating_tasks(
             manifest,
             data_dir,
             include_validation=manifest.run_validation,
-            include_heldout=True,
+            include_heldout=False,
         )
-        heldout_runner = TauBenchEpisodeRunner(
+        runner = TauBenchEpisodeRunner(
             manifest=manifest,
             config=config,
             data_dir=data_dir,
             request_budget=budget,
             output_directory=output_directory,
-            include_heldout=True,
             stop_before_next_episode_file=stop_before_next_episode_file,
-            task_objects=heldout_tasks,
+            task_objects=evolution_tasks,
         )
-        heldout_tasks = {task_id: heldout_tasks[task_id] for task_id in manifest.heldout_task_ids}
-        if fresh_customer is None:
-            raise RuntimeError("held-out evaluation requires a fresh adaptive Customer")
-        heldout_evaluation = run_final_endpoint_evaluation(
-            heldout_tasks=heldout_tasks,
-            heldout_task_ids=manifest.heldout_task_ids,
-            seed=manifest.seed + manifest.generations + 50_000,
-            initial_service=initial_service,
-            final_service=evolved.service,
-            fresh_customer=fresh_customer,
-            runner=heldout_runner,
+        expected_evolution_tasks = set(manifest.evolution_task_ids)
+        if manifest.run_validation:
+            expected_evolution_tasks.update(manifest.validation_task_ids)
+        if set(runner.tasks) != expected_evolution_tasks:
+            raise ValueError("evolution runner loaded a task outside the enabled E/V panels")
+
+        models = dict(manifest.role_models)
+        role_args = role_model_args_for_runtime(manifest.role_model_args)
+        evolver_args = manifest.role_model_args_dict["evolver"]
+        if evolver_args.get("api_protocol") != "responses":
+            evolver_args = role_args["evolver"]
+        providers = LLMAlternatingEvolvers(
+            model=models["evolver"],
+            model_args=evolver_args,
+            request_budget=budget,
+            output_directory=output_directory,
+        )
+        run_context = {
+            "schema_version": 2,
+            "manifest_sha256": manifest.sha256,
+            "config_sha256": sha256_json(config),
+            "provider_models": {
+                "customer_evolver": models["evolver"],
+                "service_evolver": models["evolver"],
+                "task_evaluator": models["evaluator"],
+            },
+            "task_panels": {
+                "E": list(manifest.evolution_task_ids),
+                "V": list(manifest.validation_task_ids),
+                "H": list(manifest.heldout_task_ids),
+            },
+            "heldout_policy": (
+                "H task content is loaded only after evolution and fresh challenge generation."
+                if manifest.run_heldout
+                else "H task content is not loaded in this mechanism-smoke run."
+            ),
+            "reviewer_enabled": False,
+            "max_parallel_episodes": manifest.max_parallel_episodes,
+            "evolution_fitness_seed": (
+                manifest.seed if manifest.evolution_fitness_seed is None
+                else manifest.evolution_fitness_seed
+            ),
+            "run_validation": manifest.run_validation,
+            "run_heldout": manifest.run_heldout,
+            "evolution_carriers": {
+                "customer_carrier": manifest.customer_carrier,
+                "service_carrier": manifest.service_carrier,
+                "service_skill_runtime": manifest.service_skill_runtime,
+                "service_mutation_ops": list(manifest.service_mutation_ops),
+                "max_service_mutations_per_generation": manifest.max_service_mutations_per_generation,
+            },
+        }
+        _write_or_verify_context(output_directory / "run-context.json", run_context)
+
+        initial_customer = PromptStrategy(manifest.initial_customer_strategy)
+        initial_service = (
+            ServiceSkillMemory()
+            if manifest.service_carrier == "skill_memory_v1"
+            else PromptStrategy(manifest.initial_service_strategy)
+        )
+        episode_job_telemetry = EpisodeJobTelemetry(manifest.max_parallel_episodes)
+        stage = "evolution"
+        evolution_started = perf_counter()
+        evolved = run_alternating_evolution(
+            tasks=runner.tasks,
+            evolution_task_ids=manifest.evolution_task_ids,
+            validation_task_ids=manifest.validation_task_ids,
+            seed=manifest.seed,
+            generations=manifest.generations,
+            customer_candidate_count=manifest.customer_candidates,
+            clean_panel_size=manifest.clean_panel_size,
             max_parallel_episodes=manifest.max_parallel_episodes,
-            telemetry=episode_job_telemetry,
-            output_path=output_directory / "heldout-endpoint-evaluation.json",
+            evolution_fitness_seed=manifest.evolution_fitness_seed,
+            run_validation=manifest.run_validation,
+            episode_job_telemetry=episode_job_telemetry,
+            initial_customer=initial_customer,
+            initial_service=initial_service,
+            service_carrier=manifest.service_carrier,
+            runner=runner,
+            customer_evolver=providers.customer_candidates,
+            service_evolver=(
+                providers.service_skill_mutation
+                if manifest.service_carrier == "skill_memory_v1"
+                else providers.service_candidate
+            ),
+            domain_policy=runner.service_policy_text,
+            request_budget=budget,
+            output_directory=output_directory,
+            checkpoint_path=checkpoint_path,
+            manifest_sha256=manifest.sha256,
+            service_evolver_model=models["evolver"],
+            service_evolver_reasoning_effort=(
+                None if "reasoning_effort" not in evolver_args
+                else str(evolver_args["reasoning_effort"])
+            ),
+            service_evolver_provider=(
+                "InferAI Responses API" if evolver_args.get("api_protocol") == "responses"
+                else str(dict(manifest.provider_provenance).get(
+                    "provider", "τ-bench/LiteLLM configured provider",
+                ))
+            ),
         )
-        heldout_wall_clock_seconds = perf_counter() - heldout_started
-    api_usage_by_call_name = budget.api_usage_by_call_name()
-    execution_state = _finish_execution_attempt(execution_state_path)
-    completed_episodes = len(tuple((output_directory / "episodes").glob("*/episode-record.json")))
-    failed_episode_attempts = len(
-        tuple((output_directory / "episodes").glob("*/incomplete-run.json")),
-    )
-    final_result = {
-        "schema_version": 2,
-        "status": "complete",
-        "experiment_id": manifest.experiment_id,
-        "manifest_sha256": manifest.sha256,
-        "run_context_sha256": sha256_json(run_context),
-        "initial_customer": initial_customer.to_dict(),
-        "initial_service": initial_service.to_dict(),
-        "final_customer": evolved.customer.to_dict(),
-        "final_service": evolved.service.to_dict(),
-        "final_service_carrier": manifest.service_carrier,
-        "final_service_provenance": [
-            item.to_dict() for item in getattr(evolved, "service_provenance", ())
-        ],
-        "generations": list(evolved.generations),
-        "fresh_adaptive_customer": (
-            None if fresh_customer is None else fresh_customer.to_dict()
-        ),
-        "heldout_endpoint_evaluation": heldout_evaluation,
-        "evolution_fitness_seed": (
-            manifest.seed if manifest.evolution_fitness_seed is None
-            else manifest.evolution_fitness_seed
-        ),
-        "validation_enabled": manifest.run_validation,
-        "validation_evaluated": any(
-            generation.get("service_phase", {}).get("validation_evaluated", False)
-            for generation in evolved.generations
-        ),
-        "heldout_evaluated": manifest.run_heldout,
-        "episode_job_telemetry": episode_job_telemetry.snapshot(),
-        "provider_usage": budget.snapshot().to_dict(),
-        "api_usage_by_call_name": api_usage_by_call_name,
-        "api_usage_by_role": _api_usage_by_role(api_usage_by_call_name),
-        "resume_count": execution_state["resume_count"],
-        "completed_episodes": completed_episodes,
-        "failed_episode_attempts": failed_episode_attempts,
-        "timing": {
-            "evolution_wall_clock_seconds": round(evolution_wall_clock_seconds, 6),
-            "validation_wall_clock_seconds": round(validation_wall_clock_seconds, 6),
-            "heldout_wall_clock_seconds": round(heldout_wall_clock_seconds, 6),
-            "total_wall_clock_seconds": execution_state["total_wall_clock_seconds"],
-            "current_process_wall_clock_seconds": round(perf_counter() - run_started, 6),
-            **episode_job_telemetry.snapshot(),
-        },
-    }
-    _write_json_atomic(output_directory / "alternating-result.json", final_result)
-    return output_directory, final_result
+
+        # The fresh challenge is generated from E-only evidence before any H task
+        # object or H trajectory is loaded into this process.
+        fresh_customer = None
+        if manifest.run_heldout:
+            stage = "fresh_customer"
+            fresh_customer = propose_fresh_customer_challenge(
+                evolved,
+                providers.customer_candidates,
+                tasks=runner.tasks,
+                runner=runner,
+                domain_policy=runner.service_policy_text,
+                request_budget=budget,
+                proposal_path=output_directory / "fresh-customer-proposal.json",
+                manifest_sha256=manifest.sha256,
+            )
+        evolution_wall_clock_seconds = perf_counter() - evolution_started
+        validation_wall_clock_seconds = sum(
+            float(item.get("timing", {}).get("validation_wall_clock_seconds", 0.0))
+            for item in evolved.generations
+        )
+        heldout_evaluation = None
+        heldout_wall_clock_seconds = 0.0
+        if manifest.run_heldout:
+            stage = "heldout"
+            heldout_started = perf_counter()
+            heldout_tasks = load_alternating_tasks(
+                manifest,
+                data_dir,
+                include_validation=manifest.run_validation,
+                include_heldout=True,
+            )
+            heldout_runner = TauBenchEpisodeRunner(
+                manifest=manifest,
+                config=config,
+                data_dir=data_dir,
+                request_budget=budget,
+                output_directory=output_directory,
+                include_heldout=True,
+                stop_before_next_episode_file=stop_before_next_episode_file,
+                task_objects=heldout_tasks,
+            )
+            heldout_tasks = {task_id: heldout_tasks[task_id] for task_id in manifest.heldout_task_ids}
+            if fresh_customer is None:
+                raise RuntimeError("held-out evaluation requires a fresh adaptive Customer")
+            heldout_evaluation = run_final_endpoint_evaluation(
+                heldout_tasks=heldout_tasks,
+                heldout_task_ids=manifest.heldout_task_ids,
+                seed=manifest.seed + manifest.generations + 50_000,
+                initial_service=initial_service,
+                final_service=evolved.service,
+                fresh_customer=fresh_customer,
+                runner=heldout_runner,
+                max_parallel_episodes=manifest.max_parallel_episodes,
+                telemetry=episode_job_telemetry,
+                output_path=output_directory / "heldout-endpoint-evaluation.json",
+            )
+            heldout_wall_clock_seconds = perf_counter() - heldout_started
+        stage = "finalization"
+        api_usage_by_call_name = budget.api_usage_by_call_name()
+        execution_state = _finish_execution_attempt(execution_state_path)
+        completed_episodes = len(tuple((output_directory / "episodes").glob("*/episode-record.json")))
+        failed_episode_attempts = len(
+            tuple((output_directory / "episodes").glob("*/incomplete-run.json")),
+        )
+        final_result = {
+            "schema_version": 2,
+            "status": "complete",
+            "experiment_id": manifest.experiment_id,
+            "manifest_sha256": manifest.sha256,
+            "run_context_sha256": sha256_json(run_context),
+            "initial_customer": initial_customer.to_dict(),
+            "initial_service": initial_service.to_dict(),
+            "final_customer": evolved.customer.to_dict(),
+            "final_service": evolved.service.to_dict(),
+            "final_service_carrier": manifest.service_carrier,
+            "final_service_provenance": [
+                item.to_dict() for item in getattr(evolved, "service_provenance", ())
+            ],
+            "generations": list(evolved.generations),
+            "fresh_adaptive_customer": (
+                None if fresh_customer is None else fresh_customer.to_dict()
+            ),
+            "heldout_endpoint_evaluation": heldout_evaluation,
+            "evolution_fitness_seed": (
+                manifest.seed if manifest.evolution_fitness_seed is None
+                else manifest.evolution_fitness_seed
+            ),
+            "validation_enabled": manifest.run_validation,
+            "validation_evaluated": any(
+                generation.get("service_phase", {}).get("validation_evaluated", False)
+                for generation in evolved.generations
+            ),
+            "heldout_evaluated": manifest.run_heldout,
+            "episode_job_telemetry": episode_job_telemetry.snapshot(),
+            "provider_usage": budget.snapshot().to_dict(),
+            "api_usage_by_call_name": api_usage_by_call_name,
+            "api_usage_by_role": _api_usage_by_role(api_usage_by_call_name),
+            "resume_count": execution_state["resume_count"],
+            "completed_episodes": completed_episodes,
+            "failed_episode_attempts": failed_episode_attempts,
+            "timing": {
+                "evolution_wall_clock_seconds": round(evolution_wall_clock_seconds, 6),
+                "validation_wall_clock_seconds": round(validation_wall_clock_seconds, 6),
+                "heldout_wall_clock_seconds": round(heldout_wall_clock_seconds, 6),
+                "total_wall_clock_seconds": execution_state["total_wall_clock_seconds"],
+                "current_process_wall_clock_seconds": round(perf_counter() - run_started, 6),
+                **episode_job_telemetry.snapshot(),
+            },
+        }
+        _write_json_atomic(output_directory / "alternating-result.json", final_result)
+        return output_directory, final_result
+    except BaseException as exc:
+        status = "paused" if isinstance(exc, (StopBeforeEpisodeDispatch, KeyboardInterrupt)) else "failed"
+        _finish_execution_attempt(execution_state_path, status=status, failure={
+            "stage": stage,
+            "failure_type": type(exc).__name__, "failure_message": safe_error(exc),
+            "task_id": getattr(exc, "task_id", None),
+            "panel_name": getattr(exc, "panel_name", None),
+            "call_name": getattr(exc, "call_name", None),
+            "diagnostics_ref": getattr(exc, "diagnostics_ref", None),
+            "last_generation_stage": _last_generation_stage(output_directory),
+        })
+        raise
 
 
 def _begin_execution_attempt(
@@ -303,15 +324,21 @@ def _begin_execution_attempt(
 ) -> tuple[Path, dict[str, Any]]:
     path = output_directory / "run-execution-state.json"
     now = datetime.now(UTC)
+    attempts = []
     if path.exists():
         state = json.loads(path.read_text(encoding="utf-8"))
         if state.get("manifest_sha256") != manifest_sha256:
             raise ValueError("run execution state belongs to a different frozen manifest")
+        attempts = state.get("attempts", [])
         invocation_count = int(state.get("invocation_count", 0)) + 1
         first_started_at = state.get("first_started_at")
     else:
         invocation_count = 1
         first_started_at = now.isoformat()
+    attempts.append({
+        "invocation": invocation_count, "started_at": now.isoformat(), "status": "running",
+        "evotau": capture_code_provenance().to_dict(),
+    })
     state = {
         "schema_version": 1,
         "manifest_sha256": manifest_sha256,
@@ -319,23 +346,49 @@ def _begin_execution_attempt(
         "last_started_at": now.isoformat(),
         "invocation_count": invocation_count,
         "resume_count": max(0, invocation_count - 1),
+        "attempts": attempts,
         "status": "running",
     }
     _write_json_atomic(path, state)
     return path, state
 
 
-def _finish_execution_attempt(path: Path) -> dict[str, Any]:
+def _finish_execution_attempt(
+    path: Path, *, status: str = "complete", failure: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     state = json.loads(path.read_text(encoding="utf-8"))
-    started = datetime.fromisoformat(state["first_started_at"])
     completed = datetime.now(UTC)
+    attempts = state["attempts"]
+    attempt = attempts[-1]
+    started = datetime.fromisoformat(attempt["started_at"])
+    attempt.update({
+        "ended_at": completed.isoformat(), "status": status,
+        "wall_clock_seconds": round((completed - started).total_seconds(), 6),
+        "failure": None if failure is None else dict(failure),
+    })
     state.update({
-        "last_completed_at": completed.isoformat(),
-        "status": "complete",
-        "total_wall_clock_seconds": round((completed - started).total_seconds(), 6),
+        "last_completed_at": completed.isoformat(), "status": status,
+        "failure": None if failure is None else dict(failure),
+        "total_wall_clock_seconds": round(sum(
+            float(item.get("wall_clock_seconds", 0.0)) for item in attempts
+        ), 6),
+        "elapsed_since_first_start_seconds": round((
+            completed - datetime.fromisoformat(state["first_started_at"])
+        ).total_seconds(), 6),
     })
     _write_json_atomic(path, state)
     return state
+
+
+def _last_generation_stage(output: Path) -> Mapping[str, Any] | None:
+    paths = sorted(output.glob("generation-*-stage.json"))
+    if not paths:
+        return None
+    try:
+        payload = json.loads(paths[-1].read_text(encoding="utf-8"))
+        return {key: payload.get(key) for key in ("generation", "stage")}
+    except (OSError, ValueError):
+        return None
 
 
 def _api_usage_by_role(

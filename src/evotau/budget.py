@@ -11,11 +11,14 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock, RLock
 from time import perf_counter, sleep
 from types import ModuleType
 from typing import Any
+
+from .provider_diagnostics import response_metadata, safe_error, safe_request_args
 
 
 class ProviderBudgetExceeded(RuntimeError):
@@ -255,6 +258,10 @@ class RequestBudget:
         self._call_name_context: ContextVar[str | None] = ContextVar(
             f"evotau_call_name_{id(self)}", default=None,
         )
+        self._diagnostic_path: ContextVar[Path | None] = ContextVar(
+            f"evotau_provider_log_{id(self)}", default=None,
+        )
+        self._diagnostic_write_lock = Lock()
         self._call_usage: dict[str, dict[str, int | float]] = {}
         self._live_usage_path: Path | None = None
         self._live_usage_restored = False
@@ -504,12 +511,48 @@ class RequestBudget:
             },
         }
 
+    @contextmanager
+    def record_provider_calls(self, path: str | Path) -> Iterator[None]:
+        """Attach a durable per-attempt log to this thread's provider calls."""
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        token = self._diagnostic_path.set(target)
+        try:
+            yield
+        finally:
+            self._diagnostic_path.reset(token)
+
+    def _record_provider_metadata(
+        self, *, call_name: str, model: str | None, request_args: Mapping[str, Any],
+        response: Any, elapsed_seconds: float, error: BaseException | None = None,
+    ) -> None:
+        path = self._diagnostic_path.get()
+        if path is None:
+            return
+        event = {
+            "schema_version": 1,
+            "recorded_at": datetime.now(UTC).isoformat(),
+            "call_name": call_name,
+            "model": model,
+            "request_args": safe_request_args(request_args),
+            "api_success": error is None,
+            "elapsed_seconds": round(elapsed_seconds, 6),
+            "error_type": None if error is None else type(error).__name__,
+            "error_message": None if error is None else safe_error(error),
+            "response": None if error is not None else response_metadata(response),
+        }
+        with self._diagnostic_write_lock, path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
     def dispatch_external_call(
         self,
         *,
         model: str,
         call_name: str,
         dispatch: Callable[[], Any],
+        request_args: Mapping[str, Any] | None = None,
     ) -> Any:
         """Budget and record a provider request made outside tau-bench/LiteLLM."""
 
@@ -517,7 +560,7 @@ class RequestBudget:
         started = perf_counter()
         try:
             response = dispatch()
-        except BaseException:
+        except BaseException as exc:
             elapsed = perf_counter() - started
             self._finish(succeeded=False, model=model)
             self._record_api_call(
@@ -525,6 +568,10 @@ class RequestBudget:
                 succeeded=False,
                 response=None,
                 elapsed_seconds=elapsed,
+            )
+            self._record_provider_metadata(
+                call_name=call_name, model=model, request_args=request_args or {},
+                response=None, elapsed_seconds=elapsed, error=exc,
             )
             raise
         accounting_response = self._normalize_external_response(response)
@@ -535,6 +582,10 @@ class RequestBudget:
             succeeded=True,
             response=accounting_response,
             elapsed_seconds=elapsed,
+        )
+        self._record_provider_metadata(
+            call_name=call_name, model=model, request_args=request_args or {},
+            response=response, elapsed_seconds=elapsed,
         )
         return response
 
@@ -773,21 +824,32 @@ class RequestBudget:
                         started = perf_counter()
                         try:
                             result = original_completion(*args, **kwargs)
-                        except BaseException:
+                        except BaseException as exc:
+                            elapsed = perf_counter() - started
                             self._finish(succeeded=False, model=model_id)
                             self._record_api_call(
                                 call_name,
                                 succeeded=False,
                                 response=None,
-                                elapsed_seconds=perf_counter() - started,
+                                elapsed_seconds=elapsed,
+                            )
+                            self._record_provider_metadata(
+                                call_name=call_name, model=model_id, request_args=kwargs,
+                                response=None, elapsed_seconds=elapsed,
+                                error=exc,
                             )
                             raise
+                        elapsed = perf_counter() - started
                         self._finish(succeeded=True, response=result, model=model_id)
                         self._record_api_call(
                             call_name,
                             succeeded=True,
                             response=result,
-                            elapsed_seconds=perf_counter() - started,
+                            elapsed_seconds=elapsed,
+                        )
+                        self._record_provider_metadata(
+                            call_name=call_name, model=model_id, request_args=kwargs,
+                            response=result, elapsed_seconds=elapsed,
                         )
                         if not retry_empty_responses or not _is_empty_completion(result):
                             return result

@@ -76,7 +76,7 @@ def capture_code_provenance() -> CodeProvenance:
     in_project = (project_root / "pyproject.toml").is_file()
     if in_project:
         source_paths = sorted(
-            [*package_dir.rglob("*.py"), project_root / "pyproject.toml", *project_root.glob("configs/**/*.yaml")]
+            [*package_dir.rglob("*.py"), project_root / "pyproject.toml"]
         )
         relative = lambda path: path.relative_to(project_root).as_posix()
     else:

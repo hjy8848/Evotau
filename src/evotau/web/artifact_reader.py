@@ -92,6 +92,10 @@ class ArtifactReader:
             if result.get("experiment_id") not in (None, manifest.get("experiment_id")):
                 raise ArtifactReadError("result and manifest experiment IDs differ; run is hidden")
 
+        execution_path = run_path / "run-execution-state.json"
+        execution = self._read_json(execution_path) if execution_path.exists() else None
+        if execution is not None and execution.get("manifest_sha256") != manifest.get("manifest_sha256"):
+            raise ArtifactReadError("execution state differs from its frozen manifest")
         heldout_ids = self._heldout_ids(manifest)
         complete = result is not None and result.get("status") == "complete"
         if result is not None and result.get("status") == "incomplete":
@@ -100,11 +104,32 @@ class ArtifactReader:
             status = "complete"
         elif live_status in {"running", "paused", "failed"}:
             status = live_status
+        elif execution is not None and execution.get("status") in {"failed", "paused"}:
+            status = execution["status"]
         else:
             status = "incomplete" if self._has_resume_artifacts(run_path, phase) else "not_started"
 
         heldout_sealed = bool(heldout_ids) and not complete
         episodes = self._load_episodes(run_path, manifest, result, complete=complete)
+        reference_path = run_path / "episode-panel-references.json"
+        if reference_path.exists():
+            reference_doc = self._read_json(reference_path)
+            if reference_doc.get("manifest_sha256") != manifest.get("manifest_sha256"):
+                raise ArtifactReadError("episode panel references differ from the manifest")
+            by_id = {item["episode_id"]: item for item in episodes}
+            for reference in reference_doc.get("references", {}).values():
+                episode = by_id.get(reference.get("episode_id"))
+                if episode is None:
+                    continue  # Sealed H references are also hidden.
+                if reference.get("task_id") != episode["task_id"] or reference.get("seed") != episode["seed"]:
+                    raise ArtifactReadError("episode panel reference differs from its episode")
+                panels = episode.setdefault("panel_names", [episode.get("panel_name")])
+                if reference["panel_name"] not in panels:
+                    panels.append(reference["panel_name"])
+                episode["generations"] = sorted({
+                    value for panel in panels if panel
+                    if (value := _generation_from_panel(panel)) is not None
+                })
         generations = self._generation_commits(manifest, result)
         strategies = self._load_strategies(result, generations)
         latest = max(generations, key=lambda item: item.get("generation", -1), default=None)
@@ -131,8 +156,13 @@ class ArtifactReader:
             "experiment_id": str(manifest.get("experiment_id", run_path.name)),
             "phase": phase,
             "status": status,
+            "execution_failure": (
+                None if execution is None or (
+                    heldout_sealed and (execution.get("failure") or {}).get("stage") == "heldout"
+                ) else redact_secrets(execution.get("failure"))
+            ),
             "episode_limit": _manifest_int(manifest, "max_episodes"),
-            "max_concurrency": 1,
+            "max_concurrency": manifest.get("max_parallel_episodes", 1),
             "manifest": _safe_manifest_for_display(manifest, sealed=heldout_sealed),
             "manifest_sha256": manifest.get("manifest_sha256"),
             "real_provider_enabled": manifest.get("real_provider_enabled") is True,
@@ -227,7 +257,8 @@ class ArtifactReader:
 
     @staticmethod
     def _verify_result_manifest(result: dict[str, Any], manifest: dict[str, Any]) -> None:
-        if (result.get("schema_version") != 1
+        allowed_schemas = {1, 2} if manifest.get("phase") == "alternating-self-evolution" else {1}
+        if (result.get("schema_version") not in allowed_schemas
                 or result.get("manifest_sha256") != manifest.get("manifest_sha256")
                 or result.get("status") not in {"complete", "incomplete"}):
             raise ArtifactReadError("result does not match the frozen manifest schema")
@@ -331,17 +362,24 @@ class ArtifactReader:
                     panel = str(incomplete.get("panel_name", ""))
                     if not complete and (task_id in heldout or "heldout" in panel.lower()):
                         continue
-                    views.append({
-                        "episode_id": directory.name,
-                        "task_id": task_id,
-                        "seed": incomplete.get("seed"),
-                        "status": "incomplete",
-                        "panel_name": incomplete.get("panel_name"),
-                        "trajectory": None,
-                        "messages": [],
-                        "tool_calls": 0,
-                        "telemetry": None,
-                    })
+                    partial_ref = incomplete.get("partial_trajectory_ref")
+                    partial = {"messages": []}
+                    if partial_ref is not None:
+                        partial = self._read_json(self._contained_path(run_path, partial_ref))
+                        if (partial.get("attempt_id") != directory.name
+                                or partial.get("task_id") != task_id
+                                or partial.get("seed") != incomplete.get("seed")
+                                or partial.get("status") != "incomplete"):
+                            raise ArtifactReadError("partial trajectory differs from its failed attempt")
+                    record = {
+                        "episode_id": directory.name, "task_id": task_id,
+                        "seed": incomplete.get("seed"), "status": "incomplete",
+                        "panel_name": panel, "generation": _generation_from_panel(panel),
+                        "trajectory_ref": partial_ref,
+                    }
+                    view = self._episode_view(run_path, record, partial, incomplete)
+                    view["failure_message"] = redact_secrets(incomplete.get("failure_message"))
+                    views.append(view)
                 continue
             record = EpisodeRecord.from_dict(self._read_json(record_path)).to_dict()
             trajectory_ref = record.get("trajectory_ref")

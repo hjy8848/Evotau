@@ -148,6 +148,16 @@ class RunManager:
         if manifest_phase != phase:
             raise RunManagerError("所选入口和配置中的 phase 不一致。")
         output_directory = self._output_path(manifest.output_path)
+        if isinstance(manifest, AlternatingManifest):
+            saved_path = output_directory / "manifest.json"
+            if saved_path.exists():
+                if output_directory.is_symlink() or saved_path.is_symlink() or not saved_path.is_file():
+                    raise RunManagerError("已有 manifest 路径不安全。")
+                try:
+                    import json
+                    manifest = manifest.bind_saved_provenance(json.loads(saved_path.read_text(encoding="utf-8")))
+                except (OSError, TypeError, ValueError) as exc:
+                    raise RunManagerError("已有 run 的执行输入与当前配置不兼容。") from exc
         role_models = tuple(sorted((str(role), str(model) if model else "未冻结")
                                    for role, model in manifest.role_models))
         preview = RunPreview(
@@ -164,7 +174,7 @@ class RunManager:
             generations=generations,
             customer_candidates=candidates,
             max_episodes=1 if isinstance(manifest, ExperimentManifest) else None,
-            max_concurrency=1,
+            max_concurrency=1 if isinstance(manifest, ExperimentManifest) else manifest.max_parallel_episodes,
             request_budget_cap=manifest.request_budget_cap,
             provider_retries=manifest.provider_retries if isinstance(manifest, ExperimentManifest) else 0,
             models=role_models,

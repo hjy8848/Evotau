@@ -1,63 +1,68 @@
 # EvoTau
 
-EvoTau is a τ-bench-based alternating self-evolution framework. An adaptive Customer searches for interaction strategies that expose weaknesses in the current Service; the Service then adapts from the resulting τ-bench trajectories. The benchmark tasks, scenarios, policy, backend, tools, native runtime, evaluator, and reviewer remain fixed.
+EvoTau studies alternating Customer challenge and Service repair on a fixed τ-bench substrate. Tasks, scenarios, policy, backend, tools, native Customer/Service runtime and evaluator stay fixed. Evolution changes external prompt strategies or Service SkillMemory; it does not update model weights.
 
 ## Research loop
 
 ```text
 (C_t, S_t)
     freeze S_t
-    run incumbent and candidate Customers on E through τ-bench
-    compare their real trajectories and native outcomes → C_(t+1)
-    freeze C_(t+1)
-    evolve a natural-language Service strategy from its trajectories
-    replay proposal on the same challenge; compare on a small native-Customer V panel
-    → S_(t+1)
+    evaluate incumbent and candidate Customers on fixed E tasks + fitness seed
+    strictly lower native E accuracy wins; ties keep the incumbent
+    freeze the selected Customer
+    propose Service repair from observed conversation/tool results + policy + native outcomes
+    strictly higher E accuracy is required
+    if V is enabled: native-Customer V accuracy must also not decrease
+    commit (C_(t+1), S_(t+1)) and checkpoint
 ```
 
-Customer is a task-grounded adaptive challenge generator. Its behavior may be cooperative-but-difficult or adversarial when the task itself creates a conflict. There is no predefined challenge taxonomy. Both Customer and Service strategies are free-form natural-language prompt overlays; no mutation operators, challenge counter, policy-rule schema, or generation-time behavioral blacklist defines the search space.
+Customer strategies are reusable natural-language interaction skills grounded in each task's original objective and facts. Service supports the original `prompt_strategy` carrier and `skill_memory_v1`. SkillMemory starts empty, permits one ADD/UPDATE/NO_OP per generation, and injects all active skills into the native Service prompt. No retrieval or selector is used.
 
-τ-bench owns the benchmark and execution semantics. EvoTau adds strategy prompting, the alternating loop, simple trajectory-based selection, split-aware loading, generation checkpoints, and endpoint comparison. Evolvers receive E task intent/scenario, visible policy where relevant, complete conversation/tool outcomes, native task result, native reviewer feedback, and prior generation feedback. They never receive reference actions, evaluation criteria, or H task content.
+Customer Evolver receives its source `user_scenario` and E trajectories. Service Evolver receives observed conversations, tool results, policy and native outcomes; it receives neither the hidden scenario nor Customer Judge free text. Neither Evolver receives reference actions, evaluator targets, or H content. Reviewer, Customer Judge and Service Judge calls are **zero** in the active alternating runtime. The native evaluator can still make LLM calls for task NL assertions.
+
+E/V use the official Retail train split; H uses test. `run_validation: false` selects E-only mechanism-smoke acceptance. `run_heldout: false` prevents H loading and endpoint evaluation. When H is enabled, an E-only fresh Customer is generated before H content is loaded. S₀ and S_T are compared under native and fresh adaptive Customers. An unchanged Service reuses identical endpoint episodes.
 
 ## Run
 
-Install the project and its τ-bench integration:
-
 ```bash
 python -m pip install -e '.[tau-bench,web]'
-```
-
-Set `TAU2_DATA_DIR` to the pinned τ-bench data directory. The checked-in config is intentionally provider-disabled:
-
-```bash
 cp configs/alternating-evolution.yaml configs/my-alternating-run.yaml
-# Edit the copy: set a unique id/output/checkpoint path, freeze role models,
-# and set real_provider_enabled: true.
+# Freeze models, args, unique id/output/checkpoint and explicitly enable the provider.
+# Set TAU2_DATA_DIR to the pinned τ-bench data directory.
 evotau-evolve --config configs/my-alternating-run.yaml
 ```
 
-The checked-in config itself is a template and the CLI refuses to run it while the provider is disabled. In the copy, freeze the five role models (`agent`, `customer`, `reviewer`, `evaluator`, `evolver`) and sampling settings, then set `real_provider_enabled: true`. `request_budget_cap: null` means no EvoTau request cap; every call is still counted. τ-bench provider retries and response caching are disabled by the adapter. The CLI does not edit a config or silently enable a provider.
+The generic template is provider-disabled; archived real configurations are independent experiment specifications. Freeze four roles: `agent`, `customer`, `evaluator`, `evolver`. `request_budget_cap: null` removes the EvoTau request cap while retaining accounting. The adapter uses no transport retries or provider response caching. Episode concurrency is bounded by `max_parallel_episodes` (1–8); turns, phases and generations remain sequential.
 
-The sample panel uses E task 73, V task 93, and held-out H task 5. E and V are loaded from τ-bench train; H is loaded only after evolution and fresh adaptive-Customer generation finish. The example runs two generations with two Customer proposals per generation. Adjust panels and generation count in a reviewed copy of the YAML.
+Runtime roles and Chat Completions Evolvers use the existing τ-bench/LiteLLM transport against the configured provider, including InferAI. An Evolver configured with `api_protocol: responses` uses the direct InferAI Responses client. Credentials are resolved separately by role/config; they are not experiment artifacts. `thinking_mode` is converted using the common runtime converter before dispatch, and configured `reasoning_effort` is preserved. Request metadata records the actual arguments; provider compliance still requires live verification.
 
-For a single native τ-bench wiring check, `evotau-phase0` performs an offline split/pin preflight and `evotau-phase0-run` runs its one explicitly configured episode. Phase 0 is only a runtime check; it is not a second evolution method.
+`evotau-phase0` validates pins/splits offline; `evotau-phase0-run` performs a configured single-episode wiring check. Phase 0 does not run evolution.
 
-## What is saved
+## Artifacts and resume
 
-Each run directory contains a frozen manifest and run context, one JSON record and native τ-bench simulation per episode, per-episode usage telemetry, a generation artifact, an atomic resume checkpoint, a fresh adaptive-Customer proposal, a final endpoint comparison, and `alternating-result.json`. The endpoint comparison crosses S₀/S_T with native τ-bench Customer and a fresh Customer generated from E-only evidence, then evaluates those conditions on H.
+A run saves its frozen manifest, selected-config fingerprint, run context, completed native simulations/records, generation stages/proposals, atomic checkpoint, API usage, and final result. Optional H evaluation saves the fresh-Customer proposal and endpoint comparisons. Evolver calls save their exact prompt/context plus parsed response or failure.
 
-An accepted Service update requires two simple observations: the proposal is judged better on the same evolved-Customer challenge, and it does not turn a previously successful case in a small native-Customer V panel into a failure. Each generation compares against its current S_t. A candidate can be rejected, unchanged, or unsuccessful; all episodes remain saved and no positive evolution is required for a completed software run.
+Episode cache identity is task + seed + Customer strategy + Service carrier. The run's manifest freezes source, models, arguments, benchmark pins and selected config. Identical conditions reuse completed scores across panels/generations and concurrent duplicates dispatch once. `episode-panel-references.json` records each panel's reference without inflating completed episode counts. Cache hits require no provider reservation. This is fixed-seed evaluation reuse, not independent resampling.
 
-## Local Console
+Resume preserves the original manifest and validates all actual execution inputs. Git commit/dirty changes from archiving results are recorded per invocation without invalidating unchanged source. Unrelated config files do not affect source identity. Changes to source, selected config, models or benchmark inputs still require a new run. In particular, scores from before the runtime thinking-parameter fix cannot be reused as corrected-condition scores.
+
+Missing or invalid native scores remain incomplete and cannot enter accuracy or selection. Failures save a partial conversation, sanitized per-call response metadata (ID, finish reason, visible/reasoning/tool counts, tokens, latency and error), and explicit failed/paused execution state. Logs exclude credentials, prompts and reasoning text; Evolver input artifacts separately contain the research context. Resume reuses successes and reruns incomplete attempts only. No fake STOP, silent skip or automatic empty-response retry is introduced.
+
+`total_wall_clock_seconds` sums recorded invocation durations; `elapsed_since_first_start_seconds` also includes time between invocations. Per-role API latency is summed request time, which can exceed wall-clock time with concurrency.
+
+## Local Console and verification
 
 ```bash
 evotau-web
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The Console previews the frozen config, launches the same CLI runner, and displays saved generations and conversation/tool traces. It does not perform evolution or recalculate τ-bench scores.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The Console reads saved Phase 0 and alternating artifacts, including schema v2 results, failed partial conversations and reused panel references. It does not recalculate scores. H artifacts remain sealed until completion.
 
-## Validation status
+```bash
+python -m pytest -q
+ruff check src tests
+```
 
-The unit tests exercise freeze order, trajectory context, selection, multi-generation continuity, prompt overlays, task-split isolation, checkpointing, endpoint comparisons, held-out sealing, and episode display. A deterministic offline smoke ran one alternating generation and 8 episodes through the installed pinned τ-bench runtime, including a real Retail tool execution and native scoring/review. It uses `max_steps: 2`; only provider HTTP completions were stubbed, so it verifies wiring rather than task completion, model capability, or positive evolution. No live-provider result is implied by that smoke.
+Tests cover selection/freeze order, information boundaries, SkillMemory, concurrency, budget reservations, resume compatibility, cache reuse, failure diagnostics and Console display. The runtime-parameter regression test intercepts actual τ `generate` → LiteLLM → OpenAI SDK HTTP serialization locally; it does not make a live request or establish provider/model capability.
 
-See [the current research and engineering note](research/Alternating_EvoTau.md) for the execution map, information boundary, what was verified, and open risks.
+See [the current method note](research/Alternating_EvoTau.md), [the historical audit](research/audits/2026-10-06-idea-implementation-audit.md), and [the audit fixes](research/audits/2026-10-06-audit-fixes.md).

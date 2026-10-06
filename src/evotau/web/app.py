@@ -305,9 +305,9 @@ def create_app(
             for key, value in supplied.items():
                 if not value:
                     continue
-                if key == "generation" and str(item.get("generation")) != value:
+                if key == "generation" and value not in {str(g) for g in item.get("generations", [item.get("generation")])}:
                     return False
-                if key == "panel" and str(item.get("panel_name") or "") != value:
+                if key == "panel" and value not in item.get("panel_names", [item.get("panel_name") or ""]):
                     return False
                 if key == "customer" and str(item.get("customer_strategy_id") or "") != value:
                     return False
@@ -320,8 +320,8 @@ def create_app(
             return True
         filtered = [item for item in episode_rows if matches(item)]
         options = {
-            "generation": sorted({str(item["generation"]) for item in episode_rows if item.get("generation") is not None}),
-            "panel": sorted({str(item["panel_name"]) for item in episode_rows if item.get("panel_name")}),
+            "generation": sorted({str(g) for item in episode_rows for g in item.get("generations", [item.get("generation")]) if g is not None}),
+            "panel": sorted({p for item in episode_rows for p in item.get("panel_names", [item.get("panel_name")]) if p}),
             "customer": sorted({str(item["customer_strategy_id"]) for item in episode_rows if item.get("customer_strategy_id")}),
             "service": sorted({str(item["service_strategy_id"]) for item in episode_rows if item.get("service_strategy_id")}),
             "task": sorted({str(item["task_id"]) for item in episode_rows if item.get("task_id")}),

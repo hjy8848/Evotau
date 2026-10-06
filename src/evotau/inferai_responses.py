@@ -55,6 +55,11 @@ def generate_text(
             model=model,
             call_name=call_name,
             dispatch=dispatch,
+            request_args={
+                "model": model, "api_base": api_base, "api_protocol": "responses",
+                "reasoning": payload["reasoning"], "timeout": _REQUEST_TIMEOUT_SECONDS,
+                "num_retries": 0,
+            },
         )
         if request_budget is not None
         else dispatch()

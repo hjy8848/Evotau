@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}EvoTau · {{ run.experiment_id }}{% endblock %}
 {% block content %}
+{% if run.execution_failure %}<div class="panel">运行已中断 · {{ run.execution_failure.stage }}<pre>{{ run.execution_failure.failure_message }}</pre></div>{% endif %}
 <section id="overview" class="page-heading">
   <div><div class="eyebrow">{{ run.phase }} · Overview</div><h1>{{ run.experiment_id }}</h1><p>本页展示交替进化的策略选择、τ-bench episode、调用记录和冻结实验设置。</p></div>
   <div class="page-actions"><span class="badge">Provider {{ 'ON' if run.real_provider_enabled else 'OFF' }}</span><span class="badge">τ-bench {{ run.upstream_commit or 'Unavailable' }}</span><a class="button button-secondary" href="/compare?run_a={{ run.run_id|urlencode }}">Compare runs</a></div>
