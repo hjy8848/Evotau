@@ -233,6 +233,8 @@ def test_accuracy_selects_hardest_customer_then_accepts_service_gain(tmp_path) -
     assert service_phase["validation_old_accuracy"] == 1.0
     assert service_phase["validation_new_accuracy"] == 1.0
     assert service_phase["accepted"] is True
+    assert service_phase["acceptance_evaluated"] is True
+    assert service_phase["acceptance_mode"] == "validation_gated"
     assert result.service.text == "S1"
     assert all("user_scenario" in row["task"] for row in customer_contexts[0]["task_interactions"])
     interaction = customer_contexts[0]["task_interactions"][0]
@@ -519,6 +521,8 @@ def test_service_e_gain_is_rejected_when_native_validation_accuracy_decreases() 
     assert phase["validation_old_accuracy"] == 1.0
     assert phase["validation_new_accuracy"] == 0.0
     assert phase["accepted"] is False
+    assert phase["acceptance_evaluated"] is True
+    assert phase["acceptance_mode"] == "validation_gated"
     assert result.service.text == "S0"
 
 
@@ -727,6 +731,8 @@ def test_evolution_fitness_seed_is_frozen_across_generations_and_not_heldout_see
     assert {call["panel_name"].split("-")[1] for call in e_calls} == {"0", "1"}
     assert {call["seed"] for call in v_calls} == {3}
     assert all(generation["evolution_fitness_seed"] == 9 for generation in result.generations)
+    assert all(generation["validation_seed"] == 3 for generation in result.generations)
+    assert all("seed" not in generation for generation in result.generations)
 
     heldout = run_final_endpoint_evaluation(
         heldout_tasks={"h": tasks["h"]},

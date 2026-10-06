@@ -299,7 +299,6 @@ def run_alternating_evolution(
         generation_started = perf_counter()
         customer_phase_started = generation_started
         validation_elapsed = 0.0
-        generation_seed = seed + generation
         evolution_seed = fitness_seed
         telemetry_before = job_telemetry.snapshot()
         customer_before = customer
@@ -570,6 +569,9 @@ def run_alternating_evolution(
             service_candidate_episodes=[_episode_ref(item) for item in proposed_runs],
         )
 
+        acceptance_mode = (
+            "validation_gated" if run_validation else "e_only_mechanism_smoke"
+        )
         if proposed_service.text == service_before.text:
             service_reason = "The Service strategy did not change."
         elif improved_on_e and run_validation:
@@ -598,13 +600,13 @@ def run_alternating_evolution(
             else:
                 service_reason = "Rejected: native V accuracy decreased."
         elif improved_on_e:
+            service = proposed_service
+            accepted = True
             service_reason = (
-                "Not accepted: V validation is disabled for this mechanism smoke; "
-                "the proposed strategy remains diagnostic."
+                "Accepted for mechanism smoke based on strict E-only accuracy improvement; "
+                "native V validation was intentionally disabled."
             )
-        acceptance_evaluated = not (
-            proposed_service.text != service_before.text and improved_on_e and not run_validation
-        )
+        acceptance_evaluated = True
         record_stage(
             "validation_complete", validation_evaluated=validation_old_accuracy is not None,
             validation_skipped=not run_validation,
@@ -646,6 +648,7 @@ def run_alternating_evolution(
             "proposed_accuracy": proposed_accuracy,
             "improved_on_E": improved_on_e,
             "accepted": accepted,
+            "acceptance_mode": acceptance_mode,
             "acceptance_evaluated": acceptance_evaluated,
             "validation_old_accuracy": validation_old_accuracy,
             "validation_new_accuracy": validation_new_accuracy,
@@ -664,7 +667,6 @@ def run_alternating_evolution(
         generation_doc = {
             "schema_version": 2,
             "generation": generation,
-            "seed": generation_seed,
             "evolution_fitness_seed": fitness_seed,
             "validation_seed": seed if run_validation else None,
             "customer_before": _strategy_document("customer", customer_before),
