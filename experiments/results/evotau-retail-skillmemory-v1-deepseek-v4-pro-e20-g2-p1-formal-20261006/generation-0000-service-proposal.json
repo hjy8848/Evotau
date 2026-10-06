@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "manifest_sha256": "d44ece1d268afc42cbc04169a3fb321e01bf5a9a07eaaa8e06177cea70670995",
+  "generation": 0,
+  "stage": "service_proposal_ready",
+  "carrier": "skill_memory_v1",
+  "frozen_customer": {
+    "role": "customer",
+    "strategy_id": "4f0efed3a149e457",
+    "strategy": "In a single opening message, request a large multi-part account cleanup: cancel every order that is still cancellable, return several delivered items while explicitly keeping one favored item untouched, and add a conditional instruction to exchange that favored item only if a cheaper replacement with the same key attributes exists. Withhold your decision on the conditional exchange until the agent enumerates the available options, and do not ask for the final aggregate amount (e.g., total refund) until every action has been executed. Keep replies terse so the agent must plan, confirm, and carry out the whole workflow without relying on you to volunteer additional details."
+  },
+  "frozen_service": {
+    "role": "service",
+    "carrier": "skill_memory_v1",
+    "strategy_id": "0b51396195500388",
+    "strategy": {
+      "skills": []
+    },
+    "skill_count": 0,
+    "rendered_skill_chars": 0,
+    "rendered_skill_tokens": null
+  },
+  "evolver_input_sha256": "409c2eb4d1faaf317046c77dea4a0a308b72eb7db132d55039847e2abf5d6438",
+  "input_service_memory": {
+    "skills": []
+  },
+  "input_service_memory_id": "0b51396195500388",
+  "analysis": "The empty skill memory provides no coverage for the recurring multi-part account cleanup pattern. Two independent failed episodes (tasks 93 and 98) hit the exact same backend error: the agent processed item returns on a delivered order (order status became 'return requested') and then attempted to exchange a separate kept item from the same order, receiving \"Error: Non-delivered order cannot be exchanged\". This is a deterministic procedural failure, not stochastic: the exchange tool requires the order to still be in 'delivered' status, and any return changes the order status. The evidence also shows a repeated conditional-exchange pattern where the customer withholds the exchange decision until the agent enumerates available options; in both failed episodes the agent finalized returns before eliciting/enacting the exchange. A small, reusable skill is warranted to sequence delivered-order actions correctly and defer status-changing actions until exchange decisions are complete.",
+  "mutation": {
+    "analysis": "The empty skill memory provides no coverage for the recurring multi-part account cleanup pattern. Two independent failed episodes (tasks 93 and 98) hit the exact same backend error: the agent processed item returns on a delivered order (order status became 'return requested') and then attempted to exchange a separate kept item from the same order, receiving \"Error: Non-delivered order cannot be exchanged\". This is a deterministic procedural failure, not stochastic: the exchange tool requires the order to still be in 'delivered' status, and any return changes the order status. The evidence also shows a repeated conditional-exchange pattern where the customer withholds the exchange decision until the agent enumerates available options; in both failed episodes the agent finalized returns before eliciting/enacting the exchange. A small, reusable skill is warranted to sequence delivered-order actions correctly and defer status-changing actions until exchange decisions are complete.",
+    "operation": "add",
+    "target_skill_id": null,
+    "skill": {
+      "trigger": "When a customer requests multiple order actions in one conversation, especially involving a delivered order where some items are to be returned while another item is kept and may be exchanged (often conditionally, e.g., 'only if a cheaper replacement with the same key features exists — I will decide once you list the options').",
+      "guidance": "Before making any tool call, build a complete per-order plan covering which items will be returned, exchanged, kept, or cancelled, and obtain explicit confirmation on the full plan. Exchange tools only work while an order's status is still 'delivered': processing a return for any item in an order immediately changes that order's status (e.g., to 'return requested'), after which the backend rejects exchanges for the remaining items. Therefore, if a delivered order has both items to exchange and items to return, resolve the exchange before processing any return on that order. If the customer is deciding conditionally, enumerate the matching available variants of the same product (variants that match the requested key attributes, and only the cheaper ones when a cheaper option was the stated condition) BEFORE processing any returns on that order, then let the customer decide and only then proceed. Execute all exchange items of an order in a single exchange call, since the exchange tool can be called only once per order. Do not partially return items from an order whose remaining items still require an exchange decision."
+    }
+  },
+  "proposed_service_memory": {
+    "skills": [
+      {
+        "skill_id": "skill-0001",
+        "trigger": "When a customer requests multiple order actions in one conversation, especially involving a delivered order where some items are to be returned while another item is kept and may be exchanged (often conditionally, e.g., 'only if a cheaper replacement with the same key features exists — I will decide once you list the options').",
+        "guidance": "Before making any tool call, build a complete per-order plan covering which items will be returned, exchanged, kept, or cancelled, and obtain explicit confirmation on the full plan. Exchange tools only work while an order's status is still 'delivered': processing a return for any item in an order immediately changes that order's status (e.g., to 'return requested'), after which the backend rejects exchanges for the remaining items. Therefore, if a delivered order has both items to exchange and items to return, resolve the exchange before processing any return on that order. If the customer is deciding conditionally, enumerate the matching available variants of the same product (variants that match the requested key attributes, and only the cheaper ones when a cheaper option was the stated condition) BEFORE processing any returns on that order, then let the customer decide and only then proceed. Execute all exchange items of an order in a single exchange call, since the exchange tool can be called only once per order. Do not partially return items from an order whose remaining items still require an exchange decision."
+      }
+    ]
+  },
+  "strategy_id": "28940cc308f6a614",
+  "evolver_model": "openai/deepseek-v4-pro",
+  "reasoning_effort": "high",
+  "provider": "InferAI",
+  "source_task_ids": [
+    "66",
+    "92",
+    "29",
+    "67",
+    "106",
+    "22",
+    "69",
+    "98",
+    "93",
+    "88",
+    "4",
+    "21",
+    "8",
+    "54",
+    "107",
+    "48",
+    "52",
+    "80",
+    "35",
+    "16"
+  ],
+  "latency_seconds": 70.725154,
+  "provider_usage": {
+    "calls": 1,
+    "successes": 1,
+    "failures": 0,
+    "prompt_tokens": 136752,
+    "completion_tokens": 5271,
+    "usage_responses": 1,
+    "usage_unavailable": 0,
+    "total_elapsed_seconds": 70.707152,
+    "average_elapsed_seconds": 70.707152
+  },
+  "provider_budget_delta": {
+    "cap": null,
+    "attempts": 1,
+    "successes": 1,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 136752,
+    "completion_tokens": 5271,
+    "usage_responses": 1,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 0,
+        "successes": 0,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "usage_responses": 0,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      },
+      {
+        "model_id": "openai/deepseek-v4-pro",
+        "attempts": 1,
+        "successes": 1,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 136752,
+        "completion_tokens": 5271,
+        "usage_responses": 1,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      }
+    ]
+  }
+}
