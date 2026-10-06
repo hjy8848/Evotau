@@ -11,6 +11,7 @@ from evotau.alternating import run_alternating_evolution
 from evotau.alternating_manifest import AlternatingManifest
 from evotau.records import EpisodeRecord, EpisodeStatus
 from evotau.strategies import PromptStrategy
+from evotau.tau_provenance import role_model_args_for_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,6 +39,34 @@ def test_mechanism_smoke_config_freezes_seed_and_enables_eight_workers() -> None
     config["experiment"]["max_parallel_episodes"] = 9
     with pytest.raises(ValueError, match="from 1 to 8"):
         AlternatingManifest.from_mapping(config)
+
+
+def test_gpt_evolver_reasoning_effort_is_validated_and_forwarded_without_changing_roles() -> None:
+    config = _config("alternating-mechanism-smoke-gpt61sol-e20-c1.yaml")
+    manifest = AlternatingManifest.from_mapping(config)
+    runtime_args = role_model_args_for_runtime(manifest.role_model_args)
+
+    assert runtime_args["evolver"] == {
+        "api_base": "https://inferaiapi.com/v1",
+        "reasoning_effort": "high",
+    }
+    assert "temperature" not in runtime_args["evolver"]
+    expected_deepseek_args = {
+        "temperature": 0.0,
+        "api_base": "https://inferaiapi.com/v1",
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+    assert runtime_args["agent"] == expected_deepseek_args
+    assert runtime_args["customer"] == expected_deepseek_args
+    assert runtime_args["evaluator"] == expected_deepseek_args
+
+    for invalid in ("none", "ultra", "", 1, None):
+        invalid_config = _config("alternating-mechanism-smoke-gpt61sol-e20-c1.yaml")
+        invalid_config["experiment"]["model_args"]["evolver"] = {
+            "reasoning_effort": invalid,
+        }
+        with pytest.raises(ValueError, match="reasoning_effort"):
+            AlternatingManifest.from_mapping(invalid_config)
 
 
 def test_mechanism_smoke_accepts_strict_service_e_improvement_without_v() -> None:

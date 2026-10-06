@@ -19,7 +19,7 @@ ROLE_NAMES = ("agent", "customer", "reviewer", "evaluator")
 EVOLUTION_ROLE_NAMES = ("agent", "customer", "evaluator", "evolver")
 MODEL_ARGUMENT_NAMES = frozenset({
     "temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty",
-    "api_base", "thinking_mode",
+    "api_base", "thinking_mode", "reasoning_effort",
 })
 DEFAULT_ROLE_MODEL_ARGS = {
     role: {"temperature": 0.0} for role in (*ROLE_NAMES, "evolver")
@@ -170,6 +170,15 @@ def freeze_role_model_args(
                 if not isinstance(value, str) or value not in {"disabled", "enabled"}:
                     raise ValueError(
                         f"model_args.{role}.thinking_mode must be 'disabled' or 'enabled'"
+                    )
+                normalized.append((name, value))
+                continue
+            if name == "reasoning_effort":
+                allowed_efforts = {"low", "medium", "high", "xhigh", "max"}
+                if not isinstance(value, str) or value not in allowed_efforts:
+                    raise ValueError(
+                        f"model_args.{role}.reasoning_effort must be one of "
+                        f"{sorted(allowed_efforts)}"
                     )
                 normalized.append((name, value))
                 continue
