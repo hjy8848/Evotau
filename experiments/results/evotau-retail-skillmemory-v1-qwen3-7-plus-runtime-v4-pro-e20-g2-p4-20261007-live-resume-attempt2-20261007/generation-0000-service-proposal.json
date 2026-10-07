@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "manifest_sha256": "8e3eac95360dd5582c74504c9c10057bb3f858114c9c38bcb5103952ecab5e10",
+  "generation": 0,
+  "stage": "service_proposal_ready",
+  "carrier": "skill_memory_v1",
+  "frozen_customer": {
+    "role": "customer",
+    "strategy_id": "9ebaf94d06247fd0",
+    "strategy": "Present a request that chains dependent alternatives (first try a modification of an item; if that is not possible, return it instead; if that is not possible, cancel the whole order), explicitly saying you do not remember the order/item identifiers and asking the agent to locate them. When the agent proposes details and asks for confirmation of an irreversible action, add further items or sub-requests to the scope at the last moment, and whenever the agent rejects or limits an option, ask for the concrete policy or backend reason behind it. At the end, demand an exact combined total of money refunded or owed, and resist being transferred to a human agent, insisting the request can be handled."
+  },
+  "frozen_service": {
+    "role": "service",
+    "carrier": "skill_memory_v1",
+    "strategy_id": "0b51396195500388",
+    "strategy": {
+      "skills": []
+    },
+    "skill_count": 0,
+    "rendered_skill_chars": 0,
+    "rendered_skill_tokens": null
+  },
+  "evolver_input_sha256": "da4b304ccf961f7d6b2c3b34f989f022c39ecf2168e8b7d93213bd44fb9c63df",
+  "input_service_memory": {
+    "skills": []
+  },
+  "input_service_memory_id": "0b51396195500388",
+  "analysis": "Skill memory is empty (generation 0). Across 20 native trajectories the agent already locates users by name+zip when email is unknown, matches referenced items by reading all order details, applies status-based eligibility (pending cancel/modify vs delivered return/exchange), and computes exact totals with the calculate tool. The failures are not random: 5 finished with reward 0, mostly via max_steps, and they share one recurring dysfunction — the customer's strategy of chaining alternatives and asking repeated policy/hypothetical/fee questions before finalizing causes the agent to re-confirm the same plan many times, enumerate options over and over, and often execute the once-per-order tool call only at the very last step with no turn left to deliver the closing confirmation (tasks 8, 67, 106, 80; task 22 also expired in Q&A). A second, smaller evidence point is a real tool error when an exchange grouped items that actually lived in two different orders (task 107), which the agent fixed by splitting per-order calls. This supports one reusable procedural repair: drive order-action requests to completion — verify item-to-order membership, confirm once with exact amounts, execute promptly per order, and answer hypothetical policy questions concisely without re-opening the full plan. This is a capability gap (no skill exists) and the guidance stays subordinate to the stated policy (explicit confirmation, once-per-order modify/exchange, status checks).",
+  "mutation": {
+    "analysis": "Skill memory is empty (generation 0). Across 20 native trajectories the agent already locates users by name+zip when email is unknown, matches referenced items by reading all order details, applies status-based eligibility (pending cancel/modify vs delivered return/exchange), and computes exact totals with the calculate tool. The failures are not random: 5 finished with reward 0, mostly via max_steps, and they share one recurring dysfunction — the customer's strategy of chaining alternatives and asking repeated policy/hypothetical/fee questions before finalizing causes the agent to re-confirm the same plan many times, enumerate options over and over, and often execute the once-per-order tool call only at the very last step with no turn left to deliver the closing confirmation (tasks 8, 67, 106, 80; task 22 also expired in Q&A). A second, smaller evidence point is a real tool error when an exchange grouped items that actually lived in two different orders (task 107), which the agent fixed by splitting per-order calls. This supports one reusable procedural repair: drive order-action requests to completion — verify item-to-order membership, confirm once with exact amounts, execute promptly per order, and answer hypothetical policy questions concisely without re-opening the full plan. This is a capability gap (no skill exists) and the guidance stays subordinate to the stated policy (explicit confirmation, once-per-order modify/exchange, status checks).",
+    "operation": "add",
+    "target_skill_id": null,
+    "skill": {
+      "trigger": "A user requests an order action (cancel a pending order; modify pending order items/address/payment; return or exchange delivered items) — often without providing order numbers or email identifiers — and the conversation involves extended back-and-forth: the user asks for policy/backend reasons, alternatives, fees, exact totals, or post-action consequences, and/or adds items at the last moment before finalizing.",
+      "guidance": "Locate the authenticated user’s orders by retrieving details for all of their orders and match the referenced items by product/attributes before choosing a tool. Verify order status first (pending = cancel/modify; delivered = return/exchange) and ensure all items to be changed for a single order are collected into one list before the once-per-order modify/exchange call; if the referenced items are in different orders, prepare a separate call per order. Present the concrete plan once, including per-item changes and exact net amounts (sum amounts with the calculate tool), and ask for one explicit confirmation. When the user asks 'why' or policy questions, answer them briefly by citing the applicable policy/backend constraint, then return to the single pending confirmation instead of re-listing all options or re-asking the same confirmation. If the user adds items or changes scope after the plan was agreed, fold the additions into the pending single per-order call rather than starting over, and re-confirm only the changed scope. On an explicit 'yes', execute the confirmed tool call(s) promptly — one call at a time per order — and then immediately send the closing summary (new status, exact amounts, refund method/timing, and that instructions will be emailed) without seeking further confirmation."
+    }
+  },
+  "proposed_service_memory": {
+    "skills": [
+      {
+        "skill_id": "skill-0001",
+        "trigger": "A user requests an order action (cancel a pending order; modify pending order items/address/payment; return or exchange delivered items) — often without providing order numbers or email identifiers — and the conversation involves extended back-and-forth: the user asks for policy/backend reasons, alternatives, fees, exact totals, or post-action consequences, and/or adds items at the last moment before finalizing.",
+        "guidance": "Locate the authenticated user’s orders by retrieving details for all of their orders and match the referenced items by product/attributes before choosing a tool. Verify order status first (pending = cancel/modify; delivered = return/exchange) and ensure all items to be changed for a single order are collected into one list before the once-per-order modify/exchange call; if the referenced items are in different orders, prepare a separate call per order. Present the concrete plan once, including per-item changes and exact net amounts (sum amounts with the calculate tool), and ask for one explicit confirmation. When the user asks 'why' or policy questions, answer them briefly by citing the applicable policy/backend constraint, then return to the single pending confirmation instead of re-listing all options or re-asking the same confirmation. If the user adds items or changes scope after the plan was agreed, fold the additions into the pending single per-order call rather than starting over, and re-confirm only the changed scope. On an explicit 'yes', execute the confirmed tool call(s) promptly — one call at a time per order — and then immediately send the closing summary (new status, exact amounts, refund method/timing, and that instructions will be emailed) without seeking further confirmation."
+      }
+    ]
+  },
+  "strategy_id": "41868f8897b67505",
+  "evolver_model": "openai/deepseek-v4-pro",
+  "reasoning_effort": "high",
+  "provider": "InferAI",
+  "source_task_ids": [
+    "66",
+    "92",
+    "29",
+    "67",
+    "106",
+    "22",
+    "69",
+    "98",
+    "93",
+    "88",
+    "4",
+    "21",
+    "8",
+    "54",
+    "107",
+    "48",
+    "52",
+    "80",
+    "35",
+    "16"
+  ],
+  "latency_seconds": 81.474946,
+  "provider_usage": {
+    "calls": 1,
+    "successes": 1,
+    "failures": 0,
+    "prompt_tokens": 154832,
+    "completion_tokens": 7085,
+    "usage_responses": 1,
+    "usage_unavailable": 0,
+    "total_elapsed_seconds": 81.457143,
+    "average_elapsed_seconds": 81.457143
+  },
+  "provider_budget_delta": {
+    "cap": null,
+    "attempts": 1,
+    "successes": 1,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 154832,
+    "completion_tokens": 7085,
+    "usage_responses": 1,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-pro",
+        "attempts": 1,
+        "successes": 1,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 154832,
+        "completion_tokens": 7085,
+        "usage_responses": 1,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      },
+      {
+        "model_id": "openai/qwen3.7-plus",
+        "attempts": 0,
+        "successes": 0,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "usage_responses": 0,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      }
+    ]
+  }
+}

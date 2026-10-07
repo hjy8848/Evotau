@@ -1,0 +1,157 @@
+{
+  "attempt_id": "e32a68af6fc4458ab60f8ca945482870",
+  "task_id": "106",
+  "seed": 1,
+  "episode_key": {
+    "task_id": "106",
+    "seed": 1,
+    "customer_strategy_id": "63be7e41e020bc00",
+    "service_strategy_id": "0b51396195500388"
+  },
+  "episode_key_sha256": "71e004150c4ed750078c0a338d3d1c5a1060cc3f2a8c9dfaa4094c321f1305af",
+  "panel_name": "generation-0-customer-incumbent",
+  "failure_type": "RateLimitError",
+  "failure_message": "litellm.RateLimitError: RateLimitError: OpenAIException - group requests-per-minute limit exceeded",
+  "failure_repr": "litellm.RateLimitError: RateLimitError: OpenAIException - group requests-per-minute limit exceeded",
+  "cause_type": "OpenAIError",
+  "cause_message": "Error code: 429 - {'error': {'message': 'group requests-per-minute limit exceeded', 'type': 'rate_limit_exceeded'}}",
+  "exception_chain": [
+    {
+      "type": "RateLimitError",
+      "message": "litellm.RateLimitError: RateLimitError: OpenAIException - group requests-per-minute limit exceeded",
+      "repr": "litellm.RateLimitError: RateLimitError: OpenAIException - group requests-per-minute limit exceeded"
+    },
+    {
+      "type": "OpenAIError",
+      "message": "Error code: 429 - {'error': {'message': 'group requests-per-minute limit exceeded', 'type': 'rate_limit_exceeded'}}",
+      "repr": "OpenAIError(\"Error code: 429 - {'error': {'message': 'group requests-per-minute limit exceeded', 'type': 'rate_limit_exceeded'}}\")"
+    },
+    {
+      "type": "RateLimitError",
+      "message": "Error code: 429 - {'error': {'message': 'group requests-per-minute limit exceeded', 'type': 'rate_limit_exceeded'}}",
+      "repr": "RateLimitError(\"Error code: 429 - {'error': {'message': 'group requests-per-minute limit exceeded', 'type': 'rate_limit_exceeded'}}\")"
+    },
+    {
+      "type": "HTTPStatusError",
+      "message": "Client error '429 Too Many Requests' for url 'https://inferaiapi.com/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429",
+      "repr": "HTTPStatusError(\"Client error '429 Too Many Requests' for url 'https://inferaiapi.com/v1/chat/completions'\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429\")"
+    }
+  ],
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 851, in completion\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 779, in completion\n    ) = self.make_sync_openai_chat_completion_request(\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/logging_utils.py\", line 344, in sync_wrapper\n    result = func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 502, in make_sync_openai_chat_completion_request\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 477, in make_sync_openai_chat_completion_request\n    raw_response = openai_client.chat.completions.with_raw_response.create(\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_legacy_response.py\", line 369, in wrapped\n    return cast(LegacyAPIResponse[R], func(*args, **kwargs))\n                                      ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_utils/_utils.py\", line 298, in wrapper\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/resources/chat/completions/completions.py\", line 1318, in create\n    return self._post(\n           ^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_base_client.py\", line 1440, in post\n    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_base_client.py\", line 1213, in request\n    raise self._make_status_error_from_response(err.response) from None\nopenai.RateLimitError: Error code: 429 - {'error': {'message': 'group requests-per-minute limit exceeded', 'type': 'rate_limit_exceeded'}}\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 2698, in completion\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 2670, in completion\n    response = openai_chat_completions.completion(\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 862, in completion\n    raise OpenAIError(\nlitellm.llms.openai.common_utils.OpenAIError: Error code: 429 - {'error': {'message': 'group requests-per-minute limit exceeded', 'type': 'rate_limit_exceeded'}}\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/tau_episode_runner.py\", line 341, in _run_episode\n    simulation = run_with_budget(\n                 ^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/tau_adapter.py\", line 281, in run_with_budget\n    result = run_simulation(orchestrator, evaluation_type=EvaluationType.ALL)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/runner/simulation.py\", line 59, in run_simulation\n    simulation = orchestrator.run()\n                 ^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/orchestrator/orchestrator.py\", line 280, in run\n    self.step()\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/observability.py\", line 74, in step\n    return original()\n           ^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/orchestrator/orchestrator.py\", line 837, in step\n    user_msg, self.user_state = self.user.generate_next_message(\n                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/user/user_simulator.py\", line 201, in generate_next_message\n    user_message = self._generate_next_message(message, state)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/user/user_simulator.py\", line 235, in _generate_next_message\n    assistant_message = generate(\n                        ^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/budget.py\", line 873, in guarded_generate\n    return original_generate(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/utils/llm_utils.py\", line 418, in generate\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/utils/llm_utils.py\", line 409, in generate\n    response = completion(\n               ^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/budget.py\", line 826, in guarded_completion\n    result = original_completion(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/utils.py\", line 1775, in wrapper\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/utils.py\", line 1596, in wrapper\n    result = original_function(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 4411, in completion\n    raise exception_type(\n          ^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py\", line 2456, in exception_type\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py\", line 392, in exception_type\n    raise RateLimitError(\nlitellm.exceptions.RateLimitError: litellm.RateLimitError: RateLimitError: OpenAIException - group requests-per-minute limit exceeded\n",
+  "traceback_truncated": false,
+  "native_simulation_saved": false,
+  "partial_trajectory_ref": "episodes/e32a68af6fc4458ab60f8ca945482870/partial-simulation.json",
+  "partial_trajectory_error": null,
+  "provider_calls_ref": "episodes/e32a68af6fc4458ab60f8ca945482870/provider-calls.jsonl",
+  "communication_protocol_observation": null,
+  "rendered_prompt_sha256": {
+    "agent": "4cf6e44236a35dda69511c196e882c7465b547e942bd9d26984ab6eb4d28ef83",
+    "service_native_system_prompt": "4cf6e44236a35dda69511c196e882c7465b547e942bd9d26984ab6eb4d28ef83",
+    "service_overlay": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "service_skill_count": 0,
+    "service_skill_rendered_chars": 0,
+    "service_skill_rendered_tokens": null,
+    "customer": "ff3ec22f812e200b29e0847b125bb5fe8e0edc6de1716e92b40e1efd1b6aecee",
+    "customer_native_system_prompt": "ff3ec22f812e200b29e0847b125bb5fe8e0edc6de1716e92b40e1efd1b6aecee",
+    "customer_scenario_source": "bf824710d7258d35eb1d4a4e045462409446eed468b994bd96a4ab0d6ab0c8b6",
+    "customer_scenario_runtime": "bf824710d7258d35eb1d4a4e045462409446eed468b994bd96a4ab0d6ab0c8b6"
+  },
+  "budget_before": {
+    "cap": null,
+    "attempts": 32,
+    "successes": 31,
+    "failures": 1,
+    "denied": 0,
+    "prompt_tokens": 104260,
+    "completion_tokens": 2075,
+    "usage_responses": 31,
+    "usage_unavailable": 1,
+    "cache_hits": 0,
+    "in_flight": 3,
+    "reserved": 1,
+    "model_usage": [
+      {
+        "model_id": "openai/qwen3.7-plus",
+        "attempts": 32,
+        "successes": 31,
+        "failures": 1,
+        "denied": 0,
+        "prompt_tokens": 104260,
+        "completion_tokens": 2075,
+        "usage_responses": 31,
+        "usage_unavailable": 1,
+        "cache_hits": 0,
+        "in_flight": 3
+      }
+    ]
+  },
+  "budget_after": {
+    "cap": null,
+    "attempts": 33,
+    "successes": 31,
+    "failures": 2,
+    "denied": 0,
+    "prompt_tokens": 104260,
+    "completion_tokens": 2075,
+    "usage_responses": 31,
+    "usage_unavailable": 2,
+    "cache_hits": 0,
+    "in_flight": 3,
+    "reserved": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/qwen3.7-plus",
+        "attempts": 33,
+        "successes": 31,
+        "failures": 2,
+        "denied": 0,
+        "prompt_tokens": 104260,
+        "completion_tokens": 2075,
+        "usage_responses": 31,
+        "usage_unavailable": 2,
+        "cache_hits": 0,
+        "in_flight": 3
+      }
+    ]
+  },
+  "budget_delta": {
+    "attempts": 1,
+    "successes": 0,
+    "failures": 1,
+    "denied": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "usage_responses": 0,
+    "usage_unavailable": 1,
+    "cache_hits": 0
+  },
+  "episode_budget_delta": {
+    "cap": null,
+    "attempts": 1,
+    "successes": 0,
+    "failures": 1,
+    "denied": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "usage_responses": 0,
+    "usage_unavailable": 1,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/qwen3.7-plus",
+        "attempts": 1,
+        "successes": 0,
+        "failures": 1,
+        "denied": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "usage_responses": 0,
+        "usage_unavailable": 1,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  }
+}

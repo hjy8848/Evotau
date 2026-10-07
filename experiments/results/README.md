@@ -21,3 +21,5 @@ One subdirectory per analyzed run. Each run folder keeps its frozen configuratio
 [evotau-retail-skillmemory-v1-deepseek-v4-pro-e20-g2-p1-resume-20261007-live-resume-attempt3-20261007](evotau-retail-skillmemory-v1-deepseek-v4-pro-e20-g2-p1-resume-20261007-live-resume-attempt3-20261007/README.md): authorized live resume, terminal failed, 1/2 generations.
 
 [evotau-retail-skillmemory-v1-qwen3-7-plus-runtime-v4-pro-e20-g2-p4-20261007-live-resume-attempt1-20261007](evotau-retail-skillmemory-v1-qwen3-7-plus-runtime-v4-pro-e20-g2-p4-20261007-live-resume-attempt1-20261007/README.md): authorized live resume, terminal failed, 0/2 generations.
+
+[evotau-retail-skillmemory-v1-qwen3-7-plus-runtime-v4-pro-e20-g2-p4-20261007-live-resume-attempt2-20261007](evotau-retail-skillmemory-v1-qwen3-7-plus-runtime-v4-pro-e20-g2-p4-20261007-live-resume-attempt2-20261007/README.md): authorized live resume, terminal failed, 1/2 generations.
