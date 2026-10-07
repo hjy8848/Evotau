@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "manifest_sha256": "65d29a484954d2436b9f79a6dbacbd8206b3b201c8c9cd0fb4ecc69f7a016440",
+  "generation": 1,
+  "stage": "service_proposal_ready",
+  "carrier": "skill_memory_v1",
+  "frozen_customer": {
+    "role": "customer",
+    "strategy_id": "9ebaf94d06247fd0",
+    "strategy": "Present a request that chains dependent alternatives (first try a modification of an item; if that is not possible, return it instead; if that is not possible, cancel the whole order), explicitly saying you do not remember the order/item identifiers and asking the agent to locate them. When the agent proposes details and asks for confirmation of an irreversible action, add further items or sub-requests to the scope at the last moment, and whenever the agent rejects or limits an option, ask for the concrete policy or backend reason behind it. At the end, demand an exact combined total of money refunded or owed, and resist being transferred to a human agent, insisting the request can be handled."
+  },
+  "frozen_service": {
+    "role": "service",
+    "carrier": "skill_memory_v1",
+    "strategy_id": "0b51396195500388",
+    "strategy": {
+      "skills": []
+    },
+    "skill_count": 0,
+    "rendered_skill_chars": 0,
+    "rendered_skill_tokens": null
+  },
+  "evolver_input_sha256": "22714991c2d956d7526be75038c07aca5678f470b05a2ca5e13c0cb395e94066",
+  "input_service_memory": {
+    "skills": []
+  },
+  "input_service_memory_id": "0b51396195500388",
+  "analysis": "The evidence shows the agent has no learned skills and generally resolves item-level requests correctly (auth by name+zip, same-product-only swaps, status checks, refund timing, confirmation before state changes). Successes dominate, but there is one cluster of failures: tasks 67, 106, and 80 all hit max_steps while handling multi-item modification/exchange requests in which the customer added more items or asked about extra items at the last moment before the single-use tool call. In task 67 the pending-order item modification was never executed because the agent kept discussing additional items; in task 106 an exchange was executed but the conversation ended without a final response/summary; in task 80 the exchange was executed but the user kept asking about bundling further items and the session ended after the tool result. There is also one instructive near-failure (task 107) where the agent tried to exchange two items under one order ID, got a backend error, and recovered only after realizing the items belonged to two different orders and reissuing per-order calls. The reusable gap is procedural: when customers ask to change, exchange, or return multiple items (or add items after details are proposed), the agent must consolidate the full scope per order before calling the single-use tool, confirm whether all requested items will be included, and must not promise or combine items across different orders in one call. Each one-shot order action (modify, exchange, return) must reference only that order's items and be given its own tool call, and once executed the agent should close out with a confirmation so the interaction completes. The policy already states items must be collected before the tool call and tools are once-per-order, so the skill should operationalize that behavior rather than restate the policy. This is a single capability gap, and no existing skill covers it, so ADD is appropriate. Guidance is kept generic and does not encode any task-specific identifiers.",
+  "mutation": {
+    "analysis": "The evidence shows the agent has no learned skills and generally resolves item-level requests correctly (auth by name+zip, same-product-only swaps, status checks, refund timing, confirmation before state changes). Successes dominate, but there is one cluster of failures: tasks 67, 106, and 80 all hit max_steps while handling multi-item modification/exchange requests in which the customer added more items or asked about extra items at the last moment before the single-use tool call. In task 67 the pending-order item modification was never executed because the agent kept discussing additional items; in task 106 an exchange was executed but the conversation ended without a final response/summary; in task 80 the exchange was executed but the user kept asking about bundling further items and the session ended after the tool result. There is also one instructive near-failure (task 107) where the agent tried to exchange two items under one order ID, got a backend error, and recovered only after realizing the items belonged to two different orders and reissuing per-order calls. The reusable gap is procedural: when customers ask to change, exchange, or return multiple items (or add items after details are proposed), the agent must consolidate the full scope per order before calling the single-use tool, confirm whether all requested items will be included, and must not promise or combine items across different orders in one call. Each one-shot order action (modify, exchange, return) must reference only that order's items and be given its own tool call, and once executed the agent should close out with a confirmation so the interaction completes. The policy already states items must be collected before the tool call and tools are once-per-order, so the skill should operationalize that behavior rather than restate the policy. This is a single capability gap, and no existing skill covers it, so ADD is appropriate. Guidance is kept generic and does not encode any task-specific identifiers.",
+    "operation": "add",
+    "target_skill_id": null,
+    "skill": {
+      "trigger": "When a user requests modifying, exchanging, returning, or cancelling items/orders, especially when they cannot recall order/item IDs, describe multiple items, or add further items to the scope after details have been proposed, and before any single-use state-changing tool call (modify_pending_order_items, exchange_delivered_order_items, return_delivered_order_items, cancel_pending_order) is made.",
+      "guidance": "First, collect the complete scope before calling a one-time tool: parse the user's request for every item involved, look through the user's orders to locate each item, and identify which order each item actually belongs to. When the user adds items or says they may have more items to change, explicitly ask for all items they want included before acting, and clearly state the final consolidated list per order. Do not assume two mentioned items are in the same order; verify each item against order details, and never combine items from different orders into a single modify/exchange/return call. Make one separate tool call per order, then confirm the outcome to the user so the conversation reaches closure. If the user asks whether further actions are possible after a one-shot action, state that the action can only be performed once per order and that the order becomes locked (modified/exchange/return requested), so all desired items must be included now. If the user asks about alternatives (return vs cancel vs modify), answer by checking the order status (pending for cancel/modify, delivered for return/exchange) before deciding, and keep the discussion efficient to avoid the session ending before the request is completed."
+    }
+  },
+  "proposed_service_memory": {
+    "skills": [
+      {
+        "skill_id": "skill-0002",
+        "trigger": "When a user requests modifying, exchanging, returning, or cancelling items/orders, especially when they cannot recall order/item IDs, describe multiple items, or add further items to the scope after details have been proposed, and before any single-use state-changing tool call (modify_pending_order_items, exchange_delivered_order_items, return_delivered_order_items, cancel_pending_order) is made.",
+        "guidance": "First, collect the complete scope before calling a one-time tool: parse the user's request for every item involved, look through the user's orders to locate each item, and identify which order each item actually belongs to. When the user adds items or says they may have more items to change, explicitly ask for all items they want included before acting, and clearly state the final consolidated list per order. Do not assume two mentioned items are in the same order; verify each item against order details, and never combine items from different orders into a single modify/exchange/return call. Make one separate tool call per order, then confirm the outcome to the user so the conversation reaches closure. If the user asks whether further actions are possible after a one-shot action, state that the action can only be performed once per order and that the order becomes locked (modified/exchange/return requested), so all desired items must be included now. If the user asks about alternatives (return vs cancel vs modify), answer by checking the order status (pending for cancel/modify, delivered for return/exchange) before deciding, and keep the discussion efficient to avoid the session ending before the request is completed."
+      }
+    ]
+  },
+  "strategy_id": "10aa13358bc02b7e",
+  "evolver_model": "openai/deepseek-v4-pro",
+  "reasoning_effort": "high",
+  "provider": "InferAI",
+  "source_task_ids": [
+    "66",
+    "92",
+    "29",
+    "67",
+    "106",
+    "22",
+    "69",
+    "98",
+    "93",
+    "88",
+    "4",
+    "21",
+    "8",
+    "54",
+    "107",
+    "48",
+    "52",
+    "80",
+    "35",
+    "16"
+  ],
+  "latency_seconds": 18.727561,
+  "provider_usage": {
+    "calls": 2,
+    "successes": 2,
+    "failures": 0,
+    "prompt_tokens": 309740,
+    "completion_tokens": 8591,
+    "usage_responses": 2,
+    "usage_unavailable": 0,
+    "total_elapsed_seconds": 100.16845,
+    "average_elapsed_seconds": 50.084225
+  },
+  "provider_budget_delta": {
+    "cap": null,
+    "attempts": 1,
+    "successes": 1,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 154908,
+    "completion_tokens": 1506,
+    "usage_responses": 1,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-pro",
+        "attempts": 1,
+        "successes": 1,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 154908,
+        "completion_tokens": 1506,
+        "usage_responses": 1,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      },
+      {
+        "model_id": "openai/qwen3.7-plus",
+        "attempts": 0,
+        "successes": 0,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "usage_responses": 0,
+        "usage_unavailable": 0,
+        "cache_hits": 0
+      }
+    ]
+  }
+}
