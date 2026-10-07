@@ -246,9 +246,14 @@ class TauBenchEpisodeRunner:
                     "paused safely before dispatching the next native episode"
                 )
         budget_remaining = self.request_budget.snapshot().remaining
-        if (budget_remaining is not None and budget_remaining <= 0
-                and not self.request_budget.has_current_episode_reservation()):
-            raise RuntimeError("native episode refused before dispatch: request budget is exhausted")
+        if (
+            budget_remaining is not None
+            and budget_remaining <= 0
+            and not self.request_budget.has_current_episode_reservation()
+        ):
+            raise RuntimeError(
+                "native episode refused before dispatch: request budget is exhausted"
+            )
 
         attempt_id = uuid4().hex
         episode_directory = self.output_directory / "episodes" / attempt_id
@@ -268,22 +273,55 @@ class TauBenchEpisodeRunner:
         activation_options = None
         runtime_service = service
         if isinstance(service, ServiceSkillMemoryV2):
-            if self.v2_policy['service_skill_runtime'] == 'render_all_v1':
-                from .service_skills import ServiceSkill
-                runtime_service = ServiceSkillMemory(tuple(ServiceSkill(s.skill_id,s.trigger,s.guidance) for s in service.skills))
-            else:
-                from .skill_activation import SkillActivator
-                def activation_sink(value):
-                    value = {'schema_version': 3, 'manifest_sha256': self.manifest.sha256,
-                             'episode_key_sha256': episode_key_sha256, 'turn': len(activation_rows), **value}
-                    value['artifact_sha256'] = sha256_json(value)
-                    _write_json_once(episode_directory/'skill-activation'/f'turn-{len(activation_rows):04d}.json', value)
-                    activation_rows.append(value)
-                activation_options = {'activator': SkillActivator(
-                    model=self.v2_policy['activator']['model'],
-                    model_args=role_model_args_for_runtime((('activator',tuple(self.v2_policy['activator']['model_args'].items())),))['activator'],
-                    request_budget=self.request_budget),
-                    'max_active_skills': self.v2_policy['max_active_service_skills'], 'sink': activation_sink}
+            from .skill_activation import RenderAllSkillSelector, SkillActivator
+
+            def activation_sink(value):
+                value = {
+                    "schema_version": 3,
+                    "manifest_sha256": self.manifest.sha256,
+                    "episode_key_sha256": episode_key_sha256,
+                    "turn": len(activation_rows),
+                    **value,
+                }
+                value["artifact_sha256"] = sha256_json(value)
+                _write_json_once(
+                    episode_directory
+                    / "skill-activation"
+                    / f"turn-{len(activation_rows):04d}.json",
+                    value,
+                )
+                activation_rows.append(value)
+
+            selector = (
+                RenderAllSkillSelector()
+                if self.v2_policy["service_skill_runtime"] == "render_all_v1"
+                else SkillActivator(
+                    model=self.v2_policy["activator"]["model"],
+                    model_args=(
+                        self.v2_policy["activator"]["model_args"]
+                        if self.v2_policy["activator"]["model_args"].get("api_protocol")
+                        == "responses"
+                        else role_model_args_for_runtime(
+                            (
+                                (
+                                    "activator",
+                                    tuple(
+                                        self.v2_policy["activator"][
+                                            "model_args"
+                                        ].items()
+                                    ),
+                                ),
+                            )
+                        )["activator"]
+                    ),
+                    request_budget=self.request_budget,
+                )
+            )
+            activation_options = {
+                "activator": selector,
+                "max_active_skills": self.v2_policy["max_active_service_skills"],
+                "sink": activation_sink,
+            }
 
         def on_orchestrator(orchestrator: Any) -> None:
 
@@ -292,9 +330,13 @@ class TauBenchEpisodeRunner:
             ).hexdigest()
             native_agent_class = type(orchestrator.agent).__mro__[1]
             native_agent_property = getattr(native_agent_class, "system_prompt", None)
-            if (not isinstance(native_agent_property, property)
-                    or native_agent_property.fget is None):
-                raise TypeError("EvoTau Service wrapper no longer directly subclasses the native LLMAgent")
+            if (
+                not isinstance(native_agent_property, property)
+                or native_agent_property.fget is None
+            ):
+                raise TypeError(
+                    "EvoTau Service wrapper no longer directly subclasses the native LLMAgent"
+                )
             native_agent_prompt = native_agent_property.fget(orchestrator.agent)
             service_block = render_service_strategy(runtime_service)
             expected_agent_prompt = (
@@ -302,7 +344,9 @@ class TauBenchEpisodeRunner:
                 else f"{native_agent_prompt}\n\n{service_block}"
             )
             if orchestrator.agent.system_prompt != expected_agent_prompt:
-                raise ValueError("EvoTau Service overlay changed the native tau-bench system prompt")
+                raise ValueError(
+                    "EvoTau Service overlay changed the native tau-bench system prompt"
+                )
             prompt_hashes["service_native_system_prompt"] = hashlib.sha256(
                 native_agent_prompt.encode("utf-8")
             ).hexdigest()
@@ -312,7 +356,11 @@ class TauBenchEpisodeRunner:
             if hasattr(service, "skills"):
                 prompt_hashes["service_skill_count"] = len(service.skills)
                 prompt_hashes["service_skill_rendered_chars"] = len(service_block)
-                prompt_hashes["service_skill_rendered_tokens"] = None
+                prompt_hashes["service_skill_rendered_tokens"] = (
+                    skill_token_count(service_block)
+                    if isinstance(service, ServiceSkillMemoryV2)
+                    else None
+                )
             prompt_hashes["customer"] = hashlib.sha256(
                 orchestrator.user.system_prompt.encode("utf-8")
             ).hexdigest()
@@ -323,17 +371,30 @@ class TauBenchEpisodeRunner:
                 return
             native_user_class = type(orchestrator.user).__mro__[1]
             native_property = getattr(native_user_class, "system_prompt", None)
-            if not isinstance(native_property, property) or native_property.fget is None:
-                raise TypeError("EvoTau Customer wrapper no longer directly subclasses the native UserSimulator")
+            if (
+                not isinstance(native_property, property)
+                or native_property.fget is None
+            ):
+                raise TypeError(
+                    "EvoTau Customer wrapper no longer directly subclasses the native UserSimulator"
+                )
             native_prompt = native_property.fget(orchestrator.user)
             skill_block = render_customer_strategy(customer)
-            expected_prompt = native_prompt if not skill_block else f"{native_prompt}\n\n{skill_block}"
+            expected_prompt = (
+                native_prompt
+                if not skill_block
+                else f"{native_prompt}\n\n{skill_block}"
+            )
             if orchestrator.user.system_prompt != expected_prompt:
-                raise ValueError("EvoTau Customer overlay changed the native tau-bench system prompt")
+                raise ValueError(
+                    "EvoTau Customer overlay changed the native tau-bench system prompt"
+                )
             source_scenario = str(task.user_scenario)
             runtime_scenario = getattr(orchestrator.user, "instructions", None)
             if runtime_scenario != source_scenario:
-                raise ValueError("EvoTau Customer wrapper changed the native task scenario")
+                raise ValueError(
+                    "EvoTau Customer wrapper changed the native task scenario"
+                )
             prompt_hashes["customer_native_system_prompt"] = hashlib.sha256(
                 native_prompt.encode("utf-8")
             ).hexdigest()
@@ -349,7 +410,9 @@ class TauBenchEpisodeRunner:
             simulation_payload = simulation.model_dump(mode="json")
             _write_json_once(simulation_path, simulation_payload)
 
-        with self.request_budget.record_provider_calls(episode_directory / "provider-calls.jsonl"):
+        with self.request_budget.record_provider_calls(
+            episode_directory / "provider-calls.jsonl"
+        ):
             try:
                 orchestrator = build_phase0_orchestrator(
                     task=deepcopy(task),
@@ -375,11 +438,17 @@ class TauBenchEpisodeRunner:
                         on_simulation=on_simulation,
                     )
                 simulation_payload = simulation.model_dump(mode="json")
-                if simulation_payload.get("task_id") is None or str(simulation_payload["task_id"]) != str(task_id):
-                    raise ValueError("native τ-bench returned a simulation for a different task")
+                if simulation_payload.get("task_id") is None or str(
+                    simulation_payload["task_id"]
+                ) != str(task_id):
+                    raise ValueError(
+                        "native τ-bench returned a simulation for a different task"
+                    )
                 actual_seed = simulation_payload.get("seed")
                 if actual_seed is not None and int(actual_seed) != seed:
-                    raise ValueError("native τ-bench returned a simulation for a different seed")
+                    raise ValueError(
+                        "native τ-bench returned a simulation for a different seed"
+                    )
                 if simulation_payload.get("reward_info") is None:
                     reward = None
                 else:
@@ -392,7 +461,9 @@ class TauBenchEpisodeRunner:
                     status = EpisodeStatus.COMPLETE
 
                 if simulation_payload is None:
-                    raise RuntimeError("native τ-bench did not provide a serialized simulation")
+                    raise RuntimeError(
+                        "native τ-bench did not provide a serialized simulation"
+                    )
                 protocol_observation = observe_communication_protocol(
                     simulation_payload.get("messages") or (),
                     enforcement_enabled=self.manifest.enforce_communication_protocol,
@@ -408,48 +479,105 @@ class TauBenchEpisodeRunner:
                     task_success=task_success,
                     native_reward=native_reward,
                     termination_reason=simulation_payload.get("termination_reason"),
-                    trajectory_ref=simulation_path.relative_to(self.output_directory).as_posix(),
-                    tool_calls=_count_tool_calls(simulation_payload.get("messages") or ()),
+                    trajectory_ref=simulation_path.relative_to(
+                        self.output_directory
+                    ).as_posix(),
+                    tool_calls=_count_tool_calls(
+                        simulation_payload.get("messages") or ()
+                    ),
                     enforce_communication_protocol=self.manifest.enforce_communication_protocol,
                     mixed_text_tool_call_messages=(
                         protocol_observation["mixed_text_tool_call_message_count"]
                     ),
                     raw_review={},
-                    **({
-                        'total_steps': len(simulation_payload.get('messages') or ()),
-                        'prompt_tokens': episode_usage.snapshot(cap=None).prompt_tokens,
-                        'completion_tokens': episode_usage.snapshot(cap=None).completion_tokens,
-                        'tool_errors': sum(1 for m in simulation_payload.get('messages',[]) if m.get('role') == 'tool' and m.get('error')),
-                        'activated_skill_ids': tuple(sorted({ident for row in activation_rows for ident in row['decision']['active_skill_ids']})),
-                    } if isinstance(service, ServiceSkillMemoryV2) else {}),
+                    **(
+                        {
+                            "total_steps": max(
+                                (
+                                    m.get("turn_idx", i)
+                                    for i, m in enumerate(
+                                        simulation_payload.get("messages") or ()
+                                    )
+                                ),
+                                default=-1,
+                            )
+                            + 1,
+                            "prompt_tokens": episode_usage.snapshot(
+                                cap=None
+                            ).prompt_tokens,
+                            "completion_tokens": episode_usage.snapshot(
+                                cap=None
+                            ).completion_tokens,
+                            "tool_errors": sum(
+                                1
+                                for m in simulation_payload.get("messages", [])
+                                if m.get("role") == "tool" and m.get("error")
+                            ),
+                            "activated_skill_ids": tuple(
+                                sorted(
+                                    {
+                                        ident
+                                        for row in activation_rows
+                                        for ident in row["decision"]["active_skill_ids"]
+                                    }
+                                )
+                            ),
+                        }
+                        if isinstance(service, ServiceSkillMemoryV2)
+                        else {}
+                    ),
                 )
                 after = self.request_budget.snapshot()
-                exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
-                _write_json_once(telemetry_path, {
-                    "attempt_id": attempt_id,
-                    "simulation_id": episode_id,
-                    "episode_key": episode_key,
-                    "episode_key_sha256": episode_key_sha256,
-                    "panel_name": panel_name,
-                    "customer_strategy_id": record.customer_strategy_id,
-                    "service_strategy_id": record.service_strategy_id,
-                    "rendered_prompt_sha256": prompt_hashes,
-                    "budget_before": before.to_dict(),
-                    "budget_after": after.to_dict(),
-                    "budget_delta": _snapshot_delta(before, after),
-                    "episode_budget_delta": exact_episode_usage.to_dict(),
-                    "communication_protocol_observation": protocol_observation,
-                })
+                exact_episode_usage = episode_usage.snapshot(
+                    cap=self.request_budget.snapshot().cap
+                )
+                _write_json_once(
+                    telemetry_path,
+                    {
+                        "attempt_id": attempt_id,
+                        "simulation_id": episode_id,
+                        "episode_key": episode_key,
+                        "episode_key_sha256": episode_key_sha256,
+                        "panel_name": panel_name,
+                        "customer_strategy_id": record.customer_strategy_id,
+                        "service_strategy_id": record.service_strategy_id,
+                        "rendered_prompt_sha256": prompt_hashes,
+                        "budget_before": before.to_dict(),
+                        "budget_after": after.to_dict(),
+                        "budget_delta": _snapshot_delta(before, after),
+                        "episode_budget_delta": exact_episode_usage.to_dict(),
+                        "communication_protocol_observation": protocol_observation,
+                    },
+                )
                 if isinstance(service, ServiceSkillMemoryV2):
-                    _write_json_once(episode_directory/'skill-activation-trace.json', {
-                        'schema_version': 3, 'manifest_sha256': self.manifest.sha256,
-                        'episode_key_sha256': episode_key_sha256, 'episode_id': record.episode_id,
-                        'activation_mode': self.v2_policy['service_skill_runtime'],
-                        'activator': self.v2_policy['activator'], 'decisions': activation_rows,
-                        'activation_catalog_tokens': sum(row['activation_catalog_tokens'] for row in activation_rows),
-                        'activated_guidance_tokens': sum(row['activated_guidance_tokens'] for row in activation_rows),
-                        'rendered_skill_tokens': skill_token_count(render_selected_service_skills(service, [s.skill_id for s in service.skills])),
-                    })
+                    activation_trace = {
+                        "schema_version": 3,
+                        "manifest_sha256": self.manifest.sha256,
+                        "episode_key_sha256": episode_key_sha256,
+                        "episode_id": record.episode_id,
+                        "activation_mode": self.v2_policy["service_skill_runtime"],
+                        "activator": self.v2_policy["activator"],
+                        "decisions": activation_rows,
+                        "activation_catalog_tokens": sum(
+                            row["activation_catalog_tokens"] for row in activation_rows
+                        ),
+                        "activated_guidance_tokens": sum(
+                            row["activated_guidance_tokens"] for row in activation_rows
+                        ),
+                        "rendered_skill_tokens": sum(
+                            row["activated_guidance_tokens"] for row in activation_rows
+                        ),
+                        "full_memory_tokens": skill_token_count(
+                            render_selected_service_skills(
+                                service, [s.skill_id for s in service.skills]
+                            )
+                        ),
+                    }
+                    activation_trace["artifact_sha256"] = sha256_json(activation_trace)
+                    _write_json_once(
+                        episode_directory / "skill-activation-trace.json",
+                        activation_trace,
+                    )
                 _write_json_once(record_path, record.to_dict())
                 with self._completed_episode_cache_lock:
                     self._completed_episode_cache[episode_key_sha256] = (
@@ -477,46 +605,58 @@ class TauBenchEpisodeRunner:
                     except Exception as diagnostic_error:  # noqa: BLE001 - preserve the original native error
                         partial_error = safe_error(diagnostic_error)
                 after = self.request_budget.snapshot()
-                exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
-                _write_json_once(episode_directory / "incomplete-run.json", {
-                    "attempt_id": attempt_id,
-                    "task_id": str(task_id),
-                    "seed": seed,
-                    "episode_key": episode_key,
-                    "episode_key_sha256": episode_key_sha256,
-                    "panel_name": panel_name,
-                    **_exception_details(exc),
-                    "native_simulation_saved": simulation_path.exists(),
-                    "partial_trajectory_ref": (
-                        partial_path.relative_to(self.output_directory).as_posix()
-                        if partial_path.exists() else None
-                    ),
-                    "partial_trajectory_error": partial_error,
-                    "provider_calls_ref": (
-                        (episode_directory / "provider-calls.jsonl")
-                        .relative_to(self.output_directory).as_posix()
-                    ),
-                    "communication_protocol_observation": (
-                        None if simulation_payload is None else observe_communication_protocol(
-                            simulation_payload.get("messages") or (),
-                            enforcement_enabled=self.manifest.enforce_communication_protocol,
-                        )
-                    ),
-                    "rendered_prompt_sha256": prompt_hashes,
-                    "budget_before": before.to_dict(),
-                    "budget_after": after.to_dict(),
-                    "budget_delta": _snapshot_delta(before, after),
-                    "episode_budget_delta": exact_episode_usage.to_dict(),
-                })
+                exact_episode_usage = episode_usage.snapshot(
+                    cap=self.request_budget.snapshot().cap
+                )
+                _write_json_once(
+                    episode_directory / "incomplete-run.json",
+                    {
+                        "attempt_id": attempt_id,
+                        "task_id": str(task_id),
+                        "seed": seed,
+                        "episode_key": episode_key,
+                        "episode_key_sha256": episode_key_sha256,
+                        "panel_name": panel_name,
+                        **_exception_details(exc),
+                        "native_simulation_saved": simulation_path.exists(),
+                        "partial_trajectory_ref": (
+                            partial_path.relative_to(self.output_directory).as_posix()
+                            if partial_path.exists()
+                            else None
+                        ),
+                        "partial_trajectory_error": partial_error,
+                        "provider_calls_ref": (
+                            (episode_directory / "provider-calls.jsonl")
+                            .relative_to(self.output_directory)
+                            .as_posix()
+                        ),
+                        "communication_protocol_observation": (
+                            None
+                            if simulation_payload is None
+                            else observe_communication_protocol(
+                                simulation_payload.get("messages") or (),
+                                enforcement_enabled=self.manifest.enforce_communication_protocol,
+                            )
+                        ),
+                        "rendered_prompt_sha256": prompt_hashes,
+                        "budget_before": before.to_dict(),
+                        "budget_after": after.to_dict(),
+                        "budget_delta": _snapshot_delta(before, after),
+                        "episode_budget_delta": exact_episode_usage.to_dict(),
+                    },
+                )
                 if not isinstance(exc, Exception):
                     exc.task_id = str(task_id)
                     exc.panel_name = panel_name
                     exc.diagnostics_ref = (episode_directory / "incomplete-run.json").relative_to(self.output_directory).as_posix()
                     raise
                 raise NativeEpisodeRunError(
-                    exc, task_id=str(task_id), panel_name=panel_name,
+                    exc,
+                    task_id=str(task_id),
+                    panel_name=panel_name,
                     diagnostics_ref=(episode_directory / "incomplete-run.json")
-                    .relative_to(self.output_directory).as_posix(),
+                    .relative_to(self.output_directory)
+                    .as_posix(),
                 ) from exc
 
     def _load_completed_episode_cache(self) -> None:

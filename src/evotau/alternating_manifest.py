@@ -170,16 +170,24 @@ class AlternatingManifest:
     def from_mapping(cls, raw: Mapping[str, Any]) -> AlternatingManifest:
         experiment = raw["experiment"]
         if experiment.get("phase") != "alternating-self-evolution":
-            raise ValueError("AlternatingManifest requires phase='alternating-self-evolution'")
+            raise ValueError(
+                "AlternatingManifest requires phase='alternating-self-evolution'"
+            )
         upstream = experiment["upstream"]
         selection = experiment["task_selection"]
         if selection.get("source_split") != "train":
             raise ValueError("E/V tasks must use the official τ-bench train split")
         if not selection.get("heldout"):
-            raise ValueError("alternating runs require a sealed H panel from the τ-bench test split")
+            raise ValueError(
+                "alternating runs require a sealed H panel from the τ-bench test split"
+            )
         models = experiment.get("models", {})
-        if not isinstance(models, Mapping) or not set(EVOLUTION_ROLE_NAMES) <= set(models):
-            raise ValueError("models must include agent, customer, evaluator, and evolver")
+        if not isinstance(models, Mapping) or not set(EVOLUTION_ROLE_NAMES) <= set(
+            models
+        ):
+            raise ValueError(
+                "models must include agent, customer, evaluator, and evolver"
+            )
         role_models = _freeze_role_models(
             {role: models[role] for role in EVOLUTION_ROLE_NAMES},
             roles=EVOLUTION_ROLE_NAMES,
@@ -197,7 +205,9 @@ class AlternatingManifest:
         if type(enabled) is not bool:
             raise ValueError("real_provider_enabled must be boolean")
         cap = experiment.get("request_budget_cap")
-        evolution_fitness_seed = experiment.get("evolution_fitness_seed", experiment["seed"])
+        evolution_fitness_seed = experiment.get(
+            "evolution_fitness_seed", experiment["seed"]
+        )
         if type(evolution_fitness_seed) is not int:
             raise ValueError("evolution_fitness_seed must be an integer")
         run_validation = experiment.get("run_validation", True)
@@ -215,7 +225,9 @@ class AlternatingManifest:
             raise TypeError("experiment.provider_provenance must be a mapping")
         if any(not isinstance(key, str) for key in provider_provenance):
             raise TypeError("provider provenance keys must be strings")
-        if any(not isinstance(value, (str, bool)) for value in provider_provenance.values()):
+        if any(
+            not isinstance(value, (str, bool)) for value in provider_provenance.values()
+        ):
             raise TypeError("provider provenance values must be strings or booleans")
         v2_policy = None
         if evolution.get('service_carrier') == 'skill_memory_v2':
@@ -233,31 +245,42 @@ class AlternatingManifest:
             evotau_git_commit=code.git_commit,
             evotau_working_tree_clean=code.working_tree_clean,
             evotau_source_sha256=code.source_sha256,
-            evolution_task_ids=tuple(str(item) for item in selection.get("evolution", ())),
-            validation_task_ids=tuple(str(item) for item in selection.get("validation", ())),
+            evolution_task_ids=tuple(
+                str(item) for item in selection.get("evolution", ())
+            ),
+            validation_task_ids=tuple(
+                str(item) for item in selection.get("validation", ())
+            ),
             heldout_task_ids=tuple(str(item) for item in selection.get("heldout", ())),
-            excluded_task_ids=tuple(str(item) for item in selection.get("excluded", ())),
+            excluded_task_ids=tuple(
+                str(item) for item in selection.get("excluded", ())
+            ),
             seed=int(experiment["seed"]),
             generations=int(experiment["generations"]),
             customer_candidates=int(experiment.get("customer_candidates", 2)),
             clean_panel_size=int(experiment.get("clean_panel_size", 1)),
             max_steps=int(experiment.get("max_steps", 64)),
             max_parallel_episodes=experiment.get(
-                "max_parallel_episodes", DEFAULT_MAX_PARALLEL_EPISODES,
+                "max_parallel_episodes",
+                DEFAULT_MAX_PARALLEL_EPISODES,
             ),
             request_budget_cap=None if cap is None else int(cap),
             real_provider_enabled=enabled,
             role_models=role_models,
             role_model_args=role_args,
-            source_blob_sha1=tuple(sorted(
-                (str(path), str(digest).lower())
-                for path, digest in experiment["source_blob_sha1"].items()
-                if str(path) in ALTERNATING_REQUIRED_SOURCE_PATHS
-            )),
+            source_blob_sha1=tuple(
+                sorted(
+                    (str(path), str(digest).lower())
+                    for path, digest in experiment["source_blob_sha1"].items()
+                    if str(path) in ALTERNATING_REQUIRED_SOURCE_PATHS
+                )
+            ),
             initial_customer_strategy=str(experiment.get("customer_strategy") or ""),
             initial_service_strategy=str(experiment.get("service_strategy") or ""),
             output_path=_relative_path(str(experiment["output_path"]), "output_path"),
-            checkpoint_path=_relative_path(str(experiment["checkpoint_path"]), "checkpoint_path"),
+            checkpoint_path=_relative_path(
+                str(experiment["checkpoint_path"]), "checkpoint_path"
+            ),
             evolution_fitness_seed=evolution_fitness_seed,
             run_validation=run_validation,
             run_heldout=run_heldout,
@@ -265,14 +288,23 @@ class AlternatingManifest:
             split_name=str(selection["source_split"]),
             heldout_split_name=str(selection.get("heldout_split", "test")),
             enforce_communication_protocol=experiment.get(
-                "enforce_communication_protocol", False,
+                "enforce_communication_protocol",
+                False,
             ),
             customer_carrier=str(evolution.get("customer_carrier", "prompt_strategy")),
             service_carrier=str(evolution.get("service_carrier", "prompt_strategy")),
-            service_skill_runtime=str(evolution.get("service_skill_runtime", "activate_topk_v2" if v2_policy else "inject_all")),
+            service_skill_runtime=str(
+                evolution.get(
+                    "service_skill_runtime",
+                    json.loads(v2_policy)["service_skill_runtime"]
+                    if v2_policy
+                    else "inject_all",
+                )
+            ),
             service_mutation_ops=tuple(str(item) for item in mutation_ops),
             max_service_mutations_per_generation=evolution.get(
-                "max_service_mutations_per_generation", 1,
+                "max_service_mutations_per_generation",
+                1,
             ),
             provider_provenance=tuple(sorted(provider_provenance.items())),
             config_sha256=sha256_json(raw),

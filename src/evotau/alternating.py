@@ -228,12 +228,18 @@ class LLMAlternatingEvolvers:
                 model, model_args, system_prompt, context, call_name=call_name,
             )
         directory = self.output_directory / "evolver-calls" / uuid4().hex
-        _write_json_once(directory / "input.json", {
-            "schema_version": 1, "call_name": call_name, "model": model,
-            "request_args": safe_request_args(model_args),
-            "system_prompt": system_prompt, "context": dict(context),
-            "input_sha256": sha256_json(context),
-        })
+        _write_json_once(
+            directory / "input.json",
+            {
+                "schema_version": 1,
+                "call_name": call_name,
+                "model": model,
+                "request_args": safe_request_args(model_args),
+                "system_prompt": system_prompt,
+                "context": dict(context),
+                "input_sha256": sha256_json(context),
+            },
+        )
         scope = (
             nullcontext() if self.request_budget is None
             else self.request_budget.record_provider_calls(directory / "provider-calls.jsonl")
@@ -243,17 +249,34 @@ class LLMAlternatingEvolvers:
                 result = self._dispatch_json_call(
                     model, model_args, system_prompt, context, call_name=call_name,
                 )
-            _write_json_once(directory / "output.json", {"status": "parsed", "response": result})
+            _write_json_once(
+                directory / "output.json",
+                {
+                    "status": "parsed",
+                    "response": result,
+                    "response_sha256": sha256_json(result),
+                },
+            )
             return result
         except BaseException as exc:
-            _write_json_once(directory / "failure.json", {
-                "status": "failed", "failure_type": type(exc).__name__,
-                "failure_message": safe_error(exc),
-                "raw_response": getattr(exc, "raw_response", None),
-                "raw_response_truncated": getattr(exc, "raw_response_truncated", None),
-            })
+            _write_json_once(
+                directory / "failure.json",
+                {
+                    "status": "failed",
+                    "failure_type": type(exc).__name__,
+                    "failure_message": safe_error(exc),
+                    "raw_response": getattr(exc, "raw_response", None),
+                    "raw_response_truncated": getattr(
+                        exc, "raw_response_truncated", None
+                    ),
+                },
+            )
             exc.call_name = call_name
-            exc.diagnostics_ref = (directory / "failure.json").relative_to(self.output_directory).as_posix()
+            exc.diagnostics_ref = (
+                (directory / "failure.json")
+                .relative_to(self.output_directory)
+                .as_posix()
+            )
             raise
 
     def _dispatch_json_call(

@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -109,6 +110,8 @@ class FakeProviders:
     def diagnose(self, context):
         self.calls.append("diagnose")
         assert "secret-hidden" not in json.dumps(context)
+        if not any(r["task_success"] is False for r in context["current_outcomes"]):
+            return {"clusters": []}
         return {
             "clusters": [
                 {
@@ -176,7 +179,7 @@ class FakeRunner:
             native_reward=float(success),
             termination_reason="user_stop",
             total_steps=5,
-            trajectory_ref=f"{len(self.cache)}.json",
+            trajectory_ref=f"episodes/ep-{len(self.cache)}/native-simulation.json",
         )
         self.cache[key] = result
         return result
@@ -200,11 +203,13 @@ def run(
     generations=1,
     policy=None,
     validation=False,
+    manifest_sha="manifest",
 ):
     providers = provider or FakeProviders()
     native = runner or FakeRunner()
     settings = deepcopy(policy or DEFAULT_V2)
-    settings["service_evolution"]["crossover"] = False
+    if policy is None:
+        settings["service_evolution"]["crossover"] = False
     tasks = {
         t: SimpleNamespace(
             id=t,
@@ -231,7 +236,7 @@ def run(
         domain_policy="Do not change native policy.",
         output_directory=tmp_path,
         checkpoint_path=tmp_path / "checkpoint.json",
-        manifest_sha256="manifest",
+        manifest_sha256=manifest_sha,
         policy=settings,
         interrupt_after_stage=interrupt,
     )
@@ -436,8 +441,11 @@ def test_activator_context_and_topk_fail_closed():
 
 def test_native_agent_turn_prompt_does_not_accumulate_unselected_guidance(monkeypatch):
     import os
-    if 'TAU2_DATA_DIR' not in os.environ:
-        monkeypatch.setenv('TAU2_DATA_DIR', '/Users/spring/.cache/evotau/tau2-data-b7ea9074')
+
+    if "TAU2_DATA_DIR" not in os.environ:
+        monkeypatch.setenv(
+            "TAU2_DATA_DIR", "/Users/spring/.cache/evotau/tau2-data-b7ea9074"
+        )
     from tau2.data_model.message import UserMessage
 
     memory = apply_v2_mutation(
@@ -474,3 +482,540 @@ def test_native_agent_turn_prompt_does_not_accumulate_unselected_guidance(monkey
         and memory.skills[0].guidance not in prompts[1]
     )
     assert prompts[1] == "Native policy unchanged." and len(sidecars) == 2
+
+
+def test_two_generations_resume_history_and_stagnation(tmp_path):
+    provider, runner = FakeProviders(), FakeRunner()
+    result, _, _ = run(tmp_path, provider=provider, runner=runner, generations=2)
+    assert len(result.generations) == 2
+    calls = list(provider.calls)
+    resumed, _, _ = run(tmp_path, provider=provider, runner=runner, generations=2)
+    assert resumed.generations == result.generations and provider.calls == calls
+
+
+def test_formal_gate_does_not_promote_small_V(tmp_path):
+    result, _, _ = run(tmp_path, validation=True)
+    assert not result.service.skills
+    row = result.generations[0]["service_phase"]["candidates"][0]
+    assert row["gate"]["verdict"] == "INCONCLUSIVE"
+    assert row["gate"]["opponents"][0]["panel"] == "V"
+
+
+def test_no_lineage_ablation_resume_keeps_evidence_deterministic(tmp_path):
+    policy = deepcopy(DEFAULT_V2)
+    policy["service_evolution"]["lineage"] = False
+    result, provider, runner = run(tmp_path, policy=policy, generations=2)
+    resumed, _, _ = run(
+        tmp_path, policy=policy, generations=2, provider=provider, runner=runner
+    )
+    assert result.generations == resumed.generations
+
+
+def test_new_config_manifest_freezes_activation_and_v1_identity_unchanged():
+    import yaml
+
+    from evotau.alternating_manifest import AlternatingManifest
+
+    root = Path(__file__).resolve().parents[1]
+    old = yaml.safe_load(
+        (
+            root
+            / "configs/alternating-skill-memory-v1-qwen3-7-plus-runtime-v4-pro-retail-e20-g2-p4.yaml"
+        ).read_text()
+    )
+    legacy = AlternatingManifest.from_mapping(old).to_payload()
+    assert "skill_evolution_v2" not in legacy
+    raw = yaml.safe_load(
+        (
+            root / "configs/alternating-skill-memory-v2-qwen3-7-plus-retail.yaml"
+        ).read_text()
+    )
+    manifest = AlternatingManifest.from_mapping(raw)
+    doc = manifest.to_document()
+    v2 = doc["skill_evolution_v2"]
+    assert v2["activator"]["model"] == "openai/qwen3.7-plus"
+    assert v2["activator"]["model_args"]["thinking_mode"] == "disabled"
+    assert v2["max_active_service_skills"] == 2 and v2["evaluation"]["gate_seeds"] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+    raw["experiment"]["skill_evolution_v2"]["activator"]["model_args"][
+        "temperature"
+    ] = 0.1
+    assert AlternatingManifest.from_mapping(raw).sha256 != manifest.sha256
+
+
+def web_fixture(tmp_path, run_id="v2-fixture", activation="activate_topk_v2"):
+    from evotau.tau_provenance import sha256_json
+
+    root = tmp_path / "experiments/runs" / run_id
+    root.mkdir(parents=True)
+    policy = deepcopy(DEFAULT_V2)
+    policy["service_skill_runtime"] = activation
+    manifest = {
+        "experiment_id": run_id,
+        "phase": "alternating-self-evolution",
+        "real_provider_enabled": False,
+        "task_panels": {"E": ["1", "2", "3"], "V": ["4"], "H": ["999"]},
+        "seed": 1,
+        "max_parallel_episodes": 1,
+        "role_models": {"agent": "offline"},
+        "role_model_args": {"agent": {}},
+        "enforce_communication_protocol": False,
+        "run_validation": False,
+        "run_heldout": False,
+        "request_budget_cap": None,
+        "evolution": {"service_carrier": "skill_memory_v2"},
+        "skill_evolution_v2": policy,
+        "checkpoint_path": f"experiments/runs/{run_id}/checkpoint.json",
+    }
+    manifest["manifest_sha256"] = sha256_json(manifest)
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    result, _, runner = run(
+        root, policy=policy, manifest_sha=manifest["manifest_sha256"]
+    )
+    for record_ in runner.cache.values():
+        directory = root / "episodes" / record_.episode_id
+        directory.mkdir(parents=True)
+        (directory / "episode-record.json").write_text(json.dumps(record_.to_dict()))
+        (root / record_.trajectory_ref).write_text(
+            json.dumps(
+                {
+                    "id": record_.episode_id,
+                    "task_id": record_.task_id,
+                    "seed": record_.seed,
+                    "messages": [
+                        {"role": "user", "content": "Please help."},
+                        {"role": "assistant", "content": "Checking."},
+                    ],
+                }
+            )
+        )
+        (directory / "run-telemetry.json").write_text(
+            json.dumps(
+                {
+                    "simulation_id": record_.episode_id,
+                    "panel_name": "generation-0-fixture",
+                }
+            )
+        )
+    final = {
+        "schema_version": 3,
+        "status": "complete",
+        "experiment_id": run_id,
+        "manifest_sha256": manifest["manifest_sha256"],
+        "initial_service": result.initial_service.to_dict(),
+        "final_service": result.service.to_dict(),
+        "initial_customer": result.initial_customer.to_dict(),
+        "final_customer": result.customer.to_dict(),
+        "generations": result.generations,
+        "validation_evaluated": False,
+        "heldout_evaluated": False,
+    }
+    (root / "alternating-result.json").write_text(json.dumps(final))
+    return root, result, runner
+
+
+def test_web_v2_board_lineage_and_comparison(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from evotau.web.app import create_app
+
+    _root, result, _ = web_fixture(tmp_path)
+    web_fixture(tmp_path, "no-activation", activation="render_all_v1")
+    client = TestClient(create_app(project_root=tmp_path))
+    page = client.get("/runs/v2-fixture/evolution")
+    assert page.status_code == 200, page.text
+    for expected in (
+        "Helpfulness",
+        "Harmfulness",
+        "BROKEN",
+        "FIXED",
+        "INCONCLUSIVE",
+        "RESEARCH CANDIDATE",
+        "Mutation Lineage",
+        "Customer Challenge Archive",
+        "MECHANISM SMOKE",
+    ):
+        if expected == "INCONCLUSIVE":
+            continue  # this fixture deliberately promotes a deterministic smoke winner
+        assert expected in page.text
+    compare = client.get("/compare?run_a=v2-fixture&run_b=no-activation")
+    assert compare.status_code == 200 and "NOT COMPARABLE" in compare.text
+    strategy = client.get(
+        "/runs/v2-fixture/strategies/"
+        + service_strategy_id(result.service)
+        + "?side=service"
+    )
+    # Discover the existing route convention instead of depending on a plural alias.
+    if strategy.status_code == 404:
+        strategy = client.get(
+            "/runs/v2-fixture/strategy/"
+            + service_strategy_id(result.service)
+            + "?side=service"
+        )
+    assert strategy.status_code == 200
+    assert "Active Skills" in strategy.text and "activation_signature" in strategy.text
+
+
+def test_web_activation_trace_hash_and_redaction(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from evotau.tau_provenance import sha256_json
+    from evotau.web.app import create_app
+
+    root, _, runner = web_fixture(tmp_path)
+    record_ = next(iter(runner.cache.values()))
+    manifest = json.loads((root / "manifest.json").read_text())
+    row = {
+        "turn": 0,
+        "decision": {
+            "active_skill_ids": ["skill-0001"],
+            "reason": "Bearer secret-token-value",
+            "confidence": 0.9,
+        },
+        "not_selected_skill_ids": [],
+        "activated_guidance_tokens": 12,
+    }
+    row["artifact_sha256"] = sha256_json(row)
+    trace = {
+        "manifest_sha256": manifest["manifest_sha256"],
+        "episode_id": record_.episode_id,
+        "decisions": [row],
+    }
+    trace["artifact_sha256"] = sha256_json(trace)
+    # Reader resolves the activation sidecar beside the referenced trajectory.
+    (
+        root / Path(record_.trajectory_ref).parent / "skill-activation-trace.json"
+    ).write_text(json.dumps(trace))
+    client = TestClient(create_app(project_root=tmp_path))
+    response = client.get("/runs/v2-fixture/episodes/" + record_.episode_id)
+    assert response.status_code == 200
+    assert (
+        "learned skill(s) activated" in response.text
+        and "secret-token-value" not in response.text
+    )
+    trace["decisions"][0]["decision"]["confidence"] = 0.1
+    (
+        root / Path(record_.trajectory_ref).parent / "skill-activation-trace.json"
+    ).write_text(json.dumps(trace))
+    assert (
+        client.get("/runs/v2-fixture/episodes/" + record_.episode_id).status_code == 422
+    )
+
+
+def test_no_H_task_content_loaded_in_v2_dry_validation():
+    import yaml
+
+    from evotau.alternating_manifest import AlternatingManifest
+    from evotau.alternating_run import load_alternating_tasks
+
+    cfg = (
+        Path(__file__).resolve().parents[1]
+        / "configs/alternating-skill-memory-v2-qwen3-7-plus-retail.yaml"
+    )
+    data = Path("/Users/spring/.cache/evotau/tau2-data-b7ea9074")
+    if not data.is_dir():
+        pytest.skip("pinned data unavailable")
+    manifest = AlternatingManifest.from_mapping(yaml.safe_load(cfg.read_text()))
+    tasks = load_alternating_tasks(
+        manifest, data, include_heldout=False, include_validation=True
+    )
+    assert set(tasks) == set(manifest.evolution_task_ids + manifest.validation_task_ids)
+    assert not set(tasks) & set(manifest.heldout_task_ids)
+
+
+def test_provider_output_recovered_after_stage_publication_crash(tmp_path, monkeypatch):
+    from evotau.alternating import LLMAlternatingEvolvers
+    from evotau.evolution_candidates import V2Providers
+
+    calls = []
+    provider = LLMAlternatingEvolvers(
+        model="offline", model_args={}, output_directory=tmp_path
+    )
+    monkeypatch.setattr(
+        provider,
+        "_dispatch_json_call",
+        lambda *a, **kw: calls.append(kw) or {"ready": True},
+    )
+    v2 = V2Providers(provider)
+    first = v2.call("system", {"generation": 0}, "call")
+    second = v2.call("system", {"generation": 0}, "call")
+    assert first == second == {"ready": True} and len(calls) == 1
+    output = next((tmp_path / "evolver-calls").glob("*/output.json"))
+    saved = json.loads(output.read_text())
+    saved["response"]["ready"] = False
+    output.write_text(json.dumps(saved))
+    with pytest.raises(ValueError, match="digest"):
+        v2.call("system", {"generation": 0}, "call")
+
+
+def test_crossover_child_independently_screened_gated_and_resumed(tmp_path):
+    class ComplementaryProviders(FakeProviders):
+        def mutate(self, context):
+            self.calls.append("mutate")
+            bias = context["proposal_bias"]
+            if bias == "structural_decomposition":
+                return {"operation": "invalid"}
+            if bias == "narrow_applicability":
+                return mutation(
+                    "Validate request contents before committing.", family="contents"
+                )
+            value = mutation(
+                "Reconcile newly disclosed scope with the previous confirmation.",
+                family="reconciliation",
+            )
+            value["skill"]["trigger"] = "New scope conflicts with earlier confirmation."
+            value["skill"]["activation_signature"]["positive_conditions"] = [
+                "New conflicting scope is visible."
+            ]
+            value["substantive_delta_from_prior"] = (
+                "Distinct scope reconciliation instead of request validation."
+            )
+            return value
+
+        def crossover(self, context):
+            self.calls.append("crossover")
+            assert len(context["parents"]) == 2
+            value = mutation(
+                "Validate request contents and Reconcile newly disclosed scope.",
+                family="complementary",
+            )
+            value["substantive_delta_from_prior"] = (
+                "Compose independently observed complementary mechanisms."
+            )
+            return value
+
+    class ComplementaryRunner(FakeRunner):
+        def __call__(self, **kwargs):
+            row = super().__call__(**kwargs)
+            key = (
+                kwargs["task_id"],
+                kwargs["seed"],
+                customer_strategy_id(kwargs["customer"]),
+                service_strategy_id(kwargs["service"]),
+            )
+            text = " ".join(s.guidance for s in kwargs["service"].skills)
+            success = (
+                kwargs["task_id"] == "2"
+                or (kwargs["task_id"] == "1" and "Validate" in text)
+                or (kwargs["task_id"] == "3" and "Reconcile" in text)
+            )
+            from dataclasses import replace
+
+            row = replace(row, task_success=success, native_reward=float(success))
+            self.cache[key] = row
+            return row
+
+    policy = deepcopy(DEFAULT_V2)
+    result, provider, runner = run(
+        tmp_path,
+        policy=policy,
+        provider=ComplementaryProviders(),
+        runner=ComplementaryRunner(),
+    )
+    board = result.generations[0]["service_phase"]["candidates"]
+    child = next(c for c in board if c["parent_mutation_ids"])
+    assert (
+        child["screen"]["passed"]
+        and child["gate"]["verdict"] == "ACCEPTED"
+        and child["runtime_deployed"]
+    )
+    assert child["effect"]["fail_to_pass"] == ["1", "3"]
+    assert provider.calls.count("crossover") == 1
+    prior_calls = len(runner.calls), len(provider.calls)
+    resumed, _, _ = run(tmp_path, policy=policy, provider=provider, runner=runner)
+    assert resumed.generations == result.generations and prior_calls == (
+        len(runner.calls),
+        len(provider.calls),
+    )
+
+
+def test_customer_semantic_failure_is_rejected_before_rollout(tmp_path):
+    class InvalidCustomer(FakeProviders):
+        def validate_customer(self, context):
+            return {
+                "preserves_facts": False,
+                "preserves_objective": True,
+                "interaction_only": True,
+                "no_benchmark_leakage": True,
+            }
+
+    result, _, runner = run(tmp_path, provider=InvalidCustomer())
+    assert (
+        result.generations[0]["customer_phase"]["candidates"][0][
+            "pre_rollout_rejection"
+        ]
+        == "semantic_preservation_failed"
+    )
+    assert all(
+        key[2]
+        != customer_strategy_id(PromptStrategy("Ask for a grounded explanation."))
+        for key in runner.calls
+    )
+
+
+def test_fresh_challenge_validated_before_heldout_and_endpoint_reuses_identical_service(
+    tmp_path,
+):
+    from evotau.skill_evolution import (
+        propose_fresh_customer_v2,
+        run_v2_endpoint_evaluation,
+    )
+
+    result, provider, runner = run(tmp_path)
+    tasks = {
+        t: SimpleNamespace(
+            id=t, user_scenario="only-E-" + t, description="", user_tools=[]
+        )
+        for t in ("1", "2", "3")
+    }
+    fresh = propose_fresh_customer_v2(
+        result,
+        provider,
+        tasks=tasks,
+        runner=runner,
+        domain_policy="policy",
+        output_directory=tmp_path,
+        manifest_sha256="manifest",
+    )
+    calls = list(provider.calls)
+    assert (
+        propose_fresh_customer_v2(
+            result,
+            provider,
+            tasks=tasks,
+            runner=runner,
+            domain_policy="policy",
+            output_directory=tmp_path,
+            manifest_sha256="manifest",
+        )
+        == fresh
+    )
+    assert provider.calls == calls
+    endpoint_runner = FakeRunner()
+    endpoint = run_v2_endpoint_evaluation(
+        gate_seeds=[1, 2],
+        heldout_tasks={"H": object()},
+        heldout_task_ids=["H"],
+        initial_service=ServiceSkillMemoryV2(),
+        final_service=ServiceSkillMemoryV2(),
+        fresh_customer=fresh,
+        runner=endpoint_runner,
+        max_parallel_episodes=1,
+    )
+    assert (
+        len(endpoint_runner.calls) == 4
+    )  # 1 task × 2 seeds × 2 Customer conditions; ST reused.
+    assert endpoint["services_identical"] and all(
+        c["pass_power_k"]["2"] == 1.0 for c in endpoint["cells"]
+    )
+    assert all(
+        c["identical_to_S0"] for c in endpoint["cells"] if c["service_endpoint"] == "ST"
+    )
+
+
+def test_v2_completed_E_only_run_still_seals_H_every_console_surface(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from evotau.web.app import create_app
+    from evotau.web.artifact_reader import ArtifactReader
+
+    root, _, _ = web_fixture(tmp_path)
+    heldout_dir = root / "episodes" / "sealed-H-attempt"
+    heldout_dir.mkdir()
+    heldout_record = record("999", True).to_dict()
+    heldout_record["episode_id"] = "sealed-H-attempt"
+    heldout_record["trajectory_ref"] = (
+        "episodes/sealed-H-attempt/native-simulation.json"
+    )
+    (heldout_dir / "episode-record.json").write_text(json.dumps(heldout_record))
+    (heldout_dir / "native-simulation.json").write_text(
+        json.dumps(
+            {
+                "id": "sealed-H-attempt",
+                "task_id": "999",
+                "messages": [{"role": "user", "content": "H_SECRET_SENTINEL"}],
+            }
+        )
+    )
+    reader = ArtifactReader(tmp_path / "experiments/runs", project_root=tmp_path)
+    run_ = reader.get_run("v2-fixture")
+    assert run_["status"] == "complete" and run_["heldout_sealed"]
+    assert run_["manifest"]["task_panels"]["H"] != ["999"]
+    client = TestClient(create_app(project_root=tmp_path))
+    for suffix in (
+        "",
+        "/evolution",
+        "/episodes",
+        "/artifacts",
+        "/progress",
+        "/heldout",
+    ):
+        response = client.get("/runs/v2-fixture" + suffix)
+        assert response.status_code == 200
+        assert (
+            '"999"' not in response.text
+            and "secret-hidden" not in response.text
+            and "H_SECRET_SENTINEL" not in response.text
+        )
+    # Even a recomputed checkpoint digest cannot smuggle H into research evidence.
+    from evotau.tau_provenance import sha256_json
+
+    path = root / "checkpoint.json"
+    doc = json.loads(path.read_text())
+    doc["state"]["mutation_effects"][0]["effect"]["fail_to_pass"] = ["999"]
+    doc["checkpoint_sha256"] = sha256_json(
+        {k: v for k, v in doc.items() if k != "checkpoint_sha256"}
+    )
+    path.write_text(json.dumps(doc))
+    assert client.get("/runs/v2-fixture/evolution").status_code == 422
+
+
+def test_render_all_v2_ablation_has_observed_trace_without_activator_calls():
+    from evotau.skill_activation import RenderAllSkillSelector
+
+    memory = apply_v2_mutation(
+        ServiceSkillMemoryV2(), mutation(), next_skill_id_number=1
+    )
+    decision, context = RenderAllSkillSelector().select(
+        {"messages": [{"role": "user", "content": "Ordinary unchanged cancel."}]},
+        memory.skills,
+    )
+    assert decision.active_skill_ids == (
+        "skill-0001",
+    ) and "guidance" not in json.dumps(context["catalog"])
+
+
+def test_v2_render_all_budget_and_nonfinite_policy_rejected():
+    from evotau.skill_evolution_config import freeze_v2_policy
+
+    roles = {"agent": "offline"}
+    args = {"agent": {"temperature": 0}}
+    frozen = freeze_v2_policy({"service_skill_runtime": "render_all_v1"}, roles, args)
+    assert (
+        frozen["skill_budgets"]["max_active_skills"]
+        == frozen["skill_budgets"]["max_skills"]
+    )
+    with pytest.raises(ValueError, match="finite"):
+        freeze_v2_policy(
+            {"opponent_replay": {"current_weight": float("inf")}}, roles, args
+        )
+
+
+def test_dedup_signature_narrowing_is_substantive_but_delta_claim_alone_is_not():
+    prior = mutation(operation="narrow_trigger", target="skill-0001")
+    entry = {"mutation_id": "old", "mutation": prior, "effect": {"accepted": False}}
+    narrowed = deepcopy(prior)
+    narrowed["skill"]["activation_signature"]["negative_conditions"].append(
+        "Already confirmed scope is unchanged."
+    )
+    narrowed["substantive_delta_from_prior"] = (
+        "Exclude unchanged confirmation explicitly."
+    )
+    assert semantic_duplicate(narrowed, [entry]) is None
+    claimed = deepcopy(prior)
+    claimed["substantive_delta_from_prior"] = "I promise this is different."
+    assert semantic_duplicate(claimed, [entry]) == "old"

@@ -25,8 +25,21 @@ def summarize_effects(entries, *, max_families=8):
                 "mutation_id": e["mutation_id"],
                 "type": e["mutation_type"],
                 "reason": e["rejection_reason"],
+                "mechanism": (
+                    " ".join(
+                        part.get("trigger", "") + " " + part.get("guidance", "")
+                        for part in [
+                            entry["mutation"].get("skill") or {},
+                            *(entry["mutation"].get("children") or []),
+                        ]
+                    )
+                )[:400],
+                "locally_helpful": bool(e["fail_to_pass"]),
+                "helpfulness": e["helpfulness"],
+                "harmfulness": e["harmfulness"],
             }
         )
+        row[key] = row[key][-3:]
         for dest, source in [
             ("known_fixes", "fail_to_pass"),
             ("known_regressions", "pass_to_fail"),

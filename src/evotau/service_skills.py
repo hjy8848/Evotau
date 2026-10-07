@@ -444,15 +444,23 @@ class ServiceSkillMemoryV2:
         return cls(tuple(ServiceSkillV2.from_mapping(s) for s in value['skills']))
 
 
-V2_MUTATION_TYPES = ('add', 'narrow_trigger', 'expand_trigger', 'rewrite_guidance', 'split', 'delete', 'no_op')
+V2_MUTATION_TYPES = (
+    "add",
+    "narrow_trigger",
+    "expand_trigger",
+    "rewrite_guidance",
+    "split",
+    "delete",
+    "no_op",
+)
 
 
 def apply_v2_mutation(memory, mutation, *, next_skill_id_number):
     """Structural edits preserve unrelated skills and allocate IDs even for rejected trials."""
-    operation = mutation.get('operation')
+    operation = mutation.get("operation")
     if operation not in V2_MUTATION_TYPES:
-        raise ValueError('unknown V2 mutation intent')
-    target = mutation.get('target_skill_id')
+        raise ValueError("unknown V2 mutation intent")
+    target = mutation.get("target_skill_id")
     if operation == 'no_op':
         if target is not None or mutation.get('skill') is not None or mutation.get('children'):
             raise ValueError('NO_OP must not contain an edit')
@@ -463,27 +471,41 @@ def apply_v2_mutation(memory, mutation, *, next_skill_id_number):
             raise ValueError('ADD cannot target an existing skill')
     elif target not in by_id:
         raise ValueError('mutation target does not exist')
-    if type(next_skill_id_number) is not int or next_skill_id_number <= service_skill_id_high_watermark(memory):
-        raise ValueError('mutation ID reservation must exceed the active high watermark')
-    if operation == 'delete':
-        if mutation.get('skill') is not None:
-            raise ValueError('DELETE cannot supply guidance')
+    if type(
+        next_skill_id_number
+    ) is not int or next_skill_id_number <= service_skill_id_high_watermark(memory):
+        raise ValueError(
+            "mutation ID reservation must exceed the active high watermark"
+        )
+    if operation == "delete":
+        if mutation.get("skill") is not None:
+            raise ValueError("DELETE cannot supply guidance")
         del by_id[target]
-    elif operation == 'split':
-        children = mutation.get('children')
+    elif operation == "split":
+        children = mutation.get("children")
         if not isinstance(children, list) or len(children) != 2:
-            raise ValueError('SPLIT requires exactly two children')
+            raise ValueError("SPLIT requires exactly two children")
         del by_id[target]
         for i, payload in enumerate(children):
-            skill = ServiceSkillV2.from_mapping({'skill_id': f'skill-{next_skill_id_number+i:04d}', **payload})
+            _validate_v2_draft(payload)
+            skill = ServiceSkillV2.from_mapping(
+                {"skill_id": f"skill-{next_skill_id_number + i:04d}", **payload}
+            )
             by_id[skill.skill_id] = skill
     else:
-        ident = f'skill-{next_skill_id_number:04d}' if operation == 'add' else target
-        skill = ServiceSkillV2.from_mapping({'skill_id': ident, **mutation['skill']})
-        if operation in ('narrow_trigger', 'expand_trigger') and skill.guidance != by_id[target].guidance:
-            raise ValueError('trigger mutation must preserve guidance')
-        if operation == 'rewrite_guidance' and (skill.trigger != by_id[target].trigger or skill.activation_signature != by_id[target].activation_signature):
-            raise ValueError('guidance rewrite must preserve applicability')
+        ident = f"skill-{next_skill_id_number:04d}" if operation == "add" else target
+        _validate_v2_draft(mutation["skill"])
+        skill = ServiceSkillV2.from_mapping({"skill_id": ident, **mutation["skill"]})
+        if (
+            operation in ("narrow_trigger", "expand_trigger")
+            and skill.guidance != by_id[target].guidance
+        ):
+            raise ValueError("trigger mutation must preserve guidance")
+        if operation == "rewrite_guidance" and (
+            skill.trigger != by_id[target].trigger
+            or skill.activation_signature != by_id[target].activation_signature
+        ):
+            raise ValueError("guidance rewrite must preserve applicability")
         by_id[ident] = skill
     return ServiceSkillMemoryV2(tuple(by_id.values()))
 
@@ -514,3 +536,12 @@ def validate_skill_budgets(memory, limits):
     top = sorted(memory.skills, key=lambda s: (-skill_token_count(s.guidance), s.skill_id))[:limits['max_active_skills']]
     if skill_token_count(render_selected_service_skills(memory, [s.skill_id for s in top])) > limits['active_tokens']:
         raise ValueError('activated prompt token budget exceeded')
+
+
+def _validate_v2_draft(value):
+    if not isinstance(value, Mapping) or set(value) != {
+        "trigger",
+        "guidance",
+        "activation_signature",
+    }:
+        raise ValueError("V2 drafts cannot assign IDs or carry research metadata")

@@ -1,5 +1,6 @@
 """Evolution-only candidate retention, ancestry, semantic dedup and replay."""
 
+import json
 import re
 from difflib import SequenceMatcher
 
@@ -13,14 +14,21 @@ def normalized_text(value):
 def mutation_text(mutation):
     parts = [mutation.get("skill") or {}, *(mutation.get("children") or [])]
     return normalized_text(
-        " ".join(p.get("trigger", "") + " " + p.get("guidance", "") for p in parts)
+        " ".join(
+            p.get("trigger", "")
+            + " "
+            + p.get("guidance", "")
+            + " "
+            + json.dumps(p.get("activation_signature", {}), sort_keys=True)
+            for p in parts
+        )
     )
 
 
 def semantic_duplicate(mutation, entries):
     for entry in entries:
         prior = entry["mutation"]
-        if entry.get("effect", {}).get("accepted") is True:
+        if (entry.get("effect") or {}).get("accepted") is True:
             continue
         same_structure = (prior["operation"], prior.get("target_skill_id")) == (
             mutation["operation"],

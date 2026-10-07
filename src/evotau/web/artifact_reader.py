@@ -15,7 +15,8 @@ from ..tau_provenance import sha256_json
 
 _MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 _SECRET_KEY = re.compile(
-    r"(api[_-]?key|token|secret|password|authorization|credential|session[_-]?id)", re.IGNORECASE,
+    r"(api[_-]?key|token|secret|password|authorization|credential|session[_-]?id)",
+    re.IGNORECASE,
 )
 _SECRET_TEXT = re.compile(
     r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]+|\b(sk-[A-Za-z0-9_-]{12,})"
@@ -47,9 +48,13 @@ class RunSummary:
 class ArtifactReader:
     """Read only the current run schema; prior experiment directories stay archival."""
 
-    def __init__(self, runs_root: str | Path, *, project_root: str | Path | None = None):
+    def __init__(
+        self, runs_root: str | Path, *, project_root: str | Path | None = None
+    ):
         self.runs_root = Path(runs_root).expanduser().absolute()
-        self.project_root = Path(project_root or self.runs_root.parent.parent).expanduser().absolute()
+        self.project_root = (
+            Path(project_root or self.runs_root.parent.parent).expanduser().absolute()
+        )
 
     def list_runs(self) -> tuple[dict[str, Any], ...]:
         if not self.runs_root.exists():
@@ -76,15 +81,23 @@ class ArtifactReader:
         except (KeyError, TypeError, AttributeError, OSError, ValueError, IndexError, OverflowError) as exc:
             raise ArtifactReadError("artifact is malformed or inconsistent and has been hidden") from exc
 
-    def _get_run_impl(self, run_id: str, *, live_status: str | None = None) -> dict[str, Any]:
+    def _get_run_impl(
+        self, run_id: str, *, live_status: str | None = None
+    ) -> dict[str, Any]:
         run_path = self._resolve_run_path(run_id)
         manifest_path = run_path / "manifest.json"
         manifest = self._read_json(manifest_path)
         self._verify_manifest(manifest)
         phase = manifest.get("phase")
         if phase not in {"0-integration-proof", "alternating-self-evolution"}:
-            raise ArtifactReadError("this archived experiment uses an unsupported Console schema")
-        result_name = "phase0-result.json" if phase == "0-integration-proof" else "alternating-result.json"
+            raise ArtifactReadError(
+                "this archived experiment uses an unsupported Console schema"
+            )
+        result_name = (
+            "phase0-result.json"
+            if phase == "0-integration-proof"
+            else "alternating-result.json"
+        )
         result_path = run_path / result_name
         result = self._read_json(result_path) if result_path.exists() else None
         if result is not None:
@@ -94,7 +107,9 @@ class ArtifactReader:
 
         execution_path = run_path / "run-execution-state.json"
         execution = self._read_json(execution_path) if execution_path.exists() else None
-        if execution is not None and execution.get("manifest_sha256") != manifest.get("manifest_sha256"):
+        if execution is not None and execution.get("manifest_sha256") != manifest.get(
+            "manifest_sha256"
+        ):
             raise ArtifactReadError("execution state differs from its frozen manifest")
         heldout_ids = self._heldout_ids(manifest)
         complete = result is not None and result.get("status") == "complete"
@@ -109,8 +124,16 @@ class ArtifactReader:
         else:
             status = "incomplete" if self._has_resume_artifacts(run_path, phase) else "not_started"
 
-        heldout_sealed = bool(heldout_ids) and not complete
-        episodes = self._load_episodes(run_path, manifest, result, complete=complete)
+        heldout_sealed = bool(heldout_ids) and (
+            not complete
+            or (
+                manifest.get("skill_evolution_v2")
+                and result.get("heldout_evaluated") is not True
+            )
+        )
+        episodes = self._load_episodes(
+            run_path, manifest, result, complete=complete and not heldout_sealed
+        )
         reference_path = run_path / "episode-panel-references.json"
         if reference_path.exists():
             reference_doc = self._read_json(reference_path)
@@ -132,9 +155,19 @@ class ArtifactReader:
                 })
         generations = self._generation_commits(manifest, result)
         strategies = self._load_strategies(result, generations)
-        latest = max(generations, key=lambda item: item.get("generation", -1), default=None)
-        current_customer_id = None if latest is None else latest.get("customer_after", {}).get("strategy_id")
-        current_service_id = None if latest is None else latest.get("service_after", {}).get("strategy_id")
+        latest = max(
+            generations, key=lambda item: item.get("generation", -1), default=None
+        )
+        current_customer_id = (
+            None
+            if latest is None
+            else latest.get("customer_after", {}).get("strategy_id")
+        )
+        current_service_id = (
+            None
+            if latest is None
+            else latest.get("service_after", {}).get("strategy_id")
+        )
         current_customer = strategies["customer"].get(str(current_customer_id))
         current_service = strategies["service"].get(str(current_service_id))
         if result and result.get("final_customer"):
@@ -150,6 +183,27 @@ class ArtifactReader:
             current_customer_id = _strategy_id(current_customer) if current_customer else None
             current_service_id = _strategy_id(current_service) if current_service else None
         budget = self._budget_summary(manifest, result, run_path)
+        display_result = result if not heldout_sealed else None
+        if heldout_sealed and manifest.get("skill_evolution_v2") and result is not None:
+            display_result = {
+                key: result[key]
+                for key in (
+                    "schema_version",
+                    "status",
+                    "experiment_id",
+                    "manifest_sha256",
+                    "validation_enabled",
+                    "validation_evaluated",
+                    "heldout_evaluated",
+                    "provider_usage",
+                    "api_usage_by_role",
+                    "api_usage_by_call_name",
+                    "timing",
+                    "completed_episodes",
+                    "failed_episode_attempts",
+                )
+                if key in result
+            }
         return {
             "run_id": run_id,
             "path": run_path,
@@ -157,9 +211,13 @@ class ArtifactReader:
             "phase": phase,
             "status": status,
             "execution_failure": (
-                None if execution is None or (
-                    heldout_sealed and (execution.get("failure") or {}).get("stage") == "heldout"
-                ) else redact_secrets(execution.get("failure"))
+                None
+                if execution is None
+                or (
+                    heldout_sealed
+                    and (execution.get("failure") or {}).get("stage") == "heldout"
+                )
+                else redact_secrets(execution.get("failure"))
             ),
             "episode_limit": _manifest_int(manifest, "max_episodes"),
             "max_concurrency": manifest.get("max_parallel_episodes", 1),
@@ -168,13 +226,15 @@ class ArtifactReader:
             "real_provider_enabled": manifest.get("real_provider_enabled") is True,
             "upstream_commit": _upstream_commit(manifest),
             "started_at": self._timestamp(manifest_path),
-            "result": None if heldout_sealed else redact_secrets(result),
+            "result": redact_secrets(display_result),
             "budget": budget,
             "episodes": episodes,
             "generation_commits": redact_secrets(generations),
             "current_generation": (
-                max((item.get("generation", -1) for item in generations), default=-1) + 1
-                if status in {"running", "paused", "incomplete"} else None
+                max((item.get("generation", -1) for item in generations), default=-1)
+                + 1
+                if status in {"running", "paused", "incomplete"}
+                else None
             ),
             "current_episode": self._active_episode(run_path, status, heldout_sealed),
             "current_customer_id": current_customer_id,
@@ -184,10 +244,14 @@ class ArtifactReader:
             "strategies": redact_secrets(strategies),
             "heldout_sealed": heldout_sealed,
             "heldout_task_count": len(heldout_ids),
-            "raw_artifacts": redact_secrets({
-                "manifest": _safe_manifest_for_display(manifest, sealed=heldout_sealed),
-                "result": None if heldout_sealed else result,
-            }),
+            "raw_artifacts": redact_secrets(
+                {
+                    "manifest": _safe_manifest_for_display(
+                        manifest, sealed=heldout_sealed
+                    ),
+                    "result": display_result,
+                }
+            ),
         }
 
     def episode(self, run_id: str, episode_id: str) -> dict[str, Any]:
@@ -256,8 +320,14 @@ class ArtifactReader:
             raise ArtifactReadError("manifest has no experiment ID")
 
     @staticmethod
-    def _verify_result_manifest(result: dict[str, Any], manifest: dict[str, Any]) -> None:
-        allowed_schemas = {1, 2} if manifest.get("phase") == "alternating-self-evolution" else {1}
+    def _verify_result_manifest(
+        result: dict[str, Any], manifest: dict[str, Any]
+    ) -> None:
+        allowed_schemas = (
+            ({1, 2, 3} if manifest.get("skill_evolution_v2") else {1, 2})
+            if manifest.get("phase") == "alternating-self-evolution"
+            else {1}
+        )
         if (result.get("schema_version") not in allowed_schemas
                 or result.get("manifest_sha256") != manifest.get("manifest_sha256")
                 or result.get("status") not in {"complete", "incomplete"}):
@@ -286,7 +356,9 @@ class ArtifactReader:
 
     @staticmethod
     def _has_resume_artifacts(run_path: Path, phase: str) -> bool:
-        return any((run_path / item).exists() for item in ("run-context.json", "episodes")) or phase.startswith("0-")
+        return any(
+            (run_path / item).exists() for item in ("run-context.json", "episodes")
+        ) or phase.startswith("0-")
 
     def _active_episode(self, run_path: Path, status: str, heldout_sealed: bool) -> dict[str, Any] | None:
         if status != "running" or heldout_sealed:
@@ -382,13 +454,18 @@ class ArtifactReader:
                     views.append(view)
                 continue
             record = EpisodeRecord.from_dict(self._read_json(record_path)).to_dict()
+            if not complete and record['task_id'] in heldout:
+                continue  # Never load a sealed H trajectory or its sidecars.
             trajectory_ref = record.get("trajectory_ref")
             telemetry_path = directory / "run-telemetry.json"
             if not isinstance(trajectory_ref, str) or not telemetry_path.is_file():
                 raise ArtifactReadError("completed episode is missing its trajectory or telemetry")
+            telemetry = self._read_json(telemetry_path)
+            panel = str(telemetry.get('panel_name', ''))
+            if not complete and 'heldout' in panel.lower():
+                continue
             trajectory_path = self._contained_path(run_path, trajectory_ref)
             trajectory = self._read_json(trajectory_path)
-            telemetry = self._read_json(telemetry_path)
             if (
                 record["episode_id"] != trajectory.get("id")
                 or record["task_id"] != str(trajectory.get("task_id"))
@@ -405,14 +482,51 @@ class ArtifactReader:
         return views
 
     def _episode_view(
-        self, run_path: Path, record: dict[str, Any], trajectory: dict[str, Any],
+        self,
+        run_path: Path,
+        record: dict[str, Any],
+        trajectory: dict[str, Any],
         telemetry: dict[str, Any] | None,
     ) -> dict[str, Any]:
         messages = normalize_trajectory_messages(trajectory)
         trajectory_ref = record.get("trajectory_ref")
         db_state_trace = self._db_state_trace_for_episode(
-            run_path, record, trajectory, trajectory_ref,
+            run_path,
+            record,
+            trajectory,
+            trajectory_ref,
         )
+        activation = None
+        if isinstance(trajectory_ref, str):
+            activation_ref = (
+                Path(trajectory_ref).parent / "skill-activation-trace.json"
+            ).as_posix()
+            path = self._contained_path(run_path, activation_ref, require_exists=False)
+            if path.exists():
+                activation = self._read_json(path)
+                manifest = self._read_json(run_path / "manifest.json")
+                if (
+                    activation.get("manifest_sha256") != manifest.get("manifest_sha256")
+                    or activation.get("episode_id") != record["episode_id"]
+                ):
+                    raise ArtifactReadError(
+                        "activation sidecar does not match episode/manifest"
+                    )
+                if activation.get("artifact_sha256") != sha256_json(
+                    {k: v for k, v in activation.items() if k != "artifact_sha256"}
+                ):
+                    raise ArtifactReadError("activation trace digest mismatch")
+                for row in activation.get("decisions", []):
+                    if row.get("artifact_sha256") != sha256_json(
+                        {k: v for k, v in row.items() if k != "artifact_sha256"}
+                    ):
+                        raise ArtifactReadError("activation decision digest mismatch")
+                decisions = iter(activation.get("decisions", []))
+                for message in messages:
+                    if message["kind"] == "message" and message["role"] == "assistant":
+                        message["skill_activation"] = redact_secrets(
+                            next(decisions, None)
+                        )
         started_at = None
         if isinstance(trajectory_ref, str):
             try:
@@ -420,7 +534,9 @@ class ArtifactReader:
             except ArtifactReadError:
                 pass
         return {
-            "episode_id": str(record.get("episode_id", trajectory.get("id", "unknown"))),
+            "episode_id": str(
+                record.get("episode_id", trajectory.get("id", "unknown"))
+            ),
             "task_id": str(record.get("task_id", trajectory.get("task_id", "unknown"))),
             "seed": record.get("seed", trajectory.get("seed")),
             "generation": record.get("generation"),
@@ -434,9 +550,12 @@ class ArtifactReader:
             "service_strategy": record.get("service_strategy"),
             "trajectory": redact_secrets(trajectory),
             "messages": messages,
+            "skill_activation": redact_secrets(activation),
             "db_state_trace": db_state_trace,
             "telemetry": redact_secrets(telemetry),
-            "tool_calls": sum(message.get("kind") == "tool_call" for message in messages),
+            "tool_calls": sum(
+                message.get("kind") == "tool_call" for message in messages
+            ),
             "budget": None if telemetry is None else telemetry.get("budget_after"),
             "raw_record": redact_secrets(record),
             "trajectory_root": run_path,
@@ -547,7 +666,8 @@ class ArtifactReader:
 
     @staticmethod
     def _load_strategies(
-        result: dict[str, Any] | None, generations: list[dict[str, Any]],
+        result: dict[str, Any] | None,
+        generations: list[dict[str, Any]],
     ) -> dict[str, dict[str, Any]]:
         strategies: dict[str, dict[str, Any]] = {"customer": {}, "service": {}}
 
@@ -555,23 +675,43 @@ class ArtifactReader:
             if not isinstance(value, dict):
                 return
             strategy_text = value.get("text", value.get("strategy"))
-            if isinstance(strategy_text, dict) and isinstance(strategy_text.get("skills"), list):
+            if isinstance(strategy_text, dict) and isinstance(
+                strategy_text.get("skills"), list
+            ):
                 strategy_id = value.get("strategy_id") or _strategy_id(strategy_text)
                 strategies[side][str(strategy_id)] = {
-                    "carrier": value.get("carrier", "skill_memory_v1"),
+                    "carrier": value.get(
+                        "carrier",
+                        "skill_memory_v2"
+                        if value.get("schema_version") == 2
+                        or strategy_text
+                        and isinstance(strategy_text, dict)
+                        and strategy_text.get("schema_version") == 2
+                        else "skill_memory_v1",
+                    ),
                     "skills": strategy_text["skills"],
                 }
                 return
             if "skills" in value and isinstance(value.get("skills"), list):
                 strategy_id = value.get("strategy_id") or _strategy_id(value)
                 strategies[side][str(strategy_id)] = {
-                    "carrier": value.get("carrier", "skill_memory_v1"),
+                    "carrier": value.get(
+                        "carrier",
+                        "skill_memory_v2"
+                        if value.get("schema_version") == 2
+                        or strategy_text
+                        and isinstance(strategy_text, dict)
+                        and strategy_text.get("schema_version") == 2
+                        else "skill_memory_v1",
+                    ),
                     "skills": value["skills"],
                 }
                 return
             if not isinstance(strategy_text, str):
                 return
-            strategy_id = value.get("strategy_id") or _strategy_id({"text": strategy_text})
+            strategy_id = value.get("strategy_id") or _strategy_id(
+                {"text": strategy_text}
+            )
             strategies[side][str(strategy_id)] = {"text": strategy_text}
 
         if isinstance(result, dict):
@@ -657,21 +797,46 @@ def normalize_trajectory_messages(trajectory: dict[str, Any]) -> list[dict[str, 
 
 
 def redact_secrets(value: Any, *, _key: str = "") -> Any:
+    # Numeric research token counts/limits are not credentials; strings still redact.
+    public_counts = {
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "activation_catalog_tokens",
+        "activated_guidance_tokens",
+        "rendered_skill_tokens",
+        "token_delta",
+        "max_tokens",
+        "guidance_tokens",
+        "active_tokens",
+        "mean_tokens",
+        "tokens",
+    }
+    if _key in public_counts and (value is None or type(value) in (int, float)):
+        return value
     if _SECRET_KEY.search(_key):
         return "[REDACTED]"
     if isinstance(value, dict):
-        return {str(key): redact_secrets(item, _key=str(key)) for key, item in value.items()}
+        return {
+            str(key): redact_secrets(item, _key=str(key)) for key, item in value.items()
+        }
     if isinstance(value, list):
         return [redact_secrets(item) for item in value]
     if isinstance(value, tuple):
         return [redact_secrets(item) for item in value]
     if isinstance(value, str):
-        return _SECRET_TEXT.sub(lambda match: (match.group(1) or "") + "[REDACTED]", value)
+        return _SECRET_TEXT.sub(
+            lambda match: (match.group(1) or "") + "[REDACTED]", value
+        )
     return value
 
 
 def _reward_success(reward: Any) -> bool | None:
-    return reward >= 1.0 if isinstance(reward, (int, float)) and not isinstance(reward, bool) else None
+    return (
+        reward >= 1.0
+        if isinstance(reward, (int, float)) and not isinstance(reward, bool)
+        else None
+    )
 
 
 def _generation_from_panel(panel_name: Any) -> int | None:

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}EvoTau · {{ run.experiment_id }}{% endblock %}
 {% block content %}
+{% if run.evolution is defined %}{% include "_evolution_health.html" %}{% endif %}
 {% if run.progress %}{% include "_run_progress.html" %}{% endif %}
 {% if run.execution_failure and not run.progress %}<div class="panel">运行已中断 · {{ run.execution_failure.stage }}<pre>{{ run.execution_failure.failure_message }}</pre></div>{% endif %}
 <section id="overview" class="page-heading">

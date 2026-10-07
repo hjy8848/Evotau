@@ -50,13 +50,17 @@ def create_app(
     manager: RunManager | None = None,
 ) -> FastAPI:
     root = Path(project_root or _WEB_ROOT.parents[2]).expanduser().resolve()
-    output_root = Path(runs_root or root / "experiments" / "runs").expanduser().resolve()
+    output_root = (
+        Path(runs_root or root / "experiments" / "runs").expanduser().resolve()
+    )
     reader = ArtifactReader(output_root, project_root=root)
     run_manager = manager or RunManager(root, output_root, tau2_data_dir=tau2_data_dir)
     journal = EventJournal()
     templates = Jinja2Templates(directory=str(_WEB_ROOT / "templates"))
     app = FastAPI(title="EvoTau Experiment Console", docs_url=None, redoc_url=None)
-    app.mount("/static", StaticFiles(directory=str(_WEB_ROOT / "static")), name="static")
+    app.mount(
+        "/static", StaticFiles(directory=str(_WEB_ROOT / "static")), name="static"
+    )
     app.state.csrf_tokens = set()
     app.state.csrf_lock = asyncio.Lock()
 
@@ -74,6 +78,7 @@ def create_app(
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
+
     app.state.reader = reader
     app.state.run_manager = run_manager
     app.state.event_journal = journal
@@ -102,7 +107,9 @@ def create_app(
             run["events"] = []
             run["event_warning"] = "Console 事件日志损坏或不可写；Core 研究 artifact 不受影响。"
         run["budget"] = budget_view(run["budget"])
-        run["generation_views"] = [generation_view(item) for item in run["generation_commits"]]
+        run["generation_views"] = [
+            generation_view(item) for item in run["generation_commits"]
+        ]
         run["customer_strategy_views"] = {
             key: customer_strategy_view(value)
             for key, value in run["strategies"]["customer"].items()
@@ -111,15 +118,23 @@ def create_app(
             key: service_strategy_view(value)
             for key, value in run["strategies"]["service"].items()
         }
-        run["current_customer_view"] = customer_strategy_view(run.get("current_customer_strategy"))
-        run["current_service_view"] = service_strategy_view(run.get("current_service_strategy"))
+        run["current_customer_view"] = customer_strategy_view(
+            run.get("current_customer_strategy")
+        )
+        run["current_service_view"] = service_strategy_view(
+            run.get("current_service_strategy")
+        )
         protocol_mode = run["manifest"].get(
-            "enforce_communication_protocol", run["manifest"].get("communication_enforcement"),
+            "enforce_communication_protocol",
+            run["manifest"].get("communication_enforcement"),
         )
         run["communication_mode_label"] = (
             "Strict diagnostic" if protocol_mode is True else
             "Upstream default" if protocol_mode is False else "Unknown (legacy artifact)"
         )
+        from .evolution_view import evolution_view
+
+        run["evolution"] = evolution_view(reader, run)
         run["health"] = _health_view(run)
         run["human_events"] = _human_events(run)
         return run
@@ -238,6 +253,10 @@ def create_app(
             "run": run, "pause_available": pause_available,
             "csrf_token": issue_csrf_token(),
         })
+
+    @app.get("/runs/{run_id}/evolution")
+    async def evolution_page(request: Request, run_id: str):
+        return page(request, "evolution.html", {"run": load_run(run_id)})
 
     @app.get("/runs/{run_id}/progress")
     async def run_progress(run_id: str):
@@ -551,6 +570,14 @@ def _compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any
         _compatibility_row("Communication mode", a.get("enforce_communication_protocol"),
                            b.get("enforce_communication_protocol"), require_bool=True),
     ]
+    for label, field in [
+        ("Service carrier", "evolution"),
+        ("V2 activation/search/gate/replay/archive policy", "skill_evolution_v2"),
+    ]:
+        comparisons.append(
+            _compatibility_row(label, a.get(field, "legacy"), b.get(field, "legacy"))
+        )
+
     def native_result(run):
         result = run.get("result")
         if not isinstance(result, dict):
@@ -566,14 +593,23 @@ def _compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any
         if observed:
             return f"{sum(observed)}/{len(observed)} visible episodes successful"
         return "Unavailable"
+
     def model_label(manifest):
         models = manifest.get("role_models")
         if not isinstance(models, dict):
             return "Unavailable"
         return ", ".join(f"{role}: {model}" for role, model in sorted(models.items()))
+
     def protocol_label(manifest):
         value = manifest.get("enforce_communication_protocol")
-        return "Strict diagnostic" if value is True else "Upstream default" if value is False else "Unknown"
+        return (
+            "Strict diagnostic"
+            if value is True
+            else "Upstream default"
+            if value is False
+            else "Unknown"
+        )
+
     rows = [
         ("Native task success", native_result(run_a), native_result(run_b)),
         ("Visible episodes", str(len(run_a.get("episodes", ()))), str(len(run_b.get("episodes", ())))),
@@ -583,6 +619,49 @@ def _compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any
         ("Model", model_label(a), model_label(b)),
         ("Communication mode", protocol_label(a), protocol_label(b)),
     ]
+
+    def recorded(run, key):
+        latest = (run.get("generation_commits") or [{}])[-1]
+        candidates = latest.get("service_phase", {}).get("candidates", [])
+        selected = next((c for c in candidates if c.get("runtime_deployed")), None)
+        if key == "skill_count":
+            return latest.get("service_after", {}).get("skill_count", "Unavailable")
+        if key == "final_accuracy":
+            return latest.get("service_phase", {}).get("final_accuracy", "Unavailable")
+        if key == "activation_rate":
+            return latest.get("activation_summary", {}).get(
+                "activation_rate", "Unavailable"
+            )
+        if key == "skill_tokens":
+            return latest.get("activation_summary", {}).get(
+                "rendered_skill_tokens", "Unavailable"
+            )
+        if key == "gate_confidence":
+            return latest.get("statistical_policy", {}).get("confidence", "Unavailable")
+        if key == "activator_calls":
+            return (
+                (run.get("result") or {})
+                .get("api_usage_by_role", {})
+                .get("skill_activator", {})
+                .get("calls", "Unavailable")
+            )
+        if selected is None:
+            return "Unavailable"
+        return selected.get("effect", {}).get(key, "Unavailable")
+
+    for label, key in [
+        ("Final E Service accuracy", "final_accuracy"),
+        ("Activation rate", "activation_rate"),
+        ("Rendered skill tokens", "skill_tokens"),
+        ("Gate confidence", "gate_confidence"),
+        ("Helpfulness", "helpfulness"),
+        ("Harmfulness", "harmfulness"),
+        ("Stuck rate", "new_stuck_rate"),
+        ("Active skills", "skill_count"),
+        ("Runtime token overhead", "token_delta"),
+        ("Activator calls", "activator_calls"),
+    ]:
+        rows.append((label, recorded(run_a, key), recorded(run_b, key)))
     comparable = all(item["same"] is True for item in comparisons)
     return {"compatibility": comparisons, "comparable": comparable, "rows": rows}
 

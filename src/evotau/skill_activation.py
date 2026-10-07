@@ -128,6 +128,28 @@ class SkillActivator:
         ), context
 
 
+class RenderAllSkillSelector:
+    """No-provider observational selector for the explicitly frozen render-all ablation."""
+
+    def select(self, observable_context, active_skill_catalog, max_active_skills=2):
+        catalog = [
+            {
+                "skill_id": s.skill_id,
+                "trigger": s.trigger,
+                "activation_signature": s.activation_signature.to_dict(),
+            }
+            for s in active_skill_catalog
+        ]
+        return SkillActivationDecision(
+            tuple(s.skill_id for s in active_skill_catalog),
+            "render-all ablation; all accepted skills injected without applicability filtering",
+            None,
+        ), {
+            "messages": project_observable_messages(observable_context["messages"]),
+            "catalog": catalog,
+        }
+
+
 def activating_service_agent_class(base, memory, *, activator, max_active_skills, sink):
     """Subclass native LLMAgent; keep its message generation/tools/protocol unchanged."""
     from .prompts import append_strategy_block

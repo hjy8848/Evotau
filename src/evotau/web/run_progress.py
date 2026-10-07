@@ -2,6 +2,7 @@
 
 This projection never launches/resumes a run or supplies evidence to evolution.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,6 +16,16 @@ from evotau.tau_provenance import capture_code_provenance
 from .artifact_reader import ArtifactReader, ArtifactReadError, redact_secrets
 
 _STAGE_NAMES = {
+    "customer_incumbent": "Customer incumbent evaluation",
+    "customer_candidates": "Customer candidates",
+    "customer_selection": "Customer selection",
+    "service_diagnosis": "Service failure diagnosis",
+    "service_proposals": "Service mutation proposals",
+    "service_screen": "Cheap paired candidate screen",
+    "service_crossover": "Complementary crossover",
+    "service_full_gate": "Full statistical promotion gate",
+    "service_selection": "Service selection",
+    "archive_update": "Evolution archive update",
     "customer_incumbent_complete": "Customer Evolver",
     "customer_proposals_ready": "Customer candidate evaluation",
     "customer_candidates_complete": "Customer selection",
@@ -157,7 +168,9 @@ def _live_episodes(reader: ArtifactReader, root: Any, digest: str, allowed: set[
     return sorted(values, key=lambda value: value.get("updated_at") or "", reverse=True)
 
 
-def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, Any] | None:
+def read_run_progress(
+    reader: ArtifactReader, run: dict[str, Any]
+) -> dict[str, Any] | None:
     if run["phase"] != "alternating-self-evolution":
         return None
     root, manifest, digest = run["path"], run["manifest"], run["manifest_sha256"]
@@ -166,10 +179,17 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
     planned = manifest.get("generations")
     planned = planned if type(planned) is int and planned > 0 else None
     completed = len(generations)
-    evolution_finished = bool(generations) and (run["status"] == "complete" or (planned is not None and completed >= planned))
+    evolution_finished = bool(generations) and (
+        run["status"] == "complete" or (planned is not None and completed >= planned)
+    )
     generation = max(0, completed - 1) if evolution_finished else completed
-    stage = None if evolution_finished else _bound(
-        _optional(reader, root, f"generation-{generation:04d}-stage.json"), digest,
+    stage = (
+        None
+        if evolution_finished
+        else _bound(
+            _optional(reader, root, f"generation-{generation:04d}-stage.json"),
+            digest,
+        )
     )
     if stage is not None and stage.get("generation") != generation:
         raise ArtifactReadError("monitoring stage differs from its generation")
@@ -177,9 +197,22 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
     # Do not project sealed H task identities, traces or provider observations.
     execution = _bound(_optional(reader, root, "run-execution-state.json"), digest)
     execution_stage = ((execution or {}).get("failure") or {}).get("stage")
-    hidden_phase = run["heldout_sealed"] and (execution_stage in {"heldout", "fresh_customer"} or (evolution_finished and run["status"] != "complete"))
+    hidden_phase = run["heldout_sealed"] and (
+        execution_stage in {"heldout", "fresh_customer"}
+        or (evolution_finished and run["status"] != "complete")
+    )
     stage_name = (stage or {}).get("stage")
-    stage_label = _STAGE_NAMES.get(stage_name, "Customer incumbent evaluation")
+    stage_label = _STAGE_NAMES.get(
+        stage_name,
+        next(
+            (
+                v
+                for k, v in _STAGE_NAMES.items()
+                if isinstance(stage_name, str) and stage_name.startswith(k)
+            ),
+            "Customer incumbent evaluation",
+        ),
+    )
     if run["status"] == "complete":
         stage_label = "Experiment complete"
     elif hidden_phase:
@@ -192,23 +225,47 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
     refs_doc = _bound(_optional(reader, root, "episode-panel-references.json"), digest)
     refs = [] if refs_doc is None else list(refs_doc.get("references", {}).values())
     by_id = {episode["episode_id"]: episode for episode in run["episodes"]}
-    active_c, active_s = _version(generations, "customer"), _version(generations, "service")
+    active_c, active_s = (
+        _version(generations, "customer"),
+        _version(generations, "service"),
+    )
     # Completed rows describe the last committed generation's before/after states.
     committed = generations[-1] if evolution_finished else None
     before_c = _version(generations[:-1], "customer") if committed else active_c
     before_s = _version(generations[:-1], "service") if committed else active_s
     customer_phase = (committed or {}).get("customer_phase") or {}
     service_phase = (committed or {}).get("service_phase") or {}
-    proposal = None if committed or hidden_phase else _bound(
-        _optional(reader, root, f"generation-{generation:04d}-customer-proposals.json"), digest,
+    proposal = (
+        None
+        if committed or hidden_phase
+        else _bound(
+            _optional(
+                reader, root, f"generation-{generation:04d}-customer-proposals.json"
+            ),
+            digest,
+        )
     )
-    service_proposal = None if committed or hidden_phase else _bound(
-        _optional(reader, root, f"generation-{generation:04d}-service-proposal.json"), digest,
+    service_proposal = (
+        None
+        if committed or hidden_phase
+        else _bound(
+            _optional(
+                reader, root, f"generation-{generation:04d}-service-proposal.json"
+            ),
+            digest,
+        )
     )
     for document in (proposal, service_proposal):
-        if document is not None and document.get("generation", generation) != generation:
+        if (
+            document is not None
+            and document.get("generation", generation) != generation
+        ):
             raise ArtifactReadError("monitoring proposal differs from its generation")
-    candidates = customer_phase.get("candidates", ()) if committed else (proposal or {}).get("customer_candidates", ())
+    candidates = (
+        customer_phase.get("candidates", ())
+        if committed
+        else (proposal or {}).get("customer_candidates", ())
+    )
     pending = "WAITING" if run["status"] == "running" else "NOT_STARTED"
     panel_records: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -242,16 +299,55 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
                 "successes": sum(ep["task_success"] for ep in records.values()) if full else None,
                 "accuracy": sum(ep["task_success"] for ep in records.values()) / total if full else None}
 
-    rows = [panel("Incumbent", f"generation-{generation}-customer-incumbent", f"{before_c} × {before_s}")]
-    rows.append({"label": "Customer Evolver", "condition": f"C{generation + 1} generated" if candidates else "", "state": "COMPLETE" if candidates else "RUNNING" if stage_name == "customer_incumbent_complete" and run["status"] == "running" else pending})
+    rows = [
+        panel(
+            "Incumbent",
+            f"generation-{generation}-customer-incumbent",
+            f"{before_c} × {before_s}",
+        )
+    ]
+    rows.append(
+        {
+            "label": "Customer Evolver",
+            "condition": f"C{generation + 1} generated" if candidates else "",
+            "state": "COMPLETE"
+            if candidates
+            else "RUNNING"
+            if stage_name == "customer_incumbent_complete"
+            and run["status"] == "running"
+            else pending,
+        }
+    )
     for index, candidate in enumerate(candidates):
-        rows.append(panel("Customer candidate" + (f" {index}" if len(candidates) > 1 else ""), f"generation-{generation}-customer-candidate-{index}", f"C{generation + 1} × {before_s}"))
+        rows.append(
+            panel(
+                "Customer candidate" + (f" {index}" if len(candidates) > 1 else ""),
+                f"generation-{generation}-customer-candidate-{index}",
+                f"C{generation + 1} × {before_s}",
+            )
+        )
     if not candidates:
         rows.append({"label": "Customer candidate", "condition": "", "state": pending})
     service_ready = bool(service_proposal or committed)
-    rows.append({"label": "Service Evolver", "condition": "", "state": "COMPLETE" if service_ready else "RUNNING" if stage_name == "customer_selected" and run["status"] == "running" else pending})
-    operation = service_phase.get("operation") if committed else ((service_proposal or {}).get("mutation") or {}).get("operation")
-    changed = not service_proposal or service_proposal.get("strategy_id") != (service_proposal.get("frozen_service") or {}).get("strategy_id")
+    rows.append(
+        {
+            "label": "Service Evolver",
+            "condition": "",
+            "state": "COMPLETE"
+            if service_ready
+            else "RUNNING"
+            if stage_name == "customer_selected" and run["status"] == "running"
+            else pending,
+        }
+    )
+    operation = (
+        service_phase.get("operation")
+        if committed
+        else ((service_proposal or {}).get("mutation") or {}).get("operation")
+    )
+    changed = not service_proposal or service_proposal.get("strategy_id") != (
+        service_proposal.get("frozen_service") or {}
+    ).get("strategy_id")
     if operation == "no_op" or (service_proposal and not changed):
         rows.append({"label": "Candidate Service", "condition": "NO_OP · replay skipped", "state": "SKIPPED"})
     else:
@@ -278,7 +374,9 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
                    "failure_message": failed_episode.get("failure_message")}
     live_episodes = []
     if run["status"] == "running" and not hidden_phase:
-        allowed = task_ids | {str(value) for value in manifest.get("task_panels", {}).get("V", ())}
+        allowed = task_ids | {
+            str(value) for value in manifest.get("task_panels", {}).get("V", ())
+        }
         live_episodes = _live_episodes(reader, root, digest, allowed)
     if live_episodes:
         current = live_episodes[0]
@@ -288,12 +386,19 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
         if active:
             current = {"label": "当前 episode", "attempt_id": active["attempt_id"],
                        "task_id": None, "panel_name": None, "turn": None, "message_count": None}
-    health = _provider_health([] if hidden_phase else _jsonl(reader, root, "actual-provider-http.jsonl"), run["budget"])
+    health = _provider_health(
+        [] if hidden_phase else _jsonl(reader, root, "actual-provider-http.jsonl"),
+        run["budget"],
+    )
     origin = _optional(reader, root, "continuation-provenance.json")
     initial_c = checkpoint.get("initial_customer") or {}
     initial_s = checkpoint.get("initial_service") or {}
     initial_strategies = reader._load_strategies({"initial_service": initial_s}, [])
-    service = run.get("current_service_strategy") or initial_strategies["service"].get(str(initial_s.get("strategy_id"))) or {}
+    service = (
+        run.get("current_service_strategy")
+        or initial_strategies["service"].get(str(initial_s.get("strategy_id")))
+        or {}
+    )
     skills = service.get("skills", ())
     prefix = f"generation-{generation}-"
 
@@ -310,13 +415,35 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
                 "counts": {name: len(tasks) for name, tasks in transitions.items()}}
 
     def paired(label: str, before_name: str, after_name: str) -> dict[str, Any]:
-        return compare(label, panel_records.get(before_name, {}), panel_records.get(after_name, {}))
+        return compare(
+            label, panel_records.get(before_name, {}), panel_records.get(after_name, {})
+        )
 
-    pairs = [paired(f"Customer candidate {index}", prefix + "customer-incumbent", prefix + f"customer-candidate-{index}") for index in range(len(candidates))]
-    selected = customer_phase.get("selected_customer") if committed else (stage or {}).get("selected_customer")
-    selected_panel = prefix + "customer-incumbent" if selected == "incumbent" else prefix + f"customer-candidate-{selected}" if type(selected) is int else None
+    pairs = [
+        paired(
+            f"Customer candidate {index}",
+            prefix + "customer-incumbent",
+            prefix + f"customer-candidate-{index}",
+        )
+        for index in range(len(candidates))
+    ]
+    selected = (
+        customer_phase.get("selected_customer")
+        if committed
+        else (stage or {}).get("selected_customer")
+    )
+    selected_panel = (
+        prefix + "customer-incumbent"
+        if selected == "incumbent"
+        else prefix + f"customer-candidate-{selected}"
+        if type(selected) is int
+        else None
+    )
     if selected_panel and operation != "no_op" and changed:
-        pairs.append(paired("Service repair", selected_panel, prefix + "service-candidate"))
+        pairs.append(
+            paired("Service repair", selected_panel, prefix + "service-candidate")
+        )
+
     def referenced_records(references: list[dict[str, Any]]) -> dict[str, Any]:
         records = {}
         for ref in references:
@@ -341,7 +468,9 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
         if s_phase.get("operation") != "no_op" and (chosen == "incumbent" or type(chosen) is int and 0 <= chosen < len(candidate_records)):
             selected_records = before if chosen == "incumbent" else candidate_records[chosen]
             pairs.append(compare(f"Gen {previous['generation']} Service repair", selected_records, referenced_records(s_phase.get("challenge_episodes", []))))
-    mutation = service_phase if committed else (service_proposal or {}).get("mutation") or {}
+    mutation = (
+        service_phase if committed else (service_proposal or {}).get("mutation") or {}
+    )
     pending_service = None
     if service_ready and mutation.get("operation"):
         proposed = service_phase.get("proposed_service_memory", {}) if committed else (service_proposal or {}).get("proposed_service_memory", {})
@@ -354,15 +483,32 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
                            "skill": skill, "analysis": mutation.get("analysis", service_phase.get("analysis", "")),
                            "committed": bool(committed), "accepted": service_phase.get("accepted") if committed else None}
     imported_paths = {} if origin is None else origin.get("imported_file_sha256", {})
-    imported_attempts = {name.split("/")[1] for name in imported_paths if name.startswith("episodes/")}
+    imported_attempts = {
+        name.split("/")[1] for name in imported_paths if name.startswith("episodes/")
+    }
     visible_complete = [ep for ep in run["episodes"] if ep["status"] == "complete"]
     visible_incomplete = [ep for ep in run["episodes"] if ep["status"] != "complete"]
+
     def attempt_id(ep: dict[str, Any]) -> str:
         parts = ((ep.get("raw_record") or {}).get("trajectory_ref") or "").split("/")
-        return parts[1] if len(parts) > 1 and parts[0] == "episodes" else ep["episode_id"]
+        return (
+            parts[1] if len(parts) > 1 and parts[0] == "episodes" else ep["episode_id"]
+        )
 
-    imported = sum(attempt_id(ep) in imported_attempts for ep in visible_complete) if imported_paths else None if origin is None else origin.get("imported_complete_episodes")
-    new_complete = sum(attempt_id(ep) not in imported_attempts for ep in visible_complete) if imported_paths else len(visible_complete) if origin is None else None
+    imported = (
+        sum(attempt_id(ep) in imported_attempts for ep in visible_complete)
+        if imported_paths
+        else None
+        if origin is None
+        else origin.get("imported_complete_episodes")
+    )
+    new_complete = (
+        sum(attempt_id(ep) not in imported_attempts for ep in visible_complete)
+        if imported_paths
+        else len(visible_complete)
+        if origin is None
+        else None
+    )
     failure_card = None
     if failure and not hidden_phase:
         source = manifest.get("evotau") or {}
@@ -398,4 +544,39 @@ def read_run_progress(reader: ArtifactReader, run: dict[str, Any]) -> dict[str, 
         "provider": health, "failure_message": failure.get("failure_message"),
         "as_of": datetime.now(UTC).isoformat(),
     }
+    if manifest.get("skill_evolution_v2") and not hidden_phase:
+        allowed = set(manifest.get("task_panels", {}).get("E", [])) | set(
+            manifest.get("task_panels", {}).get("V", [])
+        )
+        grouped = {}
+        for ref in refs:
+            name = ref.get("panel_name", "")
+            if (
+                not name.startswith(f"generation-{generation}-")
+                or str(ref.get("task_id")) not in allowed
+            ):
+                continue
+            record = by_id.get(ref.get("episode_id"))
+            if record and record["status"] == "complete":
+                grouped.setdefault(name, []).append(record)
+        result["rows"] = [
+            {
+                "label": name,
+                "state": "COMPLETE" if evolution_finished else "RECORDED",
+                "condition": "Native paired cell evidence; scores in Evolution board",
+                "count": len(records),
+                "total": None,
+                "accuracy": None,
+            }
+            for name, records in sorted(grouped.items())[-12:]
+        ]
+        result["evolution_stages"] = [
+            "service_diagnosis",
+            "service_proposals",
+            "service_screen",
+            "service_crossover",
+            "service_full_gate",
+            "service_selection",
+            "archive_update",
+        ]
     return redact_secrets(result)

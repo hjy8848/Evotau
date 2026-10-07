@@ -58,10 +58,14 @@ def service_strategy_view(strategy: Any) -> dict[str, Any]:
         )
         return {
             "available": True,
-            "carrier": "skill_memory_v1",
+            "carrier": "skill_memory_v2"
+            if memory.get("schema_version") == 2
+            or strategy.get("carrier") == "skill_memory_v2"
+            else "skill_memory_v1",
             "summary": (
                 "空 SkillMemory；Service 使用 τ-bench 原生 prompt。"
-                if not skills else f"Service SkillMemory · {len(skills)} active skill(s)."
+                if not skills
+                else f"Service SkillMemory · {len(skills)} active skill(s)."
             ),
             "text": rendered,
             "skills": skills,

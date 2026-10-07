@@ -86,6 +86,7 @@ class EpisodeRecord:
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["status"] = self.status.value
+        value["activated_skill_ids"] = list(self.activated_skill_ids)
         return value
 
     @classmethod

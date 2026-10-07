@@ -55,9 +55,15 @@ def run_from_config(
         raise RuntimeError("provider calls are disabled in this alternating-run config")
     data_dir = tau2_data_dir or os.environ.get("TAU2_DATA_DIR")
     if data_dir is None:
-        raise ValueError("provide --tau2-data-dir or set TAU2_DATA_DIR to the pinned τ-bench data")
+        raise ValueError(
+            "provide --tau2-data-dir or set TAU2_DATA_DIR to the pinned τ-bench data"
+        )
 
-    project_root = config_file.parent.parent if config_file.parent.name == "configs" else config_file.parent
+    project_root = (
+        config_file.parent.parent
+        if config_file.parent.name == "configs"
+        else config_file.parent
+    )
     output_directory = project_root / manifest.output_path
     checkpoint_path = project_root / manifest.checkpoint_path
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -69,7 +75,8 @@ def run_from_config(
     else:
         write_manifest_once(manifest_path, manifest)
     execution_state_path, execution_state = _begin_execution_attempt(
-        output_directory, manifest.sha256,
+        output_directory,
+        manifest.sha256,
     )
     stage = "initialization"
     try:
@@ -95,7 +102,9 @@ def run_from_config(
         if manifest.run_validation:
             expected_evolution_tasks.update(manifest.validation_task_ids)
         if set(runner.tasks) != expected_evolution_tasks:
-            raise ValueError("evolution runner loaded a task outside the enabled E/V panels")
+            raise ValueError(
+                "evolution runner loaded a task outside the enabled E/V panels"
+            )
 
         models = dict(manifest.role_models)
         role_args = role_model_args_for_runtime(manifest.role_model_args)
@@ -166,6 +175,7 @@ def run_from_config(
                     kwargs.pop(key, None)
                 return run_skill_evolution_v2(**kwargs, providers=V2Providers(providers),
                                              policy=json.loads(manifest.skill_evolution_v2_json))
+
         evolved = evolution_runner(
             tasks=runner.tasks,
             evolution_task_ids=manifest.evolution_task_ids,
@@ -211,7 +221,21 @@ def run_from_config(
         fresh_customer = None
         if manifest.run_heldout:
             stage = "fresh_customer"
-            fresh_customer = propose_fresh_customer_challenge(
+            fresh_runner = propose_fresh_customer_challenge
+            if manifest.service_carrier == "skill_memory_v2":
+                from .skill_evolution import propose_fresh_customer_v2
+
+                def fresh_runner(result, _evolver, **kwargs):
+                    kwargs.pop("request_budget", None)
+                    kwargs.pop("proposal_path", None)
+                    return propose_fresh_customer_v2(
+                        result,
+                        V2Providers(providers),
+                        output_directory=output_directory,
+                        **kwargs,
+                    )
+
+            fresh_customer = fresh_runner(
                 evolved,
                 providers.customer_candidates,
                 tasks=runner.tasks,
@@ -247,10 +271,26 @@ def run_from_config(
                 stop_before_next_episode_file=stop_before_next_episode_file,
                 task_objects=heldout_tasks,
             )
-            heldout_tasks = {task_id: heldout_tasks[task_id] for task_id in manifest.heldout_task_ids}
+            heldout_tasks = {
+                task_id: heldout_tasks[task_id] for task_id in manifest.heldout_task_ids
+            }
             if fresh_customer is None:
-                raise RuntimeError("held-out evaluation requires a fresh adaptive Customer")
-            heldout_evaluation = run_final_endpoint_evaluation(
+                raise RuntimeError(
+                    "held-out evaluation requires a fresh adaptive Customer"
+                )
+            endpoint_runner = run_final_endpoint_evaluation
+            if manifest.service_carrier == "skill_memory_v2":
+                from .skill_evolution import run_v2_endpoint_evaluation
+
+                def endpoint_runner(**kwargs):
+                    return run_v2_endpoint_evaluation(
+                        gate_seeds=json.loads(manifest.skill_evolution_v2_json)[
+                            "evaluation"
+                        ]["gate_seeds"],
+                        **kwargs,
+                    )
+
+            heldout_evaluation = endpoint_runner(
                 heldout_tasks=heldout_tasks,
                 heldout_task_ids=manifest.heldout_task_ids,
                 seed=manifest.seed + manifest.generations + 50_000,
@@ -266,12 +306,14 @@ def run_from_config(
         stage = "finalization"
         api_usage_by_call_name = budget.api_usage_by_call_name()
         execution_state = _finish_execution_attempt(execution_state_path)
-        completed_episodes = len(tuple((output_directory / "episodes").glob("*/episode-record.json")))
+        completed_episodes = len(
+            tuple((output_directory / "episodes").glob("*/episode-record.json"))
+        )
         failed_episode_attempts = len(
             tuple((output_directory / "episodes").glob("*/incomplete-run.json")),
         )
         final_result = {
-            "schema_version": 2,
+            "schema_version": 3 if manifest.service_carrier == "skill_memory_v2" else 2,
             "status": "complete",
             "experiment_id": manifest.experiment_id,
             "manifest_sha256": manifest.sha256,
@@ -290,7 +332,8 @@ def run_from_config(
             ),
             "heldout_endpoint_evaluation": heldout_evaluation,
             "evolution_fitness_seed": (
-                manifest.seed if manifest.evolution_fitness_seed is None
+                manifest.seed
+                if manifest.evolution_fitness_seed is None
                 else manifest.evolution_fitness_seed
             ),
             "validation_enabled": manifest.run_validation,
@@ -308,26 +351,39 @@ def run_from_config(
             "failed_episode_attempts": failed_episode_attempts,
             "timing": {
                 "evolution_wall_clock_seconds": round(evolution_wall_clock_seconds, 6),
-                "validation_wall_clock_seconds": round(validation_wall_clock_seconds, 6),
+                "validation_wall_clock_seconds": round(
+                    validation_wall_clock_seconds, 6
+                ),
                 "heldout_wall_clock_seconds": round(heldout_wall_clock_seconds, 6),
                 "total_wall_clock_seconds": execution_state["total_wall_clock_seconds"],
-                "current_process_wall_clock_seconds": round(perf_counter() - run_started, 6),
+                "current_process_wall_clock_seconds": round(
+                    perf_counter() - run_started, 6
+                ),
                 **episode_job_telemetry.snapshot(),
             },
         }
         _write_json_atomic(output_directory / "alternating-result.json", final_result)
         return output_directory, final_result
     except BaseException as exc:
-        status = "paused" if isinstance(exc, (StopBeforeEpisodeDispatch, KeyboardInterrupt)) else "failed"
-        _finish_execution_attempt(execution_state_path, status=status, failure={
-            "stage": stage,
-            "failure_type": type(exc).__name__, "failure_message": safe_error(exc),
-            "task_id": getattr(exc, "task_id", None),
-            "panel_name": getattr(exc, "panel_name", None),
-            "call_name": getattr(exc, "call_name", None),
-            "diagnostics_ref": getattr(exc, "diagnostics_ref", None),
-            "last_generation_stage": _last_generation_stage(output_directory),
-        })
+        status = (
+            "paused"
+            if isinstance(exc, (StopBeforeEpisodeDispatch, KeyboardInterrupt))
+            else "failed"
+        )
+        _finish_execution_attempt(
+            execution_state_path,
+            status=status,
+            failure={
+                "stage": stage,
+                "failure_type": type(exc).__name__,
+                "failure_message": safe_error(exc),
+                "task_id": getattr(exc, "task_id", None),
+                "panel_name": getattr(exc, "panel_name", None),
+                "call_name": getattr(exc, "call_name", None),
+                "diagnostics_ref": getattr(exc, "diagnostics_ref", None),
+                "last_generation_stage": _last_generation_stage(output_directory),
+            },
+        )
         raise
 
 

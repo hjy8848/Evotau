@@ -30,6 +30,9 @@ class MutationEffect:
     accepted: bool
     rejection_reason: str | None
     parent_mutation_ids: tuple[str, ...] = ()
+    tool_call_delta: float | None = None
+    policy_protocol_delta: int | None = None
+    benefit_risk: float | None = None
 
     def to_dict(self):
         value = asdict(self)
@@ -195,4 +198,12 @@ def paired_effect(
         accepted=accepted,
         rejection_reason=reason,
         parent_mutation_ids=tuple(parent_ids),
+        tool_call_delta=delta("mean_tool_calls"),
+        policy_protocol_delta=b["hard_violations"] - a["hard_violations"],
+        benefit_risk=(
+            (sum(r["status"] == "FIXED" for r in known) / failures)
+            / (sum(r["status"] == "BROKEN" for r in known) / successes)
+            if failures and successes and any(r["status"] == "BROKEN" for r in known)
+            else None
+        ),
     )

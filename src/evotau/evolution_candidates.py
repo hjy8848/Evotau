@@ -58,12 +58,55 @@ class V2Providers:
         self.provider = provider
 
     def call(self, prompt, context, name):
-        return self.provider._provider_json_call(
-            self.provider.model,
-            self.provider.model_args,
-            prompt,
-            context,
-            call_name=name,
+        # Recover a completed recorded call if the process died before stage publication.
+        import json
+
+        from .provider_diagnostics import safe_request_args
+        from .tau_provenance import sha256_json
+
+        directory = self.provider.output_directory
+        if directory is not None:
+            for input_path in sorted(
+                (directory / "evolver-calls").glob("*/input.json")
+            ):
+                output_path = input_path.parent / "output.json"
+                if input_path.is_symlink() or output_path.is_symlink():
+                    raise ValueError("unsafe V2 provider call cache")
+                data = json.loads(input_path.read_text())
+                if (
+                    data.get("call_name"),
+                    data.get("model"),
+                    data.get("system_prompt"),
+                    data.get("request_args"),
+                    data.get("input_sha256"),
+                ) != (
+                    name,
+                    self.provider.model,
+                    prompt,
+                    safe_request_args(self.provider.model_args),
+                    sha256_json(context),
+                ):
+                    continue
+                if data.get("input_sha256") != sha256_json(data["context"]):
+                    raise ValueError("saved V2 provider input digest mismatch")
+                if output_path.is_file():
+                    saved = json.loads(output_path.read_text())
+                    if saved.get("response_sha256") != sha256_json(
+                        saved.get("response")
+                    ):
+                        raise ValueError("saved V2 provider output digest mismatch")
+                    return saved["response"]
+        from .alternating import _provider_call
+
+        return _provider_call(
+            self.provider.request_budget,
+            lambda: self.provider._provider_json_call(
+                self.provider.model,
+                self.provider.model_args,
+                prompt,
+                context,
+                call_name=name,
+            ),
         )
 
     def diagnose(self, context):

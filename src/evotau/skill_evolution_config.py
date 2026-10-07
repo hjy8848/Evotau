@@ -1,5 +1,6 @@
 """Frozen, strict V2 experimental policy; no research settings inferred at runtime."""
 
+import math
 from copy import deepcopy
 
 from .service_skills import V2_MUTATION_TYPES
@@ -103,6 +104,21 @@ def freeze_v2_policy(raw, models, model_args):
     ):
         raise ValueError("V2 uses fixed E repair and disjoint V gate panels")
     gate = policy["statistical_gate"]
+    for value in (
+        gate["confidence"],
+        gate["max_harmfulness"],
+        gate["max_stuck_delta"],
+        policy["opponent_replay"]["current_weight"],
+    ):
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError("V2 numeric policies must be finite numbers")
+    if not 0 <= gate["max_stuck_delta"] <= 1:
+        raise ValueError("max_stuck_delta must be between zero and one")
+    if (
+        type(policy["evaluation"]["screen_clean_tasks"]) is not int
+        or policy["evaluation"]["screen_clean_tasks"] < 1
+    ):
+        raise ValueError("screen_clean_tasks must be a positive integer")
     if not 0.5 < gate["confidence"] < 1 or not 0 <= gate["max_harmfulness"] <= 1:
         raise ValueError("invalid confidence/harmfulness policy")
     if gate["multiple_look_correction"] != "bonferroni":
@@ -112,7 +128,11 @@ def freeze_v2_policy(raw, models, model_args):
     for value in policy["skill_budgets"].values():
         if type(value) is not int or value < 1:
             raise ValueError("skill budgets must be positive integers")
-    policy["skill_budgets"]["max_active_skills"] = policy["max_active_service_skills"]
+    policy["skill_budgets"]["max_active_skills"] = (
+        policy["skill_budgets"]["max_skills"]
+        if policy["service_skill_runtime"] == "render_all_v1"
+        else policy["max_active_service_skills"]
+    )
     policy["activator"]["model"] = policy["activator"]["model"] or models["agent"]
     if not policy["activator"]["model_args"]:
         policy["activator"]["model_args"] = deepcopy(model_args["agent"])

@@ -4,6 +4,7 @@ import json
 import random
 from copy import deepcopy
 from pathlib import Path
+from time import perf_counter
 
 from .evolution_archive import (
     CustomerChallengeArchive,
@@ -105,6 +106,14 @@ def run_skill_evolution_v2(
     fitness_seed = seed if evolution_fitness_seed is None else evolution_fitness_seed
     evo = policy["service_evolution"]
     smoke = not run_validation
+    timing_path = root / "evolution-timing.json"
+    timing = (
+        json.loads(timing_path.read_text())
+        if timing_path.exists()
+        else {"manifest_sha256": manifest_sha256, "stages": {}}
+    )
+    if timing.get("manifest_sha256") != manifest_sha256:
+        raise ValueError("timing manifest mismatch")
 
     def stage(g, name, inputs, callback):
         _write_json_atomic(
@@ -114,9 +123,27 @@ def run_skill_evolution_v2(
                 "manifest_sha256": manifest_sha256,
                 "generation": g,
                 "stage": name,
+                "panel_task_ids": inputs.get("task_ids")
+                if isinstance(inputs, dict)
+                else None,
+                "seed_schedule": inputs.get("seeds")
+                if isinstance(inputs, dict)
+                else None,
             },
         )
-        output = journal.freeze(f"g{g:04d}-{name}", inputs, callback)
+
+        def measured_callback():
+            started = perf_counter()
+            try:
+                return callback()
+            finally:
+                key = f"g{g:04d}-{name}"
+                timing["stages"][key] = (
+                    timing["stages"].get(key, 0) + perf_counter() - started
+                )
+                _write_json_atomic(timing_path, timing)
+
+        output = journal.freeze(f"g{g:04d}-{name}", inputs, measured_callback)
         if interrupt_after_stage == name:
             raise RuntimeError(f"deterministic interruption after {name}")
         return output
@@ -292,7 +319,37 @@ def run_skill_evolution_v2(
             },
         )
         # Generate diagnoses only from E; passing and failing examples are equally available.
-        representative = service_evidence(selected)
+        all_evidence = service_evidence(selected)
+        if policy["history"]["summarize"]:
+            limit = policy["history"]["representative_cases"]
+            failures = [
+                row
+                for row in all_evidence
+                if row["native_evaluation"]["task_success"] is False
+            ]
+            passing = [
+                row
+                for row in all_evidence
+                if row["native_evaluation"]["task_success"] is True
+            ]
+
+            def visible_tools(row):
+                return {
+                    tool.get("name") or (tool.get("function") or {}).get("name")
+                    for message in (row.get("trajectory") or {}).get("messages", [])
+                    for tool in (message.get("tool_calls") or [])
+                }
+
+            failure_tools = set().union(*(visible_tools(row) for row in failures))
+            # Similar visible tool paths are controls, never hidden objectives/task identities.
+            passing.sort(key=lambda row: -len(visible_tools(row) & failure_tools))
+            # Keep failures and passing controls; IDs refer to the full native E panel.
+            representative = (
+                failures[: max(1, limit // 2)]
+                + passing[: max(1, limit - len(failures[: max(1, limit // 2)]))]
+            )
+        else:
+            representative = all_evidence
         s_context = {
             "generation": g,
             "task_interactions": representative,
@@ -300,6 +357,7 @@ def run_skill_evolution_v2(
             "current_service_memory": before_s.to_dict(),
             "service_policy": domain_policy,
             "interaction_metrics": episode_metrics(selected),
+            "current_outcomes": [r.to_dict() for r in selected],
             "previous_mutation_effects": history if evo["lineage"] else [],
             "exploration": stagnation_state(
                 documents, effects, evo["stagnation_patience"]
@@ -311,6 +369,16 @@ def run_skill_evolution_v2(
             s_context,
             lambda s_context=s_context: providers.diagnose(s_context),
         )
+        failed_ids = {r.task_id for r in selected if r.task_success is False}
+        passed_ids = {r.task_id for r in selected if r.task_success is True}
+        for cluster in diagnosis["clusters"]:
+            if (
+                not set(cluster["evidence_task_ids"]) <= failed_ids
+                or not set(cluster["protected_success_task_ids"]) <= passed_ids
+            ):
+                raise ValueError(
+                    "diagnosis target/protected labels disagree with native E evidence"
+                )
         clusters = [
             c for c in diagnosis["clusters"] if c["recommended_surface"] == "skill"
         ]
@@ -374,6 +442,30 @@ def run_skill_evolution_v2(
                         else None
                     ),
                 }
+                relevant_ids = (
+                    target
+                    | protected
+                    | set(ctx["prior_fixed_cases"])
+                    | set(ctx["prior_broken_cases"])
+                )
+                relevant = [
+                    row
+                    for row in all_evidence
+                    if row["task"]["task_id"] in relevant_ids
+                ]
+                controls = [
+                    row
+                    for row in representative
+                    if row["task"]["task_id"] not in relevant_ids
+                ]
+                ctx["task_interactions"] = (
+                    relevant
+                    + controls[
+                        : max(
+                            0, policy["history"]["representative_cases"] - len(relevant)
+                        )
+                    ]
+                )
                 ident = f"g{g:04d}-{cluster['cluster_id']}-{bias}"
                 proposal = stage(
                     g,
@@ -382,6 +474,8 @@ def run_skill_evolution_v2(
                     lambda ctx=ctx: providers.mutate(ctx),
                 )
                 all_proposals.append((ident, proposal, cluster, ()))
+
+        seen_candidates = []
 
         def evaluate_candidate(
             ident,
@@ -396,6 +490,7 @@ def run_skill_evolution_v2(
             opponents=opponents,
             looks=looks,
             matrix=matrix,
+            seen_candidates=seen_candidates,
         ):
             nonlocal watermark
             target, protected = (
@@ -434,7 +529,9 @@ def run_skill_evolution_v2(
                 row["pre_rollout_rejection"] = "no_op"
                 return row, ()
             duplicate = (
-                semantic_duplicate(mutation, effects) if evo["semantic_dedup"] else None
+                semantic_duplicate(mutation, [*effects, *seen_candidates])
+                if evo["semantic_dedup"]
+                else None
             )
             if duplicate:
                 row.update(
@@ -504,6 +601,23 @@ def run_skill_evolution_v2(
             attribution_old, attribution_new = old, new
             gates, full_runs = [], ()
             if screen["passed"]:
+                if not smoke:
+                    attribution_old = panel(
+                        g,
+                        f"service_repair_full-{ident}-old",
+                        e,
+                        policy["evaluation"]["gate_seeds"],
+                        customer,
+                        before_s,
+                    )
+                    attribution_new = panel(
+                        g,
+                        f"service_repair_full-{ident}-new",
+                        e,
+                        policy["evaluation"]["gate_seeds"],
+                        customer,
+                        proposed,
+                    )
                 gate_ids = e if smoke else v
                 gate_seeds = policy["evaluation"]["gate_seeds"]
                 for label, opponent, weight in opponents:
@@ -594,9 +708,7 @@ def run_skill_evolution_v2(
                     candidate_id=ident,
                     prior=matrix,
                 ),
-                evaluation_scope="full_E"
-                if smoke and screen["passed"]
-                else "paired_screen_E",
+                evaluation_scope="full_E" if screen["passed"] else "paired_screen_E",
                 full_gate_episodes=[r.to_dict() for r in full_runs],
             )
             return row, full_runs
@@ -605,6 +717,18 @@ def run_skill_evolution_v2(
         for ident, mutation, cluster, parents in all_proposals:
             row, runs = evaluate_candidate(ident, mutation, cluster, parents)
             evaluated.append((row, runs))
+            if isinstance(row.get("mutation"), dict) and row["mutation"].get(
+                "operation"
+            ) in (
+                "add",
+                "narrow_trigger",
+                "expand_trigger",
+                "rewrite_guidance",
+                "split",
+                "delete",
+                "no_op",
+            ):
+                seen_candidates.append(row)
         if evo["crossover"]:
             eligible = [
                 row
@@ -696,14 +820,14 @@ def run_skill_evolution_v2(
             live_ids = {s.skill_id for s in service.skills}
             prior_provenance = {p["skill_id"]: p for p in provenance}
             provenance = [
-                {
+                prior_provenance[s.skill_id]
+                if s in before_s.skills
+                else {
                     "skill_id": s.skill_id,
                     "created_generation": prior_provenance.get(s.skill_id, {}).get(
                         "created_generation", g
                     ),
-                    "updated_generation": g
-                    if s not in before_s.skills
-                    else prior_provenance[s.skill_id]["updated_generation"],
+                    "updated_generation": g,
                     "parent_mutation": row["mutation_id"],
                     "source_task_ids": row["effect"]["fail_to_pass"],
                 }
@@ -741,6 +865,11 @@ def run_skill_evolution_v2(
                 (r["effect"]["candidate_accuracy"] for r in board if r["effect"]), None
             )
         )
+        from .evolution_artifacts import summarize_activation_artifacts
+
+        activation_summary = summarize_activation_artifacts(
+            root, manifest_sha256, set(e) | set(v)
+        )
         gen = {
             "schema_version": 3,
             "manifest_sha256": manifest_sha256,
@@ -761,6 +890,7 @@ def run_skill_evolution_v2(
             "service_phase": {
                 "carrier": "skill_memory_v2",
                 "old_accuracy": selected_accuracy,
+                "final_accuracy": _accuracy(final_runs),
                 "proposed_accuracy": proposed_accuracy,
                 "accepted": winner is not None,
                 "acceptance_mode": "e_only_mechanism_smoke"
@@ -785,12 +915,20 @@ def run_skill_evolution_v2(
                 "activation_mode": policy["service_skill_runtime"],
                 "mechanism_smoke": smoke,
             },
+            "activation_summary": activation_summary,
             "customer_archive": customers.entries,
             "failure_matrix": [
                 r for row in board for r in row.get("failure_matrix", [])
             ],
             "history_summary": summarize_effects(effects),
             "statistical_policy": policy["statistical_gate"],
+            "timing": {
+                "validation_wall_clock_seconds": sum(
+                    elapsed
+                    for key, elapsed in timing["stages"].items()
+                    if key.startswith(f"g{g:04d}-service_full_gate") and not smoke
+                )
+            },
         }
         documents.append(deepcopy(gen))
         state = {
@@ -804,6 +942,7 @@ def run_skill_evolution_v2(
             "customer_archive": customers.entries,
             "history_summary": summarize_effects(effects),
             "activation_config": policy["activator"],
+            "activation_summary": activation_summary,
             "statistical_gate_state": {
                 "policy": policy["statistical_gate"],
                 "looks": looks,
@@ -859,3 +998,97 @@ def run_skill_evolution_v2(
         tuple(final_runs),
         compat_provenance,
     )
+
+
+def propose_fresh_customer_v2(
+    result,
+    providers,
+    *,
+    tasks,
+    runner,
+    domain_policy,
+    output_directory,
+    manifest_sha256,
+):
+    """Freeze and validate the final adaptive challenge using E-only evidence before H loads."""
+    from .alternating import _context_episodes, _write_json_once
+
+    journal = EvolutionJournal(output_directory, manifest_sha256)
+    context = {
+        "task_interactions": _context_episodes(
+            result.final_evolution_episodes, runner, tasks
+        ),
+        "current_customer_strategy": result.customer.text,
+        "current_service_memory": result.service.to_dict(),
+        "service_policy": domain_policy,
+        "challenge_archive": result.generations[-1].get("customer_archive", []),
+        "purpose": "Fresh adaptive challenge; heldout content has not been loaded.",
+    }
+    proposal = journal.freeze(
+        "final-fresh-customer", context, lambda: providers.customers(context, 1)
+    )["candidates"][0]
+    validation_context = {
+        "strategy": proposal["strategy"],
+        "scenarios": [
+            row["task"]["user_scenario"] for row in context["task_interactions"]
+        ],
+    }
+    validation = journal.freeze(
+        "final-fresh-customer-validator",
+        validation_context,
+        lambda: providers.validate_customer(validation_context),
+    )
+    if not all(
+        validation.get(key) is True
+        for key in (
+            "preserves_facts",
+            "preserves_objective",
+            "interaction_only",
+            "no_benchmark_leakage",
+        )
+    ):
+        raise ValueError("fresh Customer semantic validation failed before H loading")
+    customer = PromptStrategy(proposal["strategy"])
+    _write_json_once(
+        Path(output_directory) / "fresh-customer-proposal.json",
+        {
+            "schema_version": 3,
+            "manifest_sha256": manifest_sha256,
+            "evolver_input_sha256": sha256_json(context),
+            "strategy": customer.text,
+            "strategy_id": customer_strategy_id(customer),
+            "semantic_validation": validation,
+        },
+    )
+    return customer
+
+
+def run_v2_endpoint_evaluation(*, gate_seeds, **kwargs):
+    """Final-only native/fresh H scorecard; reuse identical S0/ST conditions for each seed."""
+    from .alternating import _write_json_atomic, run_final_endpoint_evaluation
+    from .evolution_gate import pass_power_k
+
+    output_path = kwargs.pop("output_path", None)
+    kwargs.pop("seed", None)
+    per_seed = [
+        run_final_endpoint_evaluation(seed=seed, **kwargs) for seed in gate_seeds
+    ]
+    summary = deepcopy(per_seed[0])
+    summary.update(schema_version=3, seeds=list(gate_seeds), per_seed=per_seed)
+    cells = []
+    for index in range(4):
+        cell = deepcopy(per_seed[0]["cells"][index])
+        episodes = [
+            e for result in per_seed for e in result["cells"][index]["episodes"]
+        ]
+        records = [EpisodeRecord.from_dict(e) for e in episodes]
+        cell.update(
+            accuracy=episode_metrics(records)["accuracy"],
+            episodes=episodes,
+            pass_power_k={str(k): pass_power_k(records, k) for k in (1, 2)},
+        )
+        cells.append(cell)
+    summary["cells"] = cells
+    if output_path:
+        _write_json_atomic(Path(output_path), summary)
+    return summary
