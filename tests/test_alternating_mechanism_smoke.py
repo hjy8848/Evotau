@@ -162,8 +162,9 @@ def test_retail_task_stream_loader_never_decodes_unselected_scenario_payload(
     assert all(hidden_marker not in value for value in decoded_json)
 
 
+@pytest.mark.parametrize("configured_model", ["gpt-6.1-sol", "openai/gpt-6.1-sol"])
 def test_inferai_responses_evolver_uses_direct_transport_and_request_budget(
-    monkeypatch,
+    monkeypatch, configured_model,
 ) -> None:
     monkeypatch.setenv("INFERAI_API_KEY", "test-inferai-key")
     captured: dict[str, object] = {}
@@ -188,7 +189,7 @@ def test_inferai_responses_evolver_uses_direct_transport_and_request_budget(
     )
     budget = RequestBudget(cap=1)
     evolver = LLMAlternatingEvolvers(
-        model="gpt-6.1-sol",
+        model=configured_model,
         model_args={
             "api_protocol": "responses",
             "api_base": "https://inferaiapi.com/v1",
@@ -209,6 +210,7 @@ def test_inferai_responses_evolver_uses_direct_transport_and_request_budget(
     assert "tools" not in payload
     assert "temperature" not in payload
     assert [message["role"] for message in payload["input"]] == ["system", "user"]
+    assert budget.snapshot().to_dict()["model_usage"][0]["model_id"] == configured_model
     assert budget.snapshot().attempts == 1
     assert budget.snapshot().prompt_tokens == 19
     assert budget.snapshot().completion_tokens == 8

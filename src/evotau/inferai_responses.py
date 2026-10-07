@@ -34,7 +34,9 @@ def generate_text(
 
     api_key = _resolve_api_key(api_key_env)
     payload = {
-        "model": model,
+        # Match LiteLLM's provider/model convention on the direct Responses route.
+        # The configured model identity stays unchanged in budget/provenance records.
+        "model": model.removeprefix("openai/"),
         "input": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -56,7 +58,7 @@ def generate_text(
             call_name=call_name,
             dispatch=dispatch,
             request_args={
-                "model": model, "api_base": api_base, "api_protocol": "responses",
+                "model": payload["model"], "api_base": api_base, "api_protocol": "responses",
                 "reasoning": payload["reasoning"], "timeout": _REQUEST_TIMEOUT_SECONDS,
                 "num_retries": 0,
             },

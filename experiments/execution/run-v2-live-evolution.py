@@ -6,7 +6,10 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 
 import yaml
 
@@ -14,11 +17,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from evotau import inferai_responses
 from evotau.alternating import LLMAlternatingEvolvers, _write_json_once
 from evotau.alternating_manifest import AlternatingManifest
 from evotau.alternating_run import load_alternating_tasks, run_from_config
 from evotau.budget import RequestBudget
 from evotau.evolution_candidates import V2Providers
+from evotau.provider_diagnostics import response_metadata, safe_error
 from evotau.tau_provenance import role_model_args_for_runtime, sha256_json
 
 
@@ -30,6 +35,75 @@ class WireOutput:
 
     def __truediv__(self, filename):
         return self.path / filename
+
+
+def install_responses_observer(route):
+    original = inferai_responses._build_opener
+    lock = threading.Lock()
+
+    def record(row):
+        row["at"] = datetime.now(UTC).isoformat()
+        with lock, (route / "actual-provider-http.jsonl").open("a") as handle:
+            handle.write(json.dumps(row) + "\n")
+
+    def factory():
+        opener = original()
+        original_open = opener.open
+
+        def observed_open(request, *args, **kwargs):
+            body = json.loads(request.data)
+            selected = {
+                k: body[k] for k in ("model", "reasoning", "stream") if k in body
+            }
+            record(
+                {
+                    "event": "request",
+                    "protocol": "responses",
+                    "args": selected,
+                    "tools_count": len(body.get("tools") or []),
+                }
+            )
+            started = perf_counter()
+            try:
+                response = original_open(request, *args, **kwargs)
+            except BaseException as error:
+                record(
+                    {
+                        "event": "failure",
+                        "protocol": "responses",
+                        "http_status": getattr(error, "code", None),
+                        "error": safe_error(error),
+                        "elapsed_seconds": perf_counter() - started,
+                    }
+                )
+                raise
+            original_read = response.read
+
+            def observed_read(*args, **kwargs):
+                raw = original_read(*args, **kwargs)
+                try:
+                    payload = json.loads(raw)
+                except ValueError:
+                    payload = {}
+                record(
+                    {
+                        "event": "response",
+                        "protocol": "responses",
+                        "model": body.get("model"),
+                        "http_status": response.status,
+                        "metadata": response_metadata(payload),
+                        "elapsed_seconds": perf_counter() - started,
+                    }
+                )
+                return raw
+
+            response.read = observed_read
+            return response
+
+        opener.open = observed_open
+        return opener
+
+    inferai_responses._build_opener = factory
 
 
 def main():
@@ -110,6 +184,7 @@ def main():
     spec.loader.exec_module(module)
     route = WireOutput(preflight)
     module.install_transport(route)
+    install_responses_observer(route)
     budget = RequestBudget(None)
     budget.enable_live_usage(preflight / "api-usage-live.json")
     role_args = role_model_args_for_runtime(manifest.role_model_args)
