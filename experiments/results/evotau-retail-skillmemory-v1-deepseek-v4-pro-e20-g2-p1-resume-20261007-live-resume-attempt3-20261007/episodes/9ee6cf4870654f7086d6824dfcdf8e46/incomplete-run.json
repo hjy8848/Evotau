@@ -1,0 +1,178 @@
+{
+  "attempt_id": "9ee6cf4870654f7086d6824dfcdf8e46",
+  "task_id": "67",
+  "seed": 1,
+  "episode_key": {
+    "task_id": "67",
+    "seed": 1,
+    "customer_strategy_id": "865fb00d249520e9",
+    "service_strategy_id": "28940cc308f6a614"
+  },
+  "episode_key_sha256": "cc6a1804b139eb6820986f8c96f3592e2c3baf8f91abb1446623ff5614f92739",
+  "panel_name": "generation-1-customer-candidate-0",
+  "failure_type": "InternalServerError",
+  "failure_message": "litellm.InternalServerError: InternalServerError: OpenAIException - Formal experiment condition anomaly: Flash reasoning leakage",
+  "failure_repr": "litellm.InternalServerError: InternalServerError: OpenAIException - Formal experiment condition anomaly: Flash reasoning leakage",
+  "cause_type": "OpenAIError",
+  "cause_message": "Formal experiment condition anomaly: Flash reasoning leakage",
+  "exception_chain": [
+    {
+      "type": "InternalServerError",
+      "message": "litellm.InternalServerError: InternalServerError: OpenAIException - Formal experiment condition anomaly: Flash reasoning leakage",
+      "repr": "litellm.InternalServerError: InternalServerError: OpenAIException - Formal experiment condition anomaly: Flash reasoning leakage"
+    },
+    {
+      "type": "OpenAIError",
+      "message": "Formal experiment condition anomaly: Flash reasoning leakage",
+      "repr": "OpenAIError('Formal experiment condition anomaly: Flash reasoning leakage')"
+    },
+    {
+      "type": "RuntimeError",
+      "message": "Formal experiment condition anomaly: Flash reasoning leakage",
+      "repr": "RuntimeError('Formal experiment condition anomaly: Flash reasoning leakage')"
+    }
+  ],
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 851, in completion\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 779, in completion\n    ) = self.make_sync_openai_chat_completion_request(\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/logging_utils.py\", line 344, in sync_wrapper\n    result = func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 502, in make_sync_openai_chat_completion_request\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 477, in make_sync_openai_chat_completion_request\n    raw_response = openai_client.chat.completions.with_raw_response.create(\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_legacy_response.py\", line 369, in wrapped\n    return cast(LegacyAPIResponse[R], func(*args, **kwargs))\n                                      ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_utils/_utils.py\", line 298, in wrapper\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/resources/chat/completions/completions.py\", line 1318, in create\n    return self._post(\n           ^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_base_client.py\", line 1440, in post\n    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_base_client.py\", line 1148, in request\n    response = self._send_request(\n               ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_client.py\", line 601, in _send_request\n    response = self._send_with_auth_retry(request, stream=stream, **kwargs)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_client.py\", line 580, in _send_with_auth_retry\n    response = super()._send_request(request, stream=stream, **kwargs)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_base_client.py\", line 1069, in _send_request\n    return self._client.send(request, stream=stream, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/evotau-retail-live-resume-launch.py\", line 82, in observed_send\n    raise RuntimeError('Formal experiment condition anomaly: Flash reasoning leakage')\nRuntimeError: Formal experiment condition anomaly: Flash reasoning leakage\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 2698, in completion\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 2670, in completion\n    response = openai_chat_completions.completion(\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 862, in completion\n    raise OpenAIError(\nlitellm.llms.openai.common_utils.OpenAIError: Formal experiment condition anomaly: Flash reasoning leakage\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/Users/spring/.cache/evotau/frozen-runtime-965497fcfd0260fd/src/evotau/tau_episode_runner.py\", line 335, in _run_episode\n    simulation = run_with_budget(\n                 ^^^^^^^^^^^^^^^^\n  File \"/Users/spring/.cache/evotau/frozen-runtime-965497fcfd0260fd/src/evotau/tau_adapter.py\", line 281, in run_with_budget\n    result = run_simulation(orchestrator, evaluation_type=EvaluationType.ALL)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/runner/simulation.py\", line 59, in run_simulation\n    simulation = orchestrator.run()\n                 ^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/orchestrator/orchestrator.py\", line 280, in run\n    self.step()\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/orchestrator/orchestrator.py\", line 858, in step\n    agent_msg, self.agent_state = self.agent.generate_next_message(\n                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/agent/llm_agent.py\", line 111, in generate_next_message\n    assistant_message = self._generate_next_message(message, state)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/agent/llm_agent.py\", line 128, in _generate_next_message\n    assistant_message = generate(\n                        ^^^^^^^^^\n  File \"/Users/spring/.cache/evotau/frozen-runtime-965497fcfd0260fd/src/evotau/budget.py\", line 873, in guarded_generate\n    return original_generate(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/utils/llm_utils.py\", line 418, in generate\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/utils/llm_utils.py\", line 409, in generate\n    response = completion(\n               ^^^^^^^^^^^\n  File \"/Users/spring/.cache/evotau/frozen-runtime-965497fcfd0260fd/src/evotau/budget.py\", line 826, in guarded_completion\n    result = original_completion(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/utils.py\", line 1775, in wrapper\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/utils.py\", line 1596, in wrapper\n    result = original_function(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 4411, in completion\n    raise exception_type(\n          ^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py\", line 2456, in exception_type\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py\", line 588, in exception_type\n    raise InternalServerError(\nlitellm.exceptions.InternalServerError: litellm.InternalServerError: InternalServerError: OpenAIException - Formal experiment condition anomaly: Flash reasoning leakage\n",
+  "traceback_truncated": false,
+  "native_simulation_saved": false,
+  "partial_trajectory_ref": "episodes/9ee6cf4870654f7086d6824dfcdf8e46/partial-simulation.json",
+  "partial_trajectory_error": null,
+  "provider_calls_ref": "episodes/9ee6cf4870654f7086d6824dfcdf8e46/provider-calls.jsonl",
+  "communication_protocol_observation": null,
+  "rendered_prompt_sha256": {
+    "agent": "55063e6c9be8fc12a01f79f73ed844ab7830301eaa38b43cf528aac5190924c0",
+    "service_native_system_prompt": "4cf6e44236a35dda69511c196e882c7465b547e942bd9d26984ab6eb4d28ef83",
+    "service_overlay": "d3f8ce0d8a2a6f6943374bf87e333feb07efd68a3e3a70a55d759962b337401a",
+    "service_skill_count": 1,
+    "service_skill_rendered_chars": 2126,
+    "service_skill_rendered_tokens": null,
+    "customer": "08ec7e2a28b3dae81b8a60bf1c24ef22c0acf6a8d180fc558a91df422c4f1cf6",
+    "customer_native_system_prompt": "934e613e3e332c71fc9c8f0b8382cd66cc7ce167fae281737673729c6ef84a8f",
+    "customer_scenario_source": "35ab05b07a5672f52a97e100055d6541eef00c6a99739776259bc634ed767746",
+    "customer_scenario_runtime": "35ab05b07a5672f52a97e100055d6541eef00c6a99739776259bc634ed767746"
+  },
+  "budget_before": {
+    "cap": null,
+    "attempts": 1297,
+    "successes": 1295,
+    "failures": 2,
+    "denied": 0,
+    "prompt_tokens": 7132548,
+    "completion_tokens": 184595,
+    "usage_responses": 1295,
+    "usage_unavailable": 2,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 1,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 1293,
+        "successes": 1291,
+        "failures": 2,
+        "denied": 0,
+        "prompt_tokens": 6597801,
+        "completion_tokens": 157599,
+        "usage_responses": 1291,
+        "usage_unavailable": 2,
+        "cache_hits": 0,
+        "in_flight": 0
+      },
+      {
+        "model_id": "openai/deepseek-v4-pro",
+        "attempts": 4,
+        "successes": 4,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 534747,
+        "completion_tokens": 26996,
+        "usage_responses": 4,
+        "usage_unavailable": 0,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  },
+  "budget_after": {
+    "cap": null,
+    "attempts": 1312,
+    "successes": 1309,
+    "failures": 3,
+    "denied": 0,
+    "prompt_tokens": 7187525,
+    "completion_tokens": 185546,
+    "usage_responses": 1309,
+    "usage_unavailable": 3,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 1308,
+        "successes": 1305,
+        "failures": 3,
+        "denied": 0,
+        "prompt_tokens": 6652778,
+        "completion_tokens": 158550,
+        "usage_responses": 1305,
+        "usage_unavailable": 3,
+        "cache_hits": 0,
+        "in_flight": 0
+      },
+      {
+        "model_id": "openai/deepseek-v4-pro",
+        "attempts": 4,
+        "successes": 4,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 534747,
+        "completion_tokens": 26996,
+        "usage_responses": 4,
+        "usage_unavailable": 0,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  },
+  "budget_delta": {
+    "attempts": 15,
+    "successes": 14,
+    "failures": 1,
+    "denied": 0,
+    "prompt_tokens": 54977,
+    "completion_tokens": 951,
+    "usage_responses": 14,
+    "usage_unavailable": 1,
+    "cache_hits": 0
+  },
+  "episode_budget_delta": {
+    "cap": null,
+    "attempts": 15,
+    "successes": 14,
+    "failures": 1,
+    "denied": 0,
+    "prompt_tokens": 54977,
+    "completion_tokens": 951,
+    "usage_responses": 14,
+    "usage_unavailable": 1,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 15,
+        "successes": 14,
+        "failures": 1,
+        "denied": 0,
+        "prompt_tokens": 54977,
+        "completion_tokens": 951,
+        "usage_responses": 14,
+        "usage_unavailable": 1,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  }
+}

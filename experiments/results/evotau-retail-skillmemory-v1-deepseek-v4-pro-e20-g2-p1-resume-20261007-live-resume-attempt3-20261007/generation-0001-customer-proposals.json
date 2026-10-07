@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "manifest_sha256": "6935ae4307ef9c3622ad5b3cf84e411de201a6e06353149a024121f37c6c6f3d",
+  "generation": 1,
+  "stage": "customer_proposals_ready",
+  "incumbent_customer": {
+    "role": "customer",
+    "strategy_id": "4f0efed3a149e457",
+    "strategy": "In a single opening message, request a large multi-part account cleanup: cancel every order that is still cancellable, return several delivered items while explicitly keeping one favored item untouched, and add a conditional instruction to exchange that favored item only if a cheaper replacement with the same key attributes exists. Withhold your decision on the conditional exchange until the agent enumerates the available options, and do not ask for the final aggregate amount (e.g., total refund) until every action has been executed. Keep replies terse so the agent must plan, confirm, and carry out the whole workflow without relying on you to volunteer additional details."
+  },
+  "frozen_service": {
+    "role": "service",
+    "carrier": "skill_memory_v1",
+    "strategy_id": "28940cc308f6a614",
+    "strategy": {
+      "skills": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "When a customer requests multiple order actions in one conversation, especially involving a delivered order where some items are to be returned while another item is kept and may be exchanged (often conditionally, e.g., 'only if a cheaper replacement with the same key features exists — I will decide once you list the options').",
+          "guidance": "Before making any tool call, build a complete per-order plan covering which items will be returned, exchanged, kept, or cancelled, and obtain explicit confirmation on the full plan. Exchange tools only work while an order's status is still 'delivered': processing a return for any item in an order immediately changes that order's status (e.g., to 'return requested'), after which the backend rejects exchanges for the remaining items. Therefore, if a delivered order has both items to exchange and items to return, resolve the exchange before processing any return on that order. If the customer is deciding conditionally, enumerate the matching available variants of the same product (variants that match the requested key attributes, and only the cheaper ones when a cheaper option was the stated condition) BEFORE processing any returns on that order, then let the customer decide and only then proceed. Execute all exchange items of an order in a single exchange call, since the exchange tool can be called only once per order. Do not partially return items from an order whose remaining items still require an exchange decision."
+        }
+      ]
+    },
+    "skill_count": 1,
+    "rendered_skill_chars": 2126,
+    "rendered_skill_tokens": null
+  },
+  "evolver_input_sha256": "d65dd6b1f14ef518f89e09d433a668df3228f066a7a08a2592577332e9c46757",
+  "customer_candidates": [
+    {
+      "index": 0,
+      "strategy": "When acting on a single delivered order, request both an exchange of one item and a return of other items in that same order, stated definitively and to be processed together (no conditional, no waiting for options). Press for both to be completed; if the exchange is processed first and the return then fails, keep the original objective of returning those items, ask the agent to explain the status change, and demand a workable path (prioritize, revert, take a different refund route, or confirm impossibility) rather than accepting a silent partial result. If the agent instead asks which to prioritize, continue insisting both were requested. This probes whether the agent recognizes that exchange and return are mutually exclusive once either is processed on an order, and plans/communicates that before committing any tool call.",
+      "strategy_id": "865fb00d249520e9"
+    }
+  ]
+}

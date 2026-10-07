@@ -17,3 +17,5 @@ One subdirectory per analyzed run. Each run folder keeps its frozen configuratio
 [`evotau-retail-skillmemory-v1-deepseek-v4-pro-e20-g2-p1-resume-20261007/`](evotau-retail-skillmemory-v1-deepseek-v4-pro-e20-g2-p1-resume-20261007/README.md) is the explicit serial E20/G5 continuation: imported Gen0/62 complete native episodes and the existing Gen1 Customer candidate, retained model args, completed 1/2 generations; terminal status failed. Parent and incremental usage/provenance are distinguished.
 
 [evotau-retail-skillmemory-v1-deepseek-v4-pro-e20-g2-p1-resume-20261007-live-resume-20261007](evotau-retail-skillmemory-v1-deepseek-v4-pro-e20-g2-p1-resume-20261007-live-resume-20261007/README.md): authorized live resume, terminal failed, 1/2 generations.
+
+[evotau-retail-skillmemory-v1-deepseek-v4-pro-e20-g2-p1-resume-20261007-live-resume-attempt3-20261007](evotau-retail-skillmemory-v1-deepseek-v4-pro-e20-g2-p1-resume-20261007-live-resume-attempt3-20261007/README.md): authorized live resume, terminal failed, 1/2 generations.
