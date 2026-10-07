@@ -25,6 +25,9 @@ import httpx
 from evotau.provider_diagnostics import response_metadata, safe_error
 send_original=httpx.Client.send
 wire_lock=threading.Lock()
+sys.path.insert(0,str(ROOT/'experiments/execution'))
+from inferai_transport_pacing import SlidingWindowPacer
+pacer=SlidingWindowPacer(max_requests=30,window_seconds=60.1)
 
 def record(event):
     event['at']=datetime.now(UTC).isoformat()
@@ -38,11 +41,12 @@ def observed_send(client,request,*args,**kwargs):
     if request.url.host!='inferaiapi.com' or request.method!='POST':
         return send_original(client,request,*args,**kwargs)
     body=json.loads(request.content)
+    dispatch_wait_seconds=pacer.acquire()
     event_id=uuid.uuid4().hex
     selected={k:body[k] for k in ('model','thinking','reasoning_effort','temperature','max_tokens','max_completion_tokens','stream') if k in body}
     if isinstance(body.get('reasoning'),dict):
         selected['reasoning']={k:v for k,v in body['reasoning'].items() if k=='effort'}
-    record({'event':'request','event_id':event_id,'method':request.method,'url':str(request.url.copy_with(query=None)), 'body_parameters':selected,'tools_count':len(body.get('tools') or []),'messages_count':len(body.get('messages') or [])})
+    record({'event':'request','event_id':event_id,'method':request.method,'url':str(request.url.copy_with(query=None)), 'body_parameters':selected,'tools_count':len(body.get('tools') or []),'messages_count':len(body.get('messages') or []),'dispatch_wait_seconds':dispatch_wait_seconds,'transport_pacing':{'max_requests':30,'window_seconds':60.1}})
     model=body.get('model')
     if model=='deepseek-v4-pro' and body.get('max_tokens',body.get('max_completion_tokens'))!=65536:
         record({'event':'condition_anomaly','event_id':event_id,'reason':'Pro output allowance was not passed'})
