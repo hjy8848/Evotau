@@ -123,7 +123,7 @@ python experiments/execution/run-v2-offline-smoke.py \
 evotau-web --project-root /tmp/evotau-v2-native-evidence-new
 ```
 
-The implementation passed 179 offline tests and Ruff checks. Saved final engineering evidence is in `experiments/results/skill-evolution-v2-offline-native-20261007-final/`; an earlier diagnostic snapshot is preserved separately and explicitly documents a subsequently corrected Evolver accounting omission.
+The implementation and gate calibration passed 189 offline tests and Ruff checks. Saved final engineering evidence is in `experiments/results/skill-evolution-v2-offline-native-20261007-final/`; an earlier diagnostic snapshot is preserved separately and explicitly documents a subsequently corrected Evolver accounting omission.
 
 The exporter runs the pinned native Customer/Service/tools/backend/evaluator with a **scripted local completion boundary** and saves manifest, config, checkpoint, simulations, activation decisions, native rewards and stage/provider-call records. It exercises ADD, screen rejection, activation and exact resume with zero new local calls. It is E1/G1 with a deliberately tiny max_steps, not a useful task-performance experiment. The deterministic fake-runner suite separately exercises independent candidates, promotion, local losers, complementary crossover, replay and two-generation resume. Neither is evidence that a live LLM will repair the historical failures.
 
@@ -148,7 +148,7 @@ The following are the **design influences supplied in the task**, not claims of 
 | AgentSquare / AFlow | modular recombination, staged screening and branching candidates |
 | Self-play / Reflective Experience Replay | archived adversaries and native clean replay |
 
-Live activation applicability, semantic validators, diagnosis quality, mutation diversity and useful crossover remain empirical risks. The semantic duplicate check is a deterministic combined structure/family/text/delta heuristic, not a proof of semantic equivalence; a misleading delta claim can evade some near-duplicate detection. Multi-seed evaluation, replay and per-turn activation add compute and provider latency. Formal statistical power is limited by independent V tasks, and repeated seeds/provider determinism may not be independent draws. No live InferAI request or research-effectiveness claim is made by this implementation delivery.
+Live activation applicability, semantic validators, diagnosis quality, mutation diversity and useful crossover remain empirical risks. The semantic duplicate check is a deterministic combined structure/family/text/delta heuristic, not a proof of semantic equivalence; a misleading delta claim can evade some near-duplicate detection. Multi-seed evaluation, replay and per-turn activation add compute and provider latency. Formal statistical power is limited by independent V tasks, and repeated seeds/provider determinism may not be independent draws. The offline delivery does not establish live effectiveness. The subsequent controlled InferAI diagnostic below remains incomplete.
 
 
 ## Gate calibration and controlled live measurement
@@ -163,3 +163,6 @@ PYTHONPATH=src python experiments/execution/run-v2-activation-morphology-smoke.p
 ```
 
 The live launcher performs one no-tools JSON check per model, obtains the existing Chinese-group key from Keychain without persisting it, and shares the existing 30/60.1-second dispatch pacing across native and evolution calls. Total budget is unlimited. Provider errors remain recorded unknown attempts; there is no automatic model fallback or retry loop. Resume binds saved manifests and exact journal inputs and reuses completed native episodes/stages. Reporting distinguishes per-seed cell counts from the historic single-seed task counts (2 fixes/4 breaks); two seeds cannot be counted as two independent tasks.
+
+
+The first live measurement is preserved in [the diagnostic archive](../experiments/results/evotau-v2-gate-calibration-morphology-20261007/README.md). Baseline completed 12/12 episodes with 10/12 native successes. Pro returned malformed JSON (missing the final closing brace) despite HTTP200 and finish_reason stop; the signature stage failed closed. Neither candidate treatment, V nor H ran. This verifies provider/native baseline execution and strict rejection, **not V2 repair effectiveness**. All successful baseline episodes were retained across an explicitly recorded engineering pause; no provider retries or fallbacks were made.
