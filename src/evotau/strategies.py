@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .service_skills import ServiceSkillMemory, render_service_skill_memory
+from .service_skills import (
+    ServiceSkillMemory,
+    ServiceSkillMemoryV2,
+    render_service_skill_memory,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,7 +25,7 @@ class PromptStrategy:
         return {"text": self.text}
 
 
-ServiceCarrier = PromptStrategy | ServiceSkillMemory
+ServiceCarrier = PromptStrategy | ServiceSkillMemory | ServiceSkillMemoryV2
 
 
 def render_customer_strategy(strategy: PromptStrategy | None) -> str:
@@ -29,6 +33,8 @@ def render_customer_strategy(strategy: PromptStrategy | None) -> str:
 
 
 def render_service_strategy(strategy: ServiceCarrier | None) -> str:
+    if isinstance(strategy, ServiceSkillMemoryV2):
+        return ""  # V2 guidance is injected only by per-turn activation.
     if isinstance(strategy, ServiceSkillMemory):
         return render_service_skill_memory(strategy)
     return _render("evotau_service_strategy", strategy)

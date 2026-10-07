@@ -369,3 +369,148 @@ def update_skill_provenance(
             ),
         )
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SkillActivationSignature:
+    positive_conditions: tuple[str, ...]
+    negative_conditions: tuple[str, ...] = ()
+    interaction_phase: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        for name in ('positive_conditions', 'negative_conditions', 'interaction_phase'):
+            values = getattr(self, name)
+            if not isinstance(values, tuple) or any(not isinstance(x, str) or not x.strip() for x in values):
+                raise ValueError(f'{name} requires a tuple of nonempty conditions')
+        if not self.positive_conditions:
+            raise ValueError('activation requires a positive applicability condition')
+
+    def to_dict(self):
+        return {name: list(getattr(self, name)) for name in ('positive_conditions', 'negative_conditions', 'interaction_phase')}
+
+    @classmethod
+    def from_mapping(cls, value):
+        if set(value) != {'positive_conditions', 'negative_conditions', 'interaction_phase'}:
+            raise ValueError('invalid activation signature fields')
+        if any(not isinstance(v, (list, tuple)) for v in value.values()):
+            raise ValueError('activation conditions must be arrays')
+        return cls(**{k: tuple(v) for k, v in value.items()})
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceSkillV2:
+    skill_id: str
+    trigger: str
+    guidance: str
+    activation_signature: SkillActivationSignature
+
+    def __post_init__(self):
+        _skill_id_number(self.skill_id)
+        _non_empty_text(self.trigger, 'trigger')
+        _non_empty_text(self.guidance, 'guidance')
+        if not isinstance(self.activation_signature, SkillActivationSignature):
+            raise TypeError('activation_signature must be a SkillActivationSignature')
+
+    def to_dict(self):
+        return {'skill_id': self.skill_id, 'trigger': self.trigger, 'guidance': self.guidance,
+                'activation_signature': self.activation_signature.to_dict()}
+
+    @classmethod
+    def from_mapping(cls, value):
+        if set(value) != {'skill_id', 'trigger', 'guidance', 'activation_signature'}:
+            raise ValueError('invalid V2 skill fields')
+        return cls(value['skill_id'], value['trigger'], value['guidance'],
+                   SkillActivationSignature.from_mapping(value['activation_signature']))
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceSkillMemoryV2:
+    skills: tuple[ServiceSkillV2, ...] = ()
+
+    def __post_init__(self):
+        if not isinstance(self.skills, tuple) or any(not isinstance(s, ServiceSkillV2) for s in self.skills):
+            raise TypeError('V2 memory requires a tuple of V2 skills')
+        if len({s.skill_id for s in self.skills}) != len(self.skills):
+            raise ValueError('duplicate V2 skill IDs')
+        object.__setattr__(self, 'skills', tuple(sorted(self.skills, key=lambda s: _skill_id_number(s.skill_id))))
+
+    def to_dict(self):
+        return {'schema_version': 2, 'skills': [s.to_dict() for s in self.skills]}
+
+    @classmethod
+    def from_mapping(cls, value):
+        if set(value) != {'schema_version', 'skills'} or value['schema_version'] != 2 or not isinstance(value['skills'], list):
+            raise ValueError('invalid V2 memory schema')
+        return cls(tuple(ServiceSkillV2.from_mapping(s) for s in value['skills']))
+
+
+V2_MUTATION_TYPES = ('add', 'narrow_trigger', 'expand_trigger', 'rewrite_guidance', 'split', 'delete', 'no_op')
+
+
+def apply_v2_mutation(memory, mutation, *, next_skill_id_number):
+    """Structural edits preserve unrelated skills and allocate IDs even for rejected trials."""
+    operation = mutation.get('operation')
+    if operation not in V2_MUTATION_TYPES:
+        raise ValueError('unknown V2 mutation intent')
+    target = mutation.get('target_skill_id')
+    if operation == 'no_op':
+        if target is not None or mutation.get('skill') is not None or mutation.get('children'):
+            raise ValueError('NO_OP must not contain an edit')
+        return memory
+    by_id = {s.skill_id: s for s in memory.skills}
+    if operation == 'add':
+        if target is not None:
+            raise ValueError('ADD cannot target an existing skill')
+    elif target not in by_id:
+        raise ValueError('mutation target does not exist')
+    if type(next_skill_id_number) is not int or next_skill_id_number <= service_skill_id_high_watermark(memory):
+        raise ValueError('mutation ID reservation must exceed the active high watermark')
+    if operation == 'delete':
+        if mutation.get('skill') is not None:
+            raise ValueError('DELETE cannot supply guidance')
+        del by_id[target]
+    elif operation == 'split':
+        children = mutation.get('children')
+        if not isinstance(children, list) or len(children) != 2:
+            raise ValueError('SPLIT requires exactly two children')
+        del by_id[target]
+        for i, payload in enumerate(children):
+            skill = ServiceSkillV2.from_mapping({'skill_id': f'skill-{next_skill_id_number+i:04d}', **payload})
+            by_id[skill.skill_id] = skill
+    else:
+        ident = f'skill-{next_skill_id_number:04d}' if operation == 'add' else target
+        skill = ServiceSkillV2.from_mapping({'skill_id': ident, **mutation['skill']})
+        if operation in ('narrow_trigger', 'expand_trigger') and skill.guidance != by_id[target].guidance:
+            raise ValueError('trigger mutation must preserve guidance')
+        if operation == 'rewrite_guidance' and (skill.trigger != by_id[target].trigger or skill.activation_signature != by_id[target].activation_signature):
+            raise ValueError('guidance rewrite must preserve applicability')
+        by_id[ident] = skill
+    return ServiceSkillMemoryV2(tuple(by_id.values()))
+
+
+def render_selected_service_skills(memory, selected_ids):
+    """Render runtime guidance only; never evolutionary effects or lineage."""
+    selected = set(selected_ids)
+    if not selected <= {s.skill_id for s in memory.skills}:
+        raise ValueError('activation selected an unknown skill')
+    return render_service_skill_memory(ServiceSkillMemory(tuple(
+        ServiceSkill(s.skill_id, s.trigger, s.guidance) for s in memory.skills if s.skill_id in selected
+    )))
+
+
+def skill_token_count(text):
+    """Stable cl100k_base token accounting, explicitly independent of provider billing."""
+    import tiktoken
+    return len(tiktoken.get_encoding('cl100k_base').encode(text))
+
+
+def validate_skill_budgets(memory, limits):
+    if len(memory.skills) > limits['max_skills']:
+        raise ValueError('active skill count budget exceeded')
+    for skill in memory.skills:
+        if len(skill.guidance) > limits['guidance_chars'] or skill_token_count(skill.guidance) > limits['guidance_tokens']:
+            raise ValueError('per-skill guidance budget exceeded')
+    # Worst-case top-K rendered prompt, including authority preamble.
+    top = sorted(memory.skills, key=lambda s: (-skill_token_count(s.guidance), s.skill_id))[:limits['max_active_skills']]
+    if skill_token_count(render_selected_service_skills(memory, [s.skill_id for s in top])) > limits['active_tokens']:
+        raise ValueError('activated prompt token budget exceeded')

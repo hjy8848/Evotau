@@ -71,6 +71,7 @@ class AlternatingManifest:
     max_service_mutations_per_generation: int = 1
     provider_provenance: tuple[tuple[str, str | bool], ...] = ()
     config_sha256: str | None = None
+    skill_evolution_v2_json: str | None = None
 
     def __post_init__(self) -> None:
         if self.source_scope != "runtime-v2":
@@ -118,13 +119,20 @@ class AlternatingManifest:
             raise ValueError("communication protocol mode must be boolean")
         if self.customer_carrier != "prompt_strategy":
             raise ValueError("V1 supports only the existing Customer PromptStrategy carrier")
-        if self.service_carrier not in {"prompt_strategy", "skill_memory_v1"}:
+        if self.service_carrier not in {"prompt_strategy", "skill_memory_v1", "skill_memory_v2"}:
             raise ValueError("unsupported Service evolution carrier")
-        if (type(self.max_service_mutations_per_generation) is not int
+        if self.service_carrier != "skill_memory_v2" and (type(self.max_service_mutations_per_generation) is not int
                 or self.service_skill_runtime != "inject_all"
                 or self.service_mutation_ops != ("add", "update", "no_op")
                 or self.max_service_mutations_per_generation != 1):
             raise ValueError("SkillMemory V1 requires inject_all and one ADD/UPDATE/NO_OP per generation")
+        if self.service_carrier == 'skill_memory_v2':
+            if self.skill_evolution_v2_json is None or self.initial_service_strategy.strip():
+                raise ValueError('V2 requires frozen policy and empty initial runtime memory')
+            import json
+            policy = json.loads(self.skill_evolution_v2_json)
+            if self.service_skill_runtime != policy['service_skill_runtime']:
+                raise ValueError('activation runtime differs from frozen V2 policy')
         if self.service_carrier == "skill_memory_v1" and self.initial_service_strategy.strip():
             raise ValueError("SkillMemory V1 must start empty without bootstrap Service skills")
         provenance = dict(self.provider_provenance)
@@ -209,6 +217,13 @@ class AlternatingManifest:
             raise TypeError("provider provenance keys must be strings")
         if any(not isinstance(value, (str, bool)) for value in provider_provenance.values()):
             raise TypeError("provider provenance values must be strings or booleans")
+        v2_policy = None
+        if evolution.get('service_carrier') == 'skill_memory_v2':
+            import json
+
+            from .skill_evolution_config import freeze_v2_policy
+            v2_policy = freeze_v2_policy(dict(experiment.get('skill_evolution_v2', {})), dict(role_models), _role_model_args_payload(role_args))
+            v2_policy = json.dumps(v2_policy, sort_keys=True, separators=(',', ':'))
         code = capture_code_provenance(runtime_only=True)
         return cls(
             experiment_id=str(experiment["id"]),
@@ -254,13 +269,14 @@ class AlternatingManifest:
             ),
             customer_carrier=str(evolution.get("customer_carrier", "prompt_strategy")),
             service_carrier=str(evolution.get("service_carrier", "prompt_strategy")),
-            service_skill_runtime=str(evolution.get("service_skill_runtime", "inject_all")),
+            service_skill_runtime=str(evolution.get("service_skill_runtime", "activate_topk_v2" if v2_policy else "inject_all")),
             service_mutation_ops=tuple(str(item) for item in mutation_ops),
             max_service_mutations_per_generation=evolution.get(
                 "max_service_mutations_per_generation", 1,
             ),
             provider_provenance=tuple(sorted(provider_provenance.items())),
             config_sha256=sha256_json(raw),
+            skill_evolution_v2_json=v2_policy,
         )
 
     def bind_saved_provenance(self, saved: Mapping[str, Any]) -> AlternatingManifest:
@@ -343,6 +359,9 @@ class AlternatingManifest:
                 "service_mutation_ops": list(self.service_mutation_ops),
                 "max_service_mutations_per_generation": self.max_service_mutations_per_generation,
             }
+        if self.skill_evolution_v2_json is not None:
+            import json
+            payload['skill_evolution_v2'] = json.loads(self.skill_evolution_v2_json)
         if self.provider_provenance:
             payload["provider_provenance"] = dict(self.provider_provenance)
         if self.config_sha256 is not None:

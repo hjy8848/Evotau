@@ -35,6 +35,12 @@ class EpisodeRecord:
     mixed_text_tool_call_messages: int = 0
     raw_review: Mapping[str, Any] = field(default_factory=dict)
     notes: str = ""
+    total_steps: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    tool_errors: int = 0
+    hard_policy_protocol_violations: int = 0
+    activated_skill_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.episode_id or not self.task_id:
@@ -59,6 +65,11 @@ class EpisodeRecord:
         if (type(self.mixed_text_tool_call_messages) is not int
                 or self.mixed_text_tool_call_messages < 0):
             raise ValueError("mixed_text_tool_call_messages must be a non-negative integer")
+        for name in ('total_steps', 'prompt_tokens', 'completion_tokens', 'tool_errors', 'hard_policy_protocol_violations'):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError(f'{name} must be a nonnegative integer or unavailable')
+        object.__setattr__(self, 'activated_skill_ids', tuple(self.activated_skill_ids))
         if not isinstance(self.raw_review, Mapping):
             raise TypeError("raw_review must be a mapping")
 
