@@ -16,7 +16,9 @@ EvoTau studies alternating Customer challenge and Service repair on a fixed τ-b
     commit (C_(t+1), S_(t+1)) and checkpoint
 ```
 
-Customer strategies are reusable natural-language interaction skills grounded in each task's original objective and facts. Service supports the original `prompt_strategy` carrier and `skill_memory_v1`. SkillMemory starts empty, permits one ADD/UPDATE/NO_OP per generation, and injects all active skills into the native Service prompt. No retrieval or selector is used.
+Skill Evolution V2 is an independent `skill_memory_v2` carrier with per-turn observable activation, typed edits, failure diagnosis, independent candidates, paired screening/statistical gates, rejection lineage, research archives/crossover and Customer replay. Its configs, schemas, compatibility rules, risks and ablation matrix are documented in [Skill Evolution V2](docs/skill-evolution-v2.md). The research loop below describes the legacy accuracy-driven carriers; formal V2 uses the stricter paired V promotion gate.
+
+Customer strategies are reusable natural-language interaction skills grounded in each task's original objective and facts. Legacy configurations support the original `prompt_strategy` carrier and `skill_memory_v1`. V1 SkillMemory starts empty, permits one ADD/UPDATE/NO_OP per generation, and injects all active skills into the native Service prompt. No retrieval or selector is used.
 
 Customer Evolver receives its source `user_scenario` and E trajectories. Service Evolver receives observed conversations, tool results, policy and native outcomes; it receives neither the hidden scenario nor Customer Judge free text. Neither Evolver receives reference actions, evaluator targets, or H content. Reviewer, Customer Judge and Service Judge calls are **zero** in the active alternating runtime. The native evaluator can still make LLM calls for task NL assertions.
 
