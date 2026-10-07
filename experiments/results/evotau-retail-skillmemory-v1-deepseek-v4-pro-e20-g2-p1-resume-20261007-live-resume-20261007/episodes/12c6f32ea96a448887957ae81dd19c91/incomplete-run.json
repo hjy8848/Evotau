@@ -1,0 +1,183 @@
+{
+  "attempt_id": "12c6f32ea96a448887957ae81dd19c91",
+  "task_id": "29",
+  "seed": 1,
+  "episode_key": {
+    "task_id": "29",
+    "seed": 1,
+    "customer_strategy_id": "865fb00d249520e9",
+    "service_strategy_id": "28940cc308f6a614"
+  },
+  "episode_key_sha256": "4320ce5c563dd67a79a12929db21fdcda8fd8cf952d7cb59ecc3a026bd9f8759",
+  "panel_name": "generation-1-customer-candidate-0",
+  "failure_type": "BadGatewayError",
+  "failure_message": "litellm.BadGatewayError: BadGatewayError: OpenAIException - Upstream service temporarily unavailable",
+  "failure_repr": "litellm.BadGatewayError: BadGatewayError: OpenAIException - Upstream service temporarily unavailable",
+  "cause_type": "OpenAIError",
+  "cause_message": "Error code: 502 - {'error': {'message': 'Upstream service temporarily unavailable', 'type': 'upstream_error'}}",
+  "exception_chain": [
+    {
+      "type": "BadGatewayError",
+      "message": "litellm.BadGatewayError: BadGatewayError: OpenAIException - Upstream service temporarily unavailable",
+      "repr": "litellm.BadGatewayError: BadGatewayError: OpenAIException - Upstream service temporarily unavailable"
+    },
+    {
+      "type": "OpenAIError",
+      "message": "Error code: 502 - {'error': {'message': 'Upstream service temporarily unavailable', 'type': 'upstream_error'}}",
+      "repr": "OpenAIError(\"Error code: 502 - {'error': {'message': 'Upstream service temporarily unavailable', 'type': 'upstream_error'}}\")"
+    },
+    {
+      "type": "InternalServerError",
+      "message": "Error code: 502 - {'error': {'message': 'Upstream service temporarily unavailable', 'type': 'upstream_error'}}",
+      "repr": "InternalServerError(\"Error code: 502 - {'error': {'message': 'Upstream service temporarily unavailable', 'type': 'upstream_error'}}\")"
+    },
+    {
+      "type": "HTTPStatusError",
+      "message": "Server error '502 Bad Gateway' for url 'https://inferaiapi.com/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502",
+      "repr": "HTTPStatusError(\"Server error '502 Bad Gateway' for url 'https://inferaiapi.com/v1/chat/completions'\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502\")"
+    }
+  ],
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 851, in completion\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 779, in completion\n    ) = self.make_sync_openai_chat_completion_request(\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/logging_utils.py\", line 344, in sync_wrapper\n    result = func(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 502, in make_sync_openai_chat_completion_request\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 477, in make_sync_openai_chat_completion_request\n    raw_response = openai_client.chat.completions.with_raw_response.create(\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_legacy_response.py\", line 369, in wrapped\n    return cast(LegacyAPIResponse[R], func(*args, **kwargs))\n                                      ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_utils/_utils.py\", line 298, in wrapper\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/resources/chat/completions/completions.py\", line 1318, in create\n    return self._post(\n           ^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_base_client.py\", line 1440, in post\n    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/openai/_base_client.py\", line 1213, in request\n    raise self._make_status_error_from_response(err.response) from None\nopenai.InternalServerError: Error code: 502 - {'error': {'message': 'Upstream service temporarily unavailable', 'type': 'upstream_error'}}\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 2698, in completion\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 2670, in completion\n    response = openai_chat_completions.completion(\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/llms/openai/openai.py\", line 862, in completion\n    raise OpenAIError(\nlitellm.llms.openai.common_utils.OpenAIError: Error code: 502 - {'error': {'message': 'Upstream service temporarily unavailable', 'type': 'upstream_error'}}\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/tau_episode_runner.py\", line 335, in _run_episode\n    simulation = run_with_budget(\n                 ^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/tau_adapter.py\", line 281, in run_with_budget\n    result = run_simulation(orchestrator, evaluation_type=EvaluationType.ALL)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/runner/simulation.py\", line 59, in run_simulation\n    simulation = orchestrator.run()\n                 ^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/orchestrator/orchestrator.py\", line 280, in run\n    self.step()\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/orchestrator/orchestrator.py\", line 837, in step\n    user_msg, self.user_state = self.user.generate_next_message(\n                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/user/user_simulator.py\", line 201, in generate_next_message\n    user_message = self._generate_next_message(message, state)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/user/user_simulator.py\", line 235, in _generate_next_message\n    assistant_message = generate(\n                        ^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/budget.py\", line 873, in guarded_generate\n    return original_generate(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/utils/llm_utils.py\", line 418, in generate\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/utils/llm_utils.py\", line 409, in generate\n    response = completion(\n               ^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau-alternating/src/evotau/budget.py\", line 826, in guarded_completion\n    result = original_completion(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/utils.py\", line 1775, in wrapper\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/utils.py\", line 1596, in wrapper\n    result = original_function(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/main.py\", line 4411, in completion\n    raise exception_type(\n          ^^^^^^^^^^^^^^^\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py\", line 2456, in exception_type\n    raise e\n  File \"/Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py\", line 597, in exception_type\n    raise BadGatewayError(\nlitellm.exceptions.BadGatewayError: litellm.BadGatewayError: BadGatewayError: OpenAIException - Upstream service temporarily unavailable\n",
+  "traceback_truncated": false,
+  "native_simulation_saved": false,
+  "partial_trajectory_ref": "episodes/12c6f32ea96a448887957ae81dd19c91/partial-simulation.json",
+  "partial_trajectory_error": null,
+  "provider_calls_ref": "episodes/12c6f32ea96a448887957ae81dd19c91/provider-calls.jsonl",
+  "communication_protocol_observation": null,
+  "rendered_prompt_sha256": {
+    "agent": "55063e6c9be8fc12a01f79f73ed844ab7830301eaa38b43cf528aac5190924c0",
+    "service_native_system_prompt": "4cf6e44236a35dda69511c196e882c7465b547e942bd9d26984ab6eb4d28ef83",
+    "service_overlay": "d3f8ce0d8a2a6f6943374bf87e333feb07efd68a3e3a70a55d759962b337401a",
+    "service_skill_count": 1,
+    "service_skill_rendered_chars": 2126,
+    "service_skill_rendered_tokens": null,
+    "customer": "7f7d19389a27c4aa4a1cb63d5b50fcac8f653c3e7390401fb7d93454202619eb",
+    "customer_native_system_prompt": "83e61aac367e3a93299b7a60cbac85ea147ce2688b20dd66c3442e5b95296f57",
+    "customer_scenario_source": "c3a9cd15b2f8fde61f980fe45092a6d9db1117f5c80076a940614e6d2c16d9e7",
+    "customer_scenario_runtime": "c3a9cd15b2f8fde61f980fe45092a6d9db1117f5c80076a940614e6d2c16d9e7"
+  },
+  "budget_before": {
+    "cap": null,
+    "attempts": 1261,
+    "successes": 1261,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 6959196,
+    "completion_tokens": 180728,
+    "usage_responses": 1261,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 1,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 1257,
+        "successes": 1257,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 6424449,
+        "completion_tokens": 153732,
+        "usage_responses": 1257,
+        "usage_unavailable": 0,
+        "cache_hits": 0,
+        "in_flight": 0
+      },
+      {
+        "model_id": "openai/deepseek-v4-pro",
+        "attempts": 4,
+        "successes": 4,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 534747,
+        "completion_tokens": 26996,
+        "usage_responses": 4,
+        "usage_unavailable": 0,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  },
+  "budget_after": {
+    "cap": null,
+    "attempts": 1264,
+    "successes": 1263,
+    "failures": 1,
+    "denied": 0,
+    "prompt_tokens": 6965139,
+    "completion_tokens": 180827,
+    "usage_responses": 1263,
+    "usage_unavailable": 1,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 1260,
+        "successes": 1259,
+        "failures": 1,
+        "denied": 0,
+        "prompt_tokens": 6430392,
+        "completion_tokens": 153831,
+        "usage_responses": 1259,
+        "usage_unavailable": 1,
+        "cache_hits": 0,
+        "in_flight": 0
+      },
+      {
+        "model_id": "openai/deepseek-v4-pro",
+        "attempts": 4,
+        "successes": 4,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 534747,
+        "completion_tokens": 26996,
+        "usage_responses": 4,
+        "usage_unavailable": 0,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  },
+  "budget_delta": {
+    "attempts": 3,
+    "successes": 2,
+    "failures": 1,
+    "denied": 0,
+    "prompt_tokens": 5943,
+    "completion_tokens": 99,
+    "usage_responses": 2,
+    "usage_unavailable": 1,
+    "cache_hits": 0
+  },
+  "episode_budget_delta": {
+    "cap": null,
+    "attempts": 3,
+    "successes": 2,
+    "failures": 1,
+    "denied": 0,
+    "prompt_tokens": 5943,
+    "completion_tokens": 99,
+    "usage_responses": 2,
+    "usage_unavailable": 1,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/deepseek-v4-flash",
+        "attempts": 3,
+        "successes": 2,
+        "failures": 1,
+        "denied": 0,
+        "prompt_tokens": 5943,
+        "completion_tokens": 99,
+        "usage_responses": 2,
+        "usage_unavailable": 1,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  }
+}

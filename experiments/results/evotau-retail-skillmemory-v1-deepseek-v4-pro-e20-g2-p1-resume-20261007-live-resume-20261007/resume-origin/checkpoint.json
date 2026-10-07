@@ -1,0 +1,1368 @@
+{
+  "schema_version": 2,
+  "manifest_sha256": "3d3d9ea7e62c647a74e479b201b5bad7089b78446db4d26bf9d4c58e9a3a1eba",
+  "completed_generation": 0,
+  "initial_customer": {
+    "text": ""
+  },
+  "initial_service": {
+    "skills": []
+  },
+  "service_carrier": "skill_memory_v1",
+  "customer": {
+    "text": "In a single opening message, request a large multi-part account cleanup: cancel every order that is still cancellable, return several delivered items while explicitly keeping one favored item untouched, and add a conditional instruction to exchange that favored item only if a cheaper replacement with the same key attributes exists. Withhold your decision on the conditional exchange until the agent enumerates the available options, and do not ask for the final aggregate amount (e.g., total refund) until every action has been executed. Keep replies terse so the agent must plan, confirm, and carry out the whole workflow without relying on you to volunteer additional details."
+  },
+  "service": {
+    "skills": [
+      {
+        "skill_id": "skill-0001",
+        "trigger": "When a customer requests multiple order actions in one conversation, especially involving a delivered order where some items are to be returned while another item is kept and may be exchanged (often conditionally, e.g., 'only if a cheaper replacement with the same key features exists — I will decide once you list the options').",
+        "guidance": "Before making any tool call, build a complete per-order plan covering which items will be returned, exchanged, kept, or cancelled, and obtain explicit confirmation on the full plan. Exchange tools only work while an order's status is still 'delivered': processing a return for any item in an order immediately changes that order's status (e.g., to 'return requested'), after which the backend rejects exchanges for the remaining items. Therefore, if a delivered order has both items to exchange and items to return, resolve the exchange before processing any return on that order. If the customer is deciding conditionally, enumerate the matching available variants of the same product (variants that match the requested key attributes, and only the cheaper ones when a cheaper option was the stated condition) BEFORE processing any returns on that order, then let the customer decide and only then proceed. Execute all exchange items of an order in a single exchange call, since the exchange tool can be called only once per order. Do not partially return items from an order whose remaining items still require an exchange decision."
+      }
+    ]
+  },
+  "service_provenance": [
+    {
+      "skill_id": "skill-0001",
+      "created_generation": 0,
+      "updated_generation": 0,
+      "source_task_ids": [
+        "66",
+        "92",
+        "29",
+        "67",
+        "106",
+        "22",
+        "69",
+        "98",
+        "93",
+        "88",
+        "4",
+        "21",
+        "8",
+        "54",
+        "107",
+        "48",
+        "52",
+        "80",
+        "35",
+        "16"
+      ]
+    }
+  ],
+  "skill_id_high_watermark": 1,
+  "generations": [
+    {
+      "schema_version": 2,
+      "generation": 0,
+      "evolution_fitness_seed": 1,
+      "validation_seed": null,
+      "customer_before": {
+        "role": "customer",
+        "strategy_id": "63be7e41e020bc00",
+        "strategy": ""
+      },
+      "service_before": {
+        "role": "service",
+        "carrier": "skill_memory_v1",
+        "strategy_id": "0b51396195500388",
+        "strategy": {
+          "skills": []
+        },
+        "skill_count": 0,
+        "rendered_skill_chars": 0,
+        "rendered_skill_tokens": null
+      },
+      "customer_after": {
+        "role": "customer",
+        "strategy_id": "4f0efed3a149e457",
+        "strategy": "In a single opening message, request a large multi-part account cleanup: cancel every order that is still cancellable, return several delivered items while explicitly keeping one favored item untouched, and add a conditional instruction to exchange that favored item only if a cheaper replacement with the same key attributes exists. Withhold your decision on the conditional exchange until the agent enumerates the available options, and do not ask for the final aggregate amount (e.g., total refund) until every action has been executed. Keep replies terse so the agent must plan, confirm, and carry out the whole workflow without relying on you to volunteer additional details."
+      },
+      "service_after": {
+        "role": "service",
+        "carrier": "skill_memory_v1",
+        "strategy_id": "28940cc308f6a614",
+        "strategy": {
+          "skills": [
+            {
+              "skill_id": "skill-0001",
+              "trigger": "When a customer requests multiple order actions in one conversation, especially involving a delivered order where some items are to be returned while another item is kept and may be exchanged (often conditionally, e.g., 'only if a cheaper replacement with the same key features exists — I will decide once you list the options').",
+              "guidance": "Before making any tool call, build a complete per-order plan covering which items will be returned, exchanged, kept, or cancelled, and obtain explicit confirmation on the full plan. Exchange tools only work while an order's status is still 'delivered': processing a return for any item in an order immediately changes that order's status (e.g., to 'return requested'), after which the backend rejects exchanges for the remaining items. Therefore, if a delivered order has both items to exchange and items to return, resolve the exchange before processing any return on that order. If the customer is deciding conditionally, enumerate the matching available variants of the same product (variants that match the requested key attributes, and only the cheaper ones when a cheaper option was the stated condition) BEFORE processing any returns on that order, then let the customer decide and only then proceed. Execute all exchange items of an order in a single exchange call, since the exchange tool can be called only once per order. Do not partially return items from an order whose remaining items still require an exchange decision."
+            }
+          ]
+        },
+        "skill_count": 1,
+        "rendered_skill_chars": 2126,
+        "rendered_skill_tokens": null
+      },
+      "customer_phase": {
+        "frozen_service": {
+          "role": "service",
+          "carrier": "skill_memory_v1",
+          "strategy_id": "0b51396195500388",
+          "strategy": {
+            "skills": []
+          },
+          "skill_count": 0,
+          "rendered_skill_chars": 0,
+          "rendered_skill_tokens": null
+        },
+        "evolver_input_sha256": "18958c33344458ca3a18ed8969466765884e5e6c1f4ba252f88db0ba88f5ce2f",
+        "incumbent_accuracy": 0.95,
+        "candidate_accuracies": [
+          0.5
+        ],
+        "selected_accuracy": 0.5,
+        "selected_customer": 0,
+        "incumbent_episodes": [
+          {
+            "episode_id": "evotau-phase0-3d9efc04-15ec-43c4-8249-0c529b3258b1",
+            "task_id": "66",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/99e80fd48d164395aebf8ff676c4dcdd/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-7780678a-a612-4c5c-b1dc-8daade67261b",
+            "task_id": "92",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/aac0de24ce794e3f88eb3c0a0b189056/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-464e2952-c43a-4676-8bcc-87b799097a00",
+            "task_id": "29",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/95142931d3e34fb6b63788c909eb3070/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-cff016ab-b5c6-4e5c-8821-6f8cbb75f36b",
+            "task_id": "67",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/a92298e2fb284938b3d7674c9a9dfc4c/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-49fcb900-9498-4bb7-b602-2d5a4429c1df",
+            "task_id": "106",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/301f07fa3a9c47a1ae9c84c64969e2c1/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-5e9c948c-218e-4141-aa49-3604cd1a8e08",
+            "task_id": "22",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/0d848ca312af4443b7ff3aa691781c14/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-427440ae-d006-48d5-8ee0-ea64ed5b162f",
+            "task_id": "69",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/c42c7cea7a4848ce89da9832ffef1c97/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-47bd98da-72c3-4cbb-99da-a4c2fc17336b",
+            "task_id": "98",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/59f436c9596942f5a2cd51dc5d4fb898/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-7866499d-00cd-44de-8928-35c9076a1889",
+            "task_id": "93",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/db9414e56ffe4e7c8a32f535049f3341/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-97785f4f-e0c3-4a2e-8827-20ac11c7fe6d",
+            "task_id": "88",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/edbb08fc5fae421e8672d26517b5d194/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-017ae0bc-b222-4412-84e9-9c243b111035",
+            "task_id": "4",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/d12020186c1a4ce7bddfd4cd1545f446/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-7092fe58-3030-4949-ac74-9e5d1b015c96",
+            "task_id": "21",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/b5bf0bcf12fc4b38977530fc51cad216/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-a315172b-905f-4ab6-b571-d17b4375df5a",
+            "task_id": "8",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/f39aac7b49f945d1b4593df958ace00e/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-64f75a2f-5f62-4214-8291-cc2cf1aeb007",
+            "task_id": "54",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "trajectory_ref": "episodes/7132a666b08c4be5b2803a6ee686a963/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-12118c12-6ea8-4c66-a0f6-ea54b89c20d8",
+            "task_id": "107",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/8c0f0f46b1a74752a196c48d7a20a816/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-58b9dc5b-e88d-4c99-bd0f-b4df4f1e8821",
+            "task_id": "48",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/8f60567f86fa4a809eaf9f5a3bbe6f94/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-eff959c5-382b-4794-be0b-9bce6117f9c9",
+            "task_id": "52",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/e0ca88e668de40fd870219d55a92f072/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-6ef9c043-8a09-4997-90bd-ee80759f4ab6",
+            "task_id": "80",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/0dccd712bea34fc099b5cfcc4a77065a/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-74ad53c6-ccbe-400c-8eb6-b52c13214cc6",
+            "task_id": "35",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/7baff3a62cda4c8cabd3287f8573fe25/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-edfe7087-9f17-4bd2-a470-9c88e31e9595",
+            "task_id": "16",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "0b51396195500388",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/e9e1bd944bcb48cab01b73c221d87842/native-simulation.json"
+          }
+        ],
+        "candidates": [
+          {
+            "strategy": {
+              "text": "In a single opening message, request a large multi-part account cleanup: cancel every order that is still cancellable, return several delivered items while explicitly keeping one favored item untouched, and add a conditional instruction to exchange that favored item only if a cheaper replacement with the same key attributes exists. Withhold your decision on the conditional exchange until the agent enumerates the available options, and do not ask for the final aggregate amount (e.g., total refund) until every action has been executed. Keep replies terse so the agent must plan, confirm, and carry out the whole workflow without relying on you to volunteer additional details."
+            },
+            "strategy_id": "4f0efed3a149e457",
+            "accuracy": 0.5,
+            "episodes": [
+              {
+                "episode_id": "evotau-phase0-443232dd-8baa-48d0-b1ad-049605697ec9",
+                "task_id": "66",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/7d3ea64d5b1d4c008a09637a3f591fc7/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-87a0e907-d10c-45e9-84fc-478f33da5e16",
+                "task_id": "92",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/1ccb77253d1347dbbc1e180ac015a68d/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-365f1f73-107e-4ad1-8f69-11083ec260f8",
+                "task_id": "29",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/bfddd712c9e74c91ae6870cf81abfb56/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-f551a2dc-43f5-44e3-b543-eadc81dde06e",
+                "task_id": "67",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/94a43d5a6ce04710970f1d539ce7eab1/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-6d93c90d-6db5-4a92-9429-ee6687965ef2",
+                "task_id": "106",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/b0effe0f65bd4afc977a74794057de32/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-91ceca0a-b5ea-4445-afd1-162ba7b1f5f7",
+                "task_id": "22",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/aa8d89c0caab4262a8292d1e86cdf260/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-cb58a3e4-60d5-4873-a8f0-18cebeede9ac",
+                "task_id": "69",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/952c123bfcf64fcf99cef2e820609529/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-5d1d6f50-e434-40fb-9233-bb415a2d73ee",
+                "task_id": "98",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/151c16d81d3a4506a6a6febe70dee60f/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-05028318-24f1-4106-9177-3c68b073f83f",
+                "task_id": "93",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/dc8c3b4c88e84d08954f5fb2ccaa1169/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-a98df810-8cf7-48d6-901a-194b913c95a5",
+                "task_id": "88",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/d726deffc6234ceea59743a46b0df7bd/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-281ee83d-ec3c-4243-ab36-10163b8d2a71",
+                "task_id": "4",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/6f5f5ff9cb524338978aa8844f8875f6/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-2e5fc398-a269-4693-9218-8d31896418a7",
+                "task_id": "21",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/2b9a2cb0fdd247e6a47e775671d1fd82/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-7888b940-b8ab-4316-bfec-d623b002d5c6",
+                "task_id": "8",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/315d36f28b5343d99598a8103641a356/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-546a3f3e-f0b9-4947-9ef6-18d2d0475034",
+                "task_id": "54",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/48ff086dab6e4b04bf2b2b66f1aaa8a7/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-563421ce-6a9d-4f6c-86cb-8eaa07a1161f",
+                "task_id": "107",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/0fba793c7321417ab9ec778860cd3615/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-14267738-dc5e-4d25-8672-d8be82f5981b",
+                "task_id": "48",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/7e2c3a1d12354c99a42771771416acf2/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-087cb606-bec9-4a5b-9ae8-0cbadeefab68",
+                "task_id": "52",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/328e4fe108db400280964d9d98d0b9ea/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-a06a49f7-d0dd-4e87-9173-26acc8e300fb",
+                "task_id": "80",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/50b468ddb0df4d559a6d20f7e08c23c2/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-7676247a-36b3-48fd-b361-09ab2feded47",
+                "task_id": "35",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "trajectory_ref": "episodes/11496609a43b4ae0913e0646819b8eb2/native-simulation.json"
+              },
+              {
+                "episode_id": "evotau-phase0-9885beb5-76f6-422b-8313-9228401dc26c",
+                "task_id": "16",
+                "seed": 1,
+                "customer_strategy_id": "4f0efed3a149e457",
+                "service_strategy_id": "0b51396195500388",
+                "status": "complete",
+                "task_success": true,
+                "native_reward": 1.0,
+                "trajectory_ref": "episodes/044b2e0f95c44ee1b7ed28b35eeef9b9/native-simulation.json"
+              }
+            ]
+          }
+        ]
+      },
+      "service_phase": {
+        "frozen_customer": {
+          "role": "customer",
+          "strategy_id": "4f0efed3a149e457",
+          "strategy": "In a single opening message, request a large multi-part account cleanup: cancel every order that is still cancellable, return several delivered items while explicitly keeping one favored item untouched, and add a conditional instruction to exchange that favored item only if a cheaper replacement with the same key attributes exists. Withhold your decision on the conditional exchange until the agent enumerates the available options, and do not ask for the final aggregate amount (e.g., total refund) until every action has been executed. Keep replies terse so the agent must plan, confirm, and carry out the whole workflow without relying on you to volunteer additional details."
+        },
+        "analysis": "The empty skill memory provides no coverage for the recurring multi-part account cleanup pattern. Two independent failed episodes (tasks 93 and 98) hit the exact same backend error: the agent processed item returns on a delivered order (order status became 'return requested') and then attempted to exchange a separate kept item from the same order, receiving \"Error: Non-delivered order cannot be exchanged\". This is a deterministic procedural failure, not stochastic: the exchange tool requires the order to still be in 'delivered' status, and any return changes the order status. The evidence also shows a repeated conditional-exchange pattern where the customer withholds the exchange decision until the agent enumerates available options; in both failed episodes the agent finalized returns before eliciting/enacting the exchange. A small, reusable skill is warranted to sequence delivered-order actions correctly and defer status-changing actions until exchange decisions are complete.",
+        "evolver_input_sha256": "409c2eb4d1faaf317046c77dea4a0a308b72eb7db132d55039847e2abf5d6438",
+        "proposed_strategy": {
+          "skills": [
+            {
+              "skill_id": "skill-0001",
+              "trigger": "When a customer requests multiple order actions in one conversation, especially involving a delivered order where some items are to be returned while another item is kept and may be exchanged (often conditionally, e.g., 'only if a cheaper replacement with the same key features exists — I will decide once you list the options').",
+              "guidance": "Before making any tool call, build a complete per-order plan covering which items will be returned, exchanged, kept, or cancelled, and obtain explicit confirmation on the full plan. Exchange tools only work while an order's status is still 'delivered': processing a return for any item in an order immediately changes that order's status (e.g., to 'return requested'), after which the backend rejects exchanges for the remaining items. Therefore, if a delivered order has both items to exchange and items to return, resolve the exchange before processing any return on that order. If the customer is deciding conditionally, enumerate the matching available variants of the same product (variants that match the requested key attributes, and only the cheaper ones when a cheaper option was the stated condition) BEFORE processing any returns on that order, then let the customer decide and only then proceed. Execute all exchange items of an order in a single exchange call, since the exchange tool can be called only once per order. Do not partially return items from an order whose remaining items still require an exchange decision."
+            }
+          ]
+        },
+        "old_accuracy": 0.5,
+        "proposed_accuracy": 0.65,
+        "improved_on_E": true,
+        "accepted": true,
+        "acceptance_mode": "e_only_mechanism_smoke",
+        "acceptance_evaluated": true,
+        "validation_old_accuracy": null,
+        "validation_new_accuracy": null,
+        "challenge_episodes": [
+          {
+            "episode_id": "evotau-phase0-69e3ad19-6b7b-4930-ae11-cb2c3e30e87d",
+            "task_id": "66",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/b925bef5533345908b473ae92a5edfca/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-d963e7dd-85a8-41b5-a177-3036991e71f7",
+            "task_id": "92",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/2eb4552c6b3d417a84750f47e76b2e5d/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-aad0f575-9b03-424d-aaf7-48992f7acc48",
+            "task_id": "29",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/9c517b4ec60b403e87fcdb1bbb5c3229/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-2a652d68-58e9-45d3-bfab-b73ef740cbf8",
+            "task_id": "67",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "trajectory_ref": "episodes/d595a301c8934ac385b174dd14bba289/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-6905185b-17b4-4138-ad8d-abfeeb6c8039",
+            "task_id": "106",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/ba2998a54b0246be93d20c98b19651cd/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-eeec33eb-a87f-425c-b6c8-d19da271f11f",
+            "task_id": "22",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/49f8527763254f8cb21b1f7038e770a5/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-975c5a3e-e799-4de6-a0c7-d41a738f367a",
+            "task_id": "69",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/de0d74b253ca43af845ae8e4f25e1ee5/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-34ff7d18-6b0b-4425-92bd-d7a14cfcb7be",
+            "task_id": "98",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "trajectory_ref": "episodes/00ad16c448eb4292b4dc5274856b6e94/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-d8de6635-940e-4ee2-88ff-34facbc4276f",
+            "task_id": "93",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "trajectory_ref": "episodes/6563815bcb484c2a85c622aa52e4b272/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-58d9fedc-0698-46b1-9401-d5fc7e4484d5",
+            "task_id": "88",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/3e215f92a4194f6bb437795d203ea93e/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-cbefc615-9db2-49f9-8290-0aeb641c2679",
+            "task_id": "4",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/9fa6563c16724551a2afb622dcf62264/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-d6ee8c00-4cc7-4320-a4ba-af10f6ec0b10",
+            "task_id": "21",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/d50184a5ff41417a83f754e259116a3b/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-123d16f6-c80e-4080-9924-f14c80cc858e",
+            "task_id": "8",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "trajectory_ref": "episodes/0ad7e141c37b4fba92929c2554a4283c/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-fa67bb37-31d9-42d4-a0cf-f45b2c2820cf",
+            "task_id": "54",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "trajectory_ref": "episodes/8a9ec29cfdbd49f59d97f7ea4575f83b/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-3c035d42-0514-4222-bdb1-bc6e8473dfb2",
+            "task_id": "107",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/abbba0c569c34880875b8b67c6c0b65d/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-52ccecb1-5b0e-484c-95ae-058417a121ac",
+            "task_id": "48",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/90befc95b2ee4c4b97ce73f1dbcbc850/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-5b9755cc-7e7f-4bed-9c90-ea9996045334",
+            "task_id": "52",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "trajectory_ref": "episodes/da92e20244374dbaaa1de6ef0343ae62/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-d4fa03a1-f685-4392-91d1-13ace6834061",
+            "task_id": "80",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "trajectory_ref": "episodes/5769737c6d934297afb15ed5bc52fe5c/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-1f9d5ed6-f408-4586-9a69-d78a077aa9b6",
+            "task_id": "35",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/cb441bf4b55a4004bad5a44e3e5fec32/native-simulation.json"
+          },
+          {
+            "episode_id": "evotau-phase0-aebe7bfe-c260-4c2c-9894-8683d42da6f2",
+            "task_id": "16",
+            "seed": 1,
+            "customer_strategy_id": "4f0efed3a149e457",
+            "service_strategy_id": "28940cc308f6a614",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "trajectory_ref": "episodes/3b48cc0d85664ef6a2a9cc798e0c15c0/native-simulation.json"
+          }
+        ],
+        "selection": {
+          "reason": "Accepted for mechanism smoke based on strict E-only accuracy improvement; native V validation was intentionally disabled."
+        },
+        "clean_panel": {
+          "customer": "native τ-bench customer",
+          "evaluated": false,
+          "reference_accuracy": null,
+          "candidate_accuracy": null,
+          "reference_episodes": [],
+          "candidate_episodes": []
+        },
+        "validation_evaluated": false,
+        "carrier": "skill_memory_v1",
+        "operation": "add",
+        "target_skill_id": null,
+        "input_service_memory": {
+          "skills": []
+        },
+        "input_service_memory_id": "0b51396195500388",
+        "proposed_service_memory": {
+          "skills": [
+            {
+              "skill_id": "skill-0001",
+              "trigger": "When a customer requests multiple order actions in one conversation, especially involving a delivered order where some items are to be returned while another item is kept and may be exchanged (often conditionally, e.g., 'only if a cheaper replacement with the same key features exists — I will decide once you list the options').",
+              "guidance": "Before making any tool call, build a complete per-order plan covering which items will be returned, exchanged, kept, or cancelled, and obtain explicit confirmation on the full plan. Exchange tools only work while an order's status is still 'delivered': processing a return for any item in an order immediately changes that order's status (e.g., to 'return requested'), after which the backend rejects exchanges for the remaining items. Therefore, if a delivered order has both items to exchange and items to return, resolve the exchange before processing any return on that order. If the customer is deciding conditionally, enumerate the matching available variants of the same product (variants that match the requested key attributes, and only the cheaper ones when a cheaper option was the stated condition) BEFORE processing any returns on that order, then let the customer decide and only then proceed. Execute all exchange items of an order in a single exchange call, since the exchange tool can be called only once per order. Do not partially return items from an order whose remaining items still require an exchange decision."
+            }
+          ]
+        },
+        "proposed_service_memory_id": "28940cc308f6a614",
+        "active_service_memory": {
+          "skills": [
+            {
+              "skill_id": "skill-0001",
+              "trigger": "When a customer requests multiple order actions in one conversation, especially involving a delivered order where some items are to be returned while another item is kept and may be exchanged (often conditionally, e.g., 'only if a cheaper replacement with the same key features exists — I will decide once you list the options').",
+              "guidance": "Before making any tool call, build a complete per-order plan covering which items will be returned, exchanged, kept, or cancelled, and obtain explicit confirmation on the full plan. Exchange tools only work while an order's status is still 'delivered': processing a return for any item in an order immediately changes that order's status (e.g., to 'return requested'), after which the backend rejects exchanges for the remaining items. Therefore, if a delivered order has both items to exchange and items to return, resolve the exchange before processing any return on that order. If the customer is deciding conditionally, enumerate the matching available variants of the same product (variants that match the requested key attributes, and only the cheaper ones when a cheaper option was the stated condition) BEFORE processing any returns on that order, then let the customer decide and only then proceed. Execute all exchange items of an order in a single exchange call, since the exchange tool can be called only once per order. Do not partially return items from an order whose remaining items still require an exchange decision."
+            }
+          ]
+        },
+        "active_service_memory_id": "28940cc308f6a614",
+        "skill_count_before": 0,
+        "skill_count_proposed": 1,
+        "skill_count_after": 1,
+        "rendered_skill_chars_before": 0,
+        "rendered_skill_chars_proposed": 2126,
+        "rendered_skill_chars_after": 2126,
+        "rendered_skill_tokens": null,
+        "regression_diagnostics": {
+          "counts": {
+            "fail_to_pass": 4,
+            "pass_to_fail": 1,
+            "pass_to_pass": 9,
+            "fail_to_fail": 6
+          },
+          "task_ids": {
+            "fail_to_pass": [
+              "92",
+              "4",
+              "21",
+              "35"
+            ],
+            "pass_to_fail": [
+              "54"
+            ],
+            "pass_to_pass": [
+              "66",
+              "29",
+              "106",
+              "22",
+              "69",
+              "88",
+              "107",
+              "48",
+              "16"
+            ],
+            "fail_to_fail": [
+              "67",
+              "98",
+              "93",
+              "8",
+              "52",
+              "80"
+            ]
+          }
+        },
+        "proposed_skill_provenance": [
+          {
+            "skill_id": "skill-0001",
+            "created_generation": 0,
+            "updated_generation": 0,
+            "source_task_ids": [
+              "66",
+              "92",
+              "29",
+              "67",
+              "106",
+              "22",
+              "69",
+              "98",
+              "93",
+              "88",
+              "4",
+              "21",
+              "8",
+              "54",
+              "107",
+              "48",
+              "52",
+              "80",
+              "35",
+              "16"
+            ]
+          }
+        ],
+        "active_skill_provenance": [
+          {
+            "skill_id": "skill-0001",
+            "created_generation": 0,
+            "updated_generation": 0,
+            "source_task_ids": [
+              "66",
+              "92",
+              "29",
+              "67",
+              "106",
+              "22",
+              "69",
+              "98",
+              "93",
+              "88",
+              "4",
+              "21",
+              "8",
+              "54",
+              "107",
+              "48",
+              "52",
+              "80",
+              "35",
+              "16"
+            ]
+          }
+        ],
+        "skill_id_high_watermark_before": 0,
+        "skill_id_high_watermark_after": 1
+      },
+      "timing": {
+        "customer_phase_wall_clock_seconds": 3452.323961,
+        "service_phase_wall_clock_seconds": 1816.763156,
+        "validation_wall_clock_seconds": 0.0,
+        "generation_wall_clock_seconds": 5269.087118,
+        "episode_jobs_total": 60,
+        "episode_jobs_cache_hits": 0,
+        "configured_max_parallel_episodes": 1,
+        "peak_parallel_episodes": 1
+      },
+      "provider_budget": {
+        "cap": null,
+        "attempts": 1198,
+        "successes": 1198,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 6358900,
+        "completion_tokens": 151440,
+        "usage_responses": 1198,
+        "usage_unavailable": 0,
+        "cache_hits": 0,
+        "model_usage": [
+          {
+            "model_id": "openai/deepseek-v4-flash",
+            "attempts": 1196,
+            "successes": 1196,
+            "failures": 0,
+            "denied": 0,
+            "prompt_tokens": 6100755,
+            "completion_tokens": 144899,
+            "usage_responses": 1196,
+            "usage_unavailable": 0,
+            "cache_hits": 0
+          },
+          {
+            "model_id": "openai/deepseek-v4-pro",
+            "attempts": 2,
+            "successes": 2,
+            "failures": 0,
+            "denied": 0,
+            "prompt_tokens": 258145,
+            "completion_tokens": 6541,
+            "usage_responses": 2,
+            "usage_unavailable": 0,
+            "cache_hits": 0
+          }
+        ]
+      }
+    }
+  ],
+  "history": [
+    {
+      "generation": 0,
+      "customer_incumbent_accuracy": 0.95,
+      "customer_candidate_accuracies": [
+        0.5
+      ],
+      "customer_selected_accuracy": 0.5,
+      "service_old_accuracy": 0.5,
+      "service_proposed_accuracy": 0.65,
+      "service_accepted": true
+    }
+  ],
+  "final_evolution_episodes": [
+    {
+      "episode_id": "evotau-phase0-69e3ad19-6b7b-4930-ae11-cb2c3e30e87d",
+      "task_id": "66",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/b925bef5533345908b473ae92a5edfca/native-simulation.json",
+      "tool_calls": 5,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 3,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-d963e7dd-85a8-41b5-a177-3036991e71f7",
+      "task_id": "92",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/2eb4552c6b3d417a84750f47e76b2e5d/native-simulation.json",
+      "tool_calls": 7,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 4,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-aad0f575-9b03-424d-aaf7-48992f7acc48",
+      "task_id": "29",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/9c517b4ec60b403e87fcdb1bbb5c3229/native-simulation.json",
+      "tool_calls": 10,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 5,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-2a652d68-58e9-45d3-bfab-b73ef740cbf8",
+      "task_id": "67",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": false,
+      "native_reward": 0.0,
+      "termination_reason": "max_steps",
+      "trajectory_ref": "episodes/d595a301c8934ac385b174dd14bba289/native-simulation.json",
+      "tool_calls": 9,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 6,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-6905185b-17b4-4138-ad8d-abfeeb6c8039",
+      "task_id": "106",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/ba2998a54b0246be93d20c98b19651cd/native-simulation.json",
+      "tool_calls": 8,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 6,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-eeec33eb-a87f-425c-b6c8-d19da271f11f",
+      "task_id": "22",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/49f8527763254f8cb21b1f7038e770a5/native-simulation.json",
+      "tool_calls": 8,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 4,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-975c5a3e-e799-4de6-a0c7-d41a738f367a",
+      "task_id": "69",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/de0d74b253ca43af845ae8e4f25e1ee5/native-simulation.json",
+      "tool_calls": 6,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 3,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-34ff7d18-6b0b-4425-92bd-d7a14cfcb7be",
+      "task_id": "98",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": false,
+      "native_reward": 0.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/00ad16c448eb4292b4dc5274856b6e94/native-simulation.json",
+      "tool_calls": 12,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 5,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-d8de6635-940e-4ee2-88ff-34facbc4276f",
+      "task_id": "93",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": false,
+      "native_reward": 0.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/6563815bcb484c2a85c622aa52e4b272/native-simulation.json",
+      "tool_calls": 9,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 7,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-58d9fedc-0698-46b1-9401-d5fc7e4484d5",
+      "task_id": "88",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/3e215f92a4194f6bb437795d203ea93e/native-simulation.json",
+      "tool_calls": 6,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 4,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-cbefc615-9db2-49f9-8290-0aeb641c2679",
+      "task_id": "4",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/9fa6563c16724551a2afb622dcf62264/native-simulation.json",
+      "tool_calls": 11,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 5,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-d6ee8c00-4cc7-4320-a4ba-af10f6ec0b10",
+      "task_id": "21",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/d50184a5ff41417a83f754e259116a3b/native-simulation.json",
+      "tool_calls": 13,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 9,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-123d16f6-c80e-4080-9924-f14c80cc858e",
+      "task_id": "8",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": false,
+      "native_reward": 0.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/0ad7e141c37b4fba92929c2554a4283c/native-simulation.json",
+      "tool_calls": 8,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 5,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-fa67bb37-31d9-42d4-a0cf-f45b2c2820cf",
+      "task_id": "54",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": false,
+      "native_reward": 0.0,
+      "termination_reason": "max_steps",
+      "trajectory_ref": "episodes/8a9ec29cfdbd49f59d97f7ea4575f83b/native-simulation.json",
+      "tool_calls": 15,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 7,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-3c035d42-0514-4222-bdb1-bc6e8473dfb2",
+      "task_id": "107",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/abbba0c569c34880875b8b67c6c0b65d/native-simulation.json",
+      "tool_calls": 10,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 5,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-52ccecb1-5b0e-484c-95ae-058417a121ac",
+      "task_id": "48",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/90befc95b2ee4c4b97ce73f1dbcbc850/native-simulation.json",
+      "tool_calls": 6,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 3,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-5b9755cc-7e7f-4bed-9c90-ea9996045334",
+      "task_id": "52",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": false,
+      "native_reward": 0.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/da92e20244374dbaaa1de6ef0343ae62/native-simulation.json",
+      "tool_calls": 10,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 7,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-d4fa03a1-f685-4392-91d1-13ace6834061",
+      "task_id": "80",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": false,
+      "native_reward": 0.0,
+      "termination_reason": "max_steps",
+      "trajectory_ref": "episodes/5769737c6d934297afb15ed5bc52fe5c/native-simulation.json",
+      "tool_calls": 10,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 9,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-1f9d5ed6-f408-4586-9a69-d78a077aa9b6",
+      "task_id": "35",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/cb441bf4b55a4004bad5a44e3e5fec32/native-simulation.json",
+      "tool_calls": 8,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 7,
+      "raw_review": {},
+      "notes": ""
+    },
+    {
+      "episode_id": "evotau-phase0-aebe7bfe-c260-4c2c-9894-8683d42da6f2",
+      "task_id": "16",
+      "seed": 1,
+      "customer_strategy_id": "4f0efed3a149e457",
+      "service_strategy_id": "28940cc308f6a614",
+      "status": "complete",
+      "task_success": true,
+      "native_reward": 1.0,
+      "termination_reason": "user_stop",
+      "trajectory_ref": "episodes/3b48cc0d85664ef6a2a9cc798e0c15c0/native-simulation.json",
+      "tool_calls": 10,
+      "enforce_communication_protocol": false,
+      "mixed_text_tool_call_messages": 6,
+      "raw_review": {},
+      "notes": ""
+    }
+  ]
+}
