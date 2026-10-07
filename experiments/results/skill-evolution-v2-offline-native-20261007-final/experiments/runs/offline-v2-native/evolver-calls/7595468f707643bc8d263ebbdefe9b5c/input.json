@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "call_name": "evotau_customer_semantic_validator",
+  "model": "offline-evolver",
+  "request_args": {
+    "temperature": 0,
+    "tool_count": 0
+  },
+  "system_prompt": "You check Customer interaction policy semantic preservation before rollout.\nFor EVERY supplied underlying scenario, require the strategy preserve factual truth, business\nobjective, original identity/items/orders and backend reality. It may only change interaction\npattern. Reject invented products/order/person/addresses/objectives or benchmark internals.\nDo not infer reference targets. Return JSON {\"preserves_facts\":true,\"preserves_objective\":true,\n\"interaction_only\":true,\"no_benchmark_leakage\":true,\"reason\":\"...\"}. If uncertain use false.",
+  "context": {
+    "strategy": "Ask for clarification without changing facts or objective.",
+    "scenarios": [
+      "Instructions:\n\tDomain: retail\n\tReason for call:\n\t\tYou want to change the luggage set in your order for a coat.  Your goal is to change the order. If there is no way to do that, return the item specifically. If there are any issues, cancel the entire order.\n\tKnown info:\n\t\tYou are Aarav Lee. You live in Phoenix, AZ 85025.\n\tUnknown info:\n\t\tYou do not remember your email address\n\tTask instructions:\n\t\t."
+    ]
+  },
+  "input_sha256": "870ee9addc1344c5f04540646dcece61ef45a03ca785fb3b036fb182e71aad24"
+}

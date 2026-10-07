@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "call_name": "evotau_service_skill_mutator",
+  "model": "offline-evolver",
+  "request_args": {
+    "temperature": 0,
+    "tool_count": 0
+  },
+  "system_prompt": "You are the EvoTau Service Skill Mutator. Make ONE minimal attributable structural edit.\nUse target failures AND protected passing cases, previous fixed/broken cases, native policy,\ncurrent accepted memory, failure matrix, and accepted AND rejected mutation effects.\nExplain expected fix count and risk count. Rejected repairs with useful local fixes should first\nbe narrowed or simplified. Do not repeat an equivalent rejected mechanism without a substantive\nnew mechanism or applicability boundary. Keep edits local; guidance rewrite preserves applicability;\ntrigger edits preserve guidance. Prefer deletion/simplification over caveats when overhead/max_steps\nis the problem. Never add task IDs, people, order IDs, product names, addresses, hidden targets or new\nfacts/objectives. Guidance is subordinate to native policy and visible backend evidence.\nBias A: narrow applicability; B: minimal behavior and fewer confirmations; C: structural decomposition.\nOn EXPLORE_ON_STAGNATION choose another cluster, different mutation type or distinct archive mechanism;\nprefer SPLIT/DELETE over repeating the same semantic family. NO_OP is valid.\nReturn JSON {\"analysis\":\"...\",\"semantic_family\":\"...\",\"target_cluster_id\":\"...\",\n\"operation\":\"add|narrow_trigger|expand_trigger|rewrite_guidance|split|delete|no_op\",\n\"target_skill_id\":null,\"skill\":null,\"children\":[],\"expected_fixes\":[],\"protected_cases_at_risk\":[],\n\"substantive_delta_from_prior\":\"...\"}.\nA skill payload has exactly trigger, guidance, activation_signature (positive_conditions,\nnegative_conditions, interaction_phase arrays). SPLIT uses exactly two child payloads. No skill IDs.",
+  "context": {
+    "generation": 0,
+    "task_interactions": [
+      {
+        "task": {
+          "task_id": "66"
+        },
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "seed": 1,
+        "trajectory": {
+          "messages": [
+            {
+              "role": "assistant",
+              "content": "Hi! How can I help you today?",
+              "tool_calls": null
+            },
+            {
+              "role": "user",
+              "content": "My email is fatima.wilson5721@example.com. Please help.",
+              "tool_calls": null
+            },
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "lookup",
+                  "name": "find_user_id_by_email",
+                  "arguments": {
+                    "email": "fatima.wilson5721@example.com"
+                  },
+                  "requestor": "assistant"
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "content": "fatima_wilson_7472"
+            }
+          ],
+          "termination_reason": "max_steps"
+        },
+        "native_evaluation": {
+          "task_success": false,
+          "reward": 0.0,
+          "termination_reason": "max_steps"
+        },
+        "trajectory_ref": "episodes/7e4e344fe51c4d0b97227f19d50145e8/native-simulation.json"
+      }
+    ],
+    "failure_matrix": [],
+    "current_service_memory": {
+      "schema_version": 2,
+      "skills": []
+    },
+    "service_policy": "# Retail agent policy\n\nAs a retail agent, you can help users:\n\n- **cancel or modify pending orders**\n- **return or exchange delivered orders**\n- **modify their default user address**\n- **provide information about their own profile, orders, and related products**\n\nAt the beginning of the conversation, you have to authenticate the user identity by locating their user id via email, or via name + zip code. This has to be done even when the user already provides the user id.\n\nOnce the user has been authenticated, you can provide the user with information about order, product, profile information, e.g. help the user look up order id.\n\nYou can only help one user per conversation (but you can handle multiple requests from the same user), and must deny any requests for tasks related to any other user.\n\nBefore taking any action that updates the database (cancel, modify, return, exchange), you must list the action details and obtain explicit user confirmation (yes) to proceed.\n\nYou should not make up any information or knowledge or procedures not provided by the user or the tools, or give subjective recommendations or comments.\n\nYou should at most make one tool call at a time, and if you take a tool call, you should not respond to the user at the same time. If you respond to the user, you should not make a tool call at the same time.\n\nYou should deny user requests that are against this policy.\n\nYou should transfer the user to a human agent if and only if the request cannot be handled within the scope of your actions. To transfer, first make a tool call to transfer_to_human_agents, and then send the message 'YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON.' to the user.\n\n## Domain basic\n\n- All times in the database are EST and 24 hour based. For example \"02:30:00\" means 2:30 AM EST.\n\n### User\n\nEach user has a profile containing:\n\n- unique user id\n- email\n- default address\n- payment methods.\n\nThere are three types of payment methods: **gift card**, **paypal account**, **credit card**.\n\n### Product\n\nOur retail store has 50 types of products.\n\nFor each **type of product**, there are **variant items** of different **options**.\n\nFor example, for a 't-shirt' product, there could be a variant item with option 'color blue size M', and another variant item with option 'color red size L'.\n\nEach product has the following attributes:\n\n- unique product id\n- name\n- list of variants\n\nEach variant item has the following attributes:\n\n- unique item id\n- information about the value of the product options for this item.\n- availability\n- price\n\nNote: Product ID and Item ID have no relations and should not be confused!\n\n### Order\n\nEach order has the following attributes:\n\n- unique order id\n- user id\n- address\n- items ordered\n- status\n- fullfilments info (tracking id and item ids)\n- payment history\n\nThe status of an order can be: **pending**, **processed**, **delivered**, or **cancelled**.\n\nOrders can have other optional attributes based on the actions that have been taken (cancellation reason, which items have been exchanged, what was the exchane price difference etc)\n\n## Generic action rules\n\nGenerally, you can only take action on pending or delivered orders.\n\nExchange or modify order tools can only be called once per order. Be sure that all items to be changed are collected into a list before making the tool call!!!\n\n## Cancel pending order\n\nAn order can only be cancelled if its status is 'pending', and you should check its status before taking the action.\n\nThe user needs to confirm the order id and the reason (either 'no longer needed' or 'ordered by mistake') for cancellation. Other reasons are not acceptable.\n\nAfter user confirmation, the order status will be changed to 'cancelled', and the total will be refunded via the original payment method immediately if it is gift card, otherwise in 5 to 7 business days.\n\n## Modify pending order\n\nAn order can only be modified if its status is 'pending', and you should check its status before taking the action.\n\nFor a pending order, you can take actions to modify its shipping address, payment method, or product item options, but nothing else.\n\n### Modify payment\n\nThe user can only choose a single payment method different from the original payment method.\n\nIf the user wants the modify the payment method to gift card, it must have enough balance to cover the total amount.\n\nAfter user confirmation, the order status will be kept as 'pending'. The original payment method will be refunded immediately if it is a gift card, otherwise it will be refunded within 5 to 7 business days.\n\n### Modify items\n\nThis action can only be called once, and will change the order status to 'pending (items modifed)'. The agent will not be able to modify or cancel the order anymore. So you must confirm all the details are correct and be cautious before taking this action. In particular, remember to remind the customer to confirm they have provided all the items they want to modify.\n\nFor a pending order, each item can be modified to an available new item of the same product but of different product option. There cannot be any change of product types, e.g. modify shirt to shoe.\n\nThe user must provide a payment method to pay or receive refund of the price difference. If the user provides a gift card, it must have enough balance to cover the price difference.\n\n## Return delivered order\n\nAn order can only be returned if its status is 'delivered', and you should check its status before taking the action.\n\nThe user needs to confirm the order id and the list of items to be returned.\n\nThe user needs to provide a payment method to receive the refund.\n\nThe refund must either go to the original payment method, or an existing gift card.\n\nAfter user confirmation, the order status will be changed to 'return requested', and the user will receive an email regarding how to return items.\n\n## Exchange delivered order\n\nAn order can only be exchanged if its status is 'delivered', and you should check its status before taking the action. In particular, remember to remind the customer to confirm they have provided all items to be exchanged.\n\nFor a delivered order, each item can be exchanged to an available new item of the same product but of different product option. There cannot be any change of product types, e.g. modify shirt to shoe.\n\nThe user must provide a payment method to pay or receive refund of the price difference. If the user provides a gift card, it must have enough balance to cover the price difference.\n\nAfter user confirmation, the order status will be changed to 'exchange requested', and the user will receive an email regarding how to return items. There is no need to place a new order.\n",
+    "interaction_metrics": {
+      "accuracy": 0,
+      "unknown_count": 0,
+      "stuck_rate": 1,
+      "max_steps_count": 1,
+      "mean_steps": 4,
+      "p95_steps": 4,
+      "mean_tool_calls": 1,
+      "mean_tokens": 28,
+      "hard_violations": 0,
+      "mixed_text_tool_call": 0
+    },
+    "current_outcomes": [
+      {
+        "episode_id": "evotau-phase0-09d8e11a-2e1b-4146-a814-064a3ce6ba8c",
+        "task_id": "66",
+        "seed": 1,
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "status": "complete",
+        "task_success": false,
+        "native_reward": 0.0,
+        "termination_reason": "max_steps",
+        "trajectory_ref": "episodes/7e4e344fe51c4d0b97227f19d50145e8/native-simulation.json",
+        "tool_calls": 1,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 0,
+        "raw_review": {},
+        "notes": "",
+        "total_steps": 4,
+        "prompt_tokens": 20,
+        "completion_tokens": 8,
+        "tool_errors": 0,
+        "hard_policy_protocol_violations": 0,
+        "activated_skill_ids": []
+      }
+    ],
+    "previous_mutation_effects": [],
+    "exploration": {
+      "explore": false,
+      "mode": "REFINE",
+      "no_promotion_generations": 0,
+      "repeated_family": false,
+      "unchanged_failure_cluster": false,
+      "uncertain_improvement": false,
+      "avoid_families": [],
+      "preferred_mutation_types": []
+    },
+    "root_cause_cluster": {
+      "cluster_id": "scope",
+      "root_cause": "Scope ambiguity.",
+      "evidence_task_ids": [
+        "66"
+      ],
+      "protected_success_task_ids": [],
+      "recommended_surface": "skill",
+      "recommended_mutation_types": [
+        "add"
+      ],
+      "risk": "Overhead."
+    },
+    "proposal_bias": "narrow_applicability",
+    "prior_fixed_cases": [],
+    "prior_broken_cases": [],
+    "archive_parent": null
+  },
+  "input_sha256": "0788945d5c1fd57c7c140fc4c92dcd29b54b108110f3464e2f65ae679942e950"
+}

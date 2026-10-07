@@ -1,0 +1,994 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "2803f428d5f2811f612a55fcaafe7cd3e86ab89d19f829fb1aa330629e913205",
+  "completed_generation": 0,
+  "generations": [
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2803f428d5f2811f612a55fcaafe7cd3e86ab89d19f829fb1aa330629e913205",
+      "generation": 0,
+      "evolution_fitness_seed": 1,
+      "customer_before": {
+        "role": "customer",
+        "carrier": "prompt_strategy",
+        "strategy_id": "63be7e41e020bc00",
+        "strategy": ""
+      },
+      "service_before": {
+        "role": "service",
+        "carrier": "skill_memory_v2",
+        "strategy_id": "f0a9e404e39ab085",
+        "strategy": {
+          "schema_version": 2,
+          "skills": []
+        },
+        "skill_count": 0
+      },
+      "customer_after": {
+        "role": "customer",
+        "carrier": "prompt_strategy",
+        "strategy_id": "63be7e41e020bc00",
+        "strategy": ""
+      },
+      "service_after": {
+        "role": "service",
+        "carrier": "skill_memory_v2",
+        "strategy_id": "f0a9e404e39ab085",
+        "strategy": {
+          "schema_version": 2,
+          "skills": []
+        },
+        "skill_count": 0
+      },
+      "customer_phase": {
+        "incumbent_accuracy": 0.0,
+        "candidate_accuracies": [
+          0.0
+        ],
+        "selected_accuracy": 0.0,
+        "selected_customer": "incumbent",
+        "candidates": [
+          {
+            "strategy": {
+              "text": "Ask for clarification without changing facts or objective."
+            },
+            "semantic_family": "clarification",
+            "target_weakness_family": "scope",
+            "substantive_delta_from_prior": "",
+            "semantic_validation": {
+              "preserves_facts": true,
+              "preserves_objective": true,
+              "interaction_only": true,
+              "no_benchmark_leakage": true
+            },
+            "accuracy": 0.0,
+            "episodes": [
+              {
+                "episode_id": "evotau-phase0-ef0d41a9-2522-4c8e-8fb6-47c8498ae270",
+                "task_id": "66",
+                "seed": 1,
+                "customer_strategy_id": "b44f67079b25f3db",
+                "service_strategy_id": "f0a9e404e39ab085",
+                "status": "complete",
+                "task_success": false,
+                "native_reward": 0.0,
+                "termination_reason": "max_steps",
+                "trajectory_ref": "episodes/7b01e5ac68414d97a64b50d825bf7926/native-simulation.json",
+                "tool_calls": 1,
+                "enforce_communication_protocol": false,
+                "mixed_text_tool_call_messages": 0,
+                "raw_review": {},
+                "notes": "",
+                "total_steps": 4,
+                "prompt_tokens": 20,
+                "completion_tokens": 8,
+                "tool_errors": 0,
+                "hard_policy_protocol_violations": 0,
+                "activated_skill_ids": []
+              }
+            ],
+            "pre_rollout_rejection": null
+          }
+        ],
+        "incumbent_episodes": [
+          {
+            "episode_id": "evotau-phase0-444a4103-3335-483e-954c-93e7f66eef3c",
+            "task_id": "66",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "f0a9e404e39ab085",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "termination_reason": "max_steps",
+            "trajectory_ref": "episodes/ac8b12ddfe054ec888f08d7597976887/native-simulation.json",
+            "tool_calls": 1,
+            "enforce_communication_protocol": false,
+            "mixed_text_tool_call_messages": 0,
+            "raw_review": {},
+            "notes": "",
+            "total_steps": 4,
+            "prompt_tokens": 20,
+            "completion_tokens": 8,
+            "tool_errors": 0,
+            "hard_policy_protocol_violations": 0,
+            "activated_skill_ids": []
+          }
+        ]
+      },
+      "service_phase": {
+        "carrier": "skill_memory_v2",
+        "old_accuracy": 0.0,
+        "final_accuracy": 0.0,
+        "proposed_accuracy": 0,
+        "accepted": false,
+        "acceptance_mode": "e_only_mechanism_smoke",
+        "validation_evaluated": false,
+        "selection": {
+          "reason": "no candidate passed all screen/promotion/replay gates"
+        },
+        "skill_count_before": 0,
+        "skill_count_after": 0,
+        "candidates": [
+          {
+            "mutation_id": "g0000-scope-0",
+            "mutation": {
+              "analysis": "One local repair; fix count 1; risk count 0.",
+              "semantic_family": "scope",
+              "target_cluster_id": "scope",
+              "operation": "add",
+              "target_skill_id": null,
+              "skill": {
+                "trigger": "Ambiguous scope before confirmation.",
+                "guidance": "Ask one concise question only when necessary.",
+                "activation_signature": {
+                  "positive_conditions": [
+                    "Ambiguous scope is visible."
+                  ],
+                  "negative_conditions": [
+                    "Scope is clear."
+                  ],
+                  "interaction_phase": [
+                    "before_confirmation"
+                  ]
+                }
+              },
+              "expected_fixes": [
+                "66"
+              ],
+              "protected_cases_at_risk": [],
+              "substantive_delta_from_prior": ""
+            },
+            "generation": 0,
+            "parent_mutation_ids": [],
+            "runtime_deployed": false,
+            "screen": {
+              "passed": false,
+              "reason": "screen_regression_or_no_target_fix",
+              "fixed_cells": 0,
+              "protected_regressions": 0,
+              "hard_regressions": 0,
+              "stuck_count_delta": 0,
+              "old_metrics": {
+                "accuracy": 0,
+                "unknown_count": 0,
+                "stuck_rate": 1,
+                "max_steps_count": 2,
+                "mean_steps": 4,
+                "p95_steps": 4,
+                "mean_tool_calls": 1,
+                "mean_tokens": 28,
+                "hard_violations": 0,
+                "mixed_text_tool_call": 0
+              },
+              "new_metrics": {
+                "accuracy": 0,
+                "unknown_count": 0,
+                "stuck_rate": 1,
+                "max_steps_count": 2,
+                "mean_steps": 4,
+                "p95_steps": 4,
+                "mean_tool_calls": 1,
+                "mean_tokens": 42,
+                "hard_violations": 0,
+                "mixed_text_tool_call": 0
+              }
+            },
+            "gate": null,
+            "effect": {
+              "mutation_id": "g0000-scope-0",
+              "generation": 0,
+              "parent_memory_id": "f0a9e404e39ab085",
+              "proposed_memory_id": "7208522b44f1abd9",
+              "semantic_family": "scope",
+              "root_cause_cluster_id": "scope",
+              "mutation_type": "add",
+              "old_accuracy": 0,
+              "candidate_accuracy": 0,
+              "fail_to_pass": [],
+              "pass_to_fail": [],
+              "fail_to_fail": [
+                "66"
+              ],
+              "pass_to_pass": [],
+              "helpfulness": 0.0,
+              "harmfulness": null,
+              "old_stuck_rate": 1,
+              "new_stuck_rate": 1,
+              "step_delta": 0,
+              "token_delta": 14,
+              "accepted": false,
+              "rejection_reason": "screen_regression_or_no_target_fix",
+              "parent_mutation_ids": [],
+              "tool_call_delta": 0,
+              "policy_protocol_delta": 0,
+              "benefit_risk": null
+            },
+            "decision": "REJECTED",
+            "proposed_memory": {
+              "schema_version": 2,
+              "skills": [
+                {
+                  "skill_id": "skill-0001",
+                  "trigger": "Ambiguous scope before confirmation.",
+                  "guidance": "Ask one concise question only when necessary.",
+                  "activation_signature": {
+                    "positive_conditions": [
+                      "Ambiguous scope is visible."
+                    ],
+                    "negative_conditions": [
+                      "Scope is clear."
+                    ],
+                    "interaction_phase": [
+                      "before_confirmation"
+                    ]
+                  }
+                }
+              ]
+            },
+            "semantic_validation": {
+              "reusable": true,
+              "policy_subordinate": true,
+              "no_task_entities": true
+            },
+            "failure_matrix": [
+              {
+                "task_id": "66",
+                "seed": 1,
+                "generation": 0,
+                "candidate_id": "g0000-scope-0",
+                "status": "PERSISTENT_FAIL",
+                "cross_generation": "NEW_FAILURE",
+                "old_success": false,
+                "new_success": false,
+                "old_episode_id": "evotau-phase0-444a4103-3335-483e-954c-93e7f66eef3c",
+                "episode_id": "evotau-phase0-7a7df9d9-9815-4193-85f8-b3e1f4b8feb3",
+                "termination_reason": "max_steps",
+                "max_steps": true,
+                "total_steps": 4,
+                "tool_calls": 1,
+                "tool_errors": 0,
+                "protocol_violations": 0,
+                "mixed_text_tool_call": 0,
+                "prompt_tokens": 30,
+                "completion_tokens": 12,
+                "activated_skill_ids": [
+                  "skill-0001"
+                ]
+              },
+              {
+                "task_id": "66",
+                "seed": 2,
+                "generation": 0,
+                "candidate_id": "g0000-scope-0",
+                "status": "PERSISTENT_FAIL",
+                "cross_generation": "NEW_FAILURE",
+                "old_success": false,
+                "new_success": false,
+                "old_episode_id": "evotau-phase0-546b17c2-58f0-4a64-8b74-3967be7424b3",
+                "episode_id": "evotau-phase0-772062af-edde-4e1a-bc66-0c456d0ee08c",
+                "termination_reason": "max_steps",
+                "max_steps": true,
+                "total_steps": 4,
+                "tool_calls": 1,
+                "tool_errors": 0,
+                "protocol_violations": 0,
+                "mixed_text_tool_call": 0,
+                "prompt_tokens": 30,
+                "completion_tokens": 12,
+                "activated_skill_ids": [
+                  "skill-0001"
+                ]
+              }
+            ],
+            "evaluation_scope": "paired_screen_E",
+            "full_gate_episodes": []
+          }
+        ],
+        "diagnosis": {
+          "clusters": [
+            {
+              "cluster_id": "scope",
+              "root_cause": "Scope ambiguity.",
+              "evidence_task_ids": [
+                "66"
+              ],
+              "protected_success_task_ids": [],
+              "recommended_surface": "skill",
+              "recommended_mutation_types": [
+                "add"
+              ],
+              "risk": "Overhead."
+            }
+          ]
+        },
+        "opponents_replayed": [
+          "current",
+          "b44f67079b25f3db",
+          "native"
+        ],
+        "exploration": {
+          "explore": false,
+          "mode": "REFINE",
+          "no_promotion_generations": 0,
+          "repeated_family": false,
+          "unchanged_failure_cluster": false,
+          "uncertain_improvement": false,
+          "avoid_families": [],
+          "preferred_mutation_types": []
+        }
+      },
+      "evolution_health": {
+        "active_skill_count": 0,
+        "archive_size": 1,
+        "activation_mode": "activate_topk_v2",
+        "mechanism_smoke": true
+      },
+      "activation_summary": {
+        "available": true,
+        "scope": "completed E/V research rollouts including rejected candidates",
+        "interpretation": "success rate is episode-level association; per-skill tokens are joint-turn overhead",
+        "total_service_turns": 5,
+        "activated_turns": 2,
+        "activation_rate": 0.4,
+        "rendered_skill_tokens": 266,
+        "skills": {
+          "skill-0001": {
+            "count": 2,
+            "tokens": 266,
+            "scored_episodes": {
+              "evotau-phase0-772062af-edde-4e1a-bc66-0c456d0ee08c": false,
+              "evotau-phase0-7a7df9d9-9815-4193-85f8-b3e1f4b8feb3": false
+            },
+            "success_rate": 0.0
+          }
+        }
+      },
+      "customer_archive": [
+        {
+          "strategy_id": "b44f67079b25f3db",
+          "strategy": "Ask for clarification without changing facts or objective.",
+          "semantic_family": "clarification",
+          "target_weakness_family": "scope",
+          "substantive_delta_from_prior": "",
+          "accuracy": 0.0,
+          "generation": 0,
+          "last_generation": 0,
+          "accepted": false,
+          "novelty": 1,
+          "overlap": 0,
+          "semantic_preservation_status": true,
+          "failure_frequency": 1.0
+        }
+      ],
+      "failure_matrix": [
+        {
+          "task_id": "66",
+          "seed": 1,
+          "generation": 0,
+          "candidate_id": "g0000-scope-0",
+          "status": "PERSISTENT_FAIL",
+          "cross_generation": "NEW_FAILURE",
+          "old_success": false,
+          "new_success": false,
+          "old_episode_id": "evotau-phase0-444a4103-3335-483e-954c-93e7f66eef3c",
+          "episode_id": "evotau-phase0-7a7df9d9-9815-4193-85f8-b3e1f4b8feb3",
+          "termination_reason": "max_steps",
+          "max_steps": true,
+          "total_steps": 4,
+          "tool_calls": 1,
+          "tool_errors": 0,
+          "protocol_violations": 0,
+          "mixed_text_tool_call": 0,
+          "prompt_tokens": 30,
+          "completion_tokens": 12,
+          "activated_skill_ids": [
+            "skill-0001"
+          ]
+        },
+        {
+          "task_id": "66",
+          "seed": 2,
+          "generation": 0,
+          "candidate_id": "g0000-scope-0",
+          "status": "PERSISTENT_FAIL",
+          "cross_generation": "NEW_FAILURE",
+          "old_success": false,
+          "new_success": false,
+          "old_episode_id": "evotau-phase0-546b17c2-58f0-4a64-8b74-3967be7424b3",
+          "episode_id": "evotau-phase0-772062af-edde-4e1a-bc66-0c456d0ee08c",
+          "termination_reason": "max_steps",
+          "max_steps": true,
+          "total_steps": 4,
+          "tool_calls": 1,
+          "tool_errors": 0,
+          "protocol_violations": 0,
+          "mixed_text_tool_call": 0,
+          "prompt_tokens": 30,
+          "completion_tokens": 12,
+          "activated_skill_ids": [
+            "skill-0001"
+          ]
+        }
+      ],
+      "history_summary": [
+        {
+          "family": "scope",
+          "attempts": 1,
+          "successful_mechanisms": [],
+          "rejected_mechanisms": [
+            {
+              "mutation_id": "g0000-scope-0",
+              "type": "add",
+              "reason": "screen_regression_or_no_target_fix",
+              "mechanism": "Ambiguous scope before confirmation. Ask one concise question only when necessary.",
+              "locally_helpful": false,
+              "helpfulness": 0.0,
+              "harmfulness": null
+            }
+          ],
+          "known_fixes": [],
+          "known_regressions": [],
+          "unresolved": [
+            "66"
+          ]
+        }
+      ],
+      "statistical_policy": {
+        "bootstrap_samples": 2000,
+        "confidence": 0.95,
+        "enabled": true,
+        "max_harmfulness": 0.05,
+        "max_stuck_delta": 0.0,
+        "min_tasks": 8,
+        "multiple_look_correction": "bonferroni",
+        "require_positive_success_lower_bound": true
+      },
+      "timing": {
+        "validation_wall_clock_seconds": 0
+      }
+    }
+  ],
+  "state": {
+    "customer": {
+      "text": ""
+    },
+    "service": {
+      "schema_version": 2,
+      "skills": []
+    },
+    "service_provenance": [],
+    "skill_id_high_watermark": 1,
+    "mutation_effects": [
+      {
+        "mutation_id": "g0000-scope-0",
+        "mutation": {
+          "analysis": "One local repair; fix count 1; risk count 0.",
+          "semantic_family": "scope",
+          "target_cluster_id": "scope",
+          "operation": "add",
+          "target_skill_id": null,
+          "skill": {
+            "trigger": "Ambiguous scope before confirmation.",
+            "guidance": "Ask one concise question only when necessary.",
+            "activation_signature": {
+              "positive_conditions": [
+                "Ambiguous scope is visible."
+              ],
+              "negative_conditions": [
+                "Scope is clear."
+              ],
+              "interaction_phase": [
+                "before_confirmation"
+              ]
+            }
+          },
+          "expected_fixes": [
+            "66"
+          ],
+          "protected_cases_at_risk": [],
+          "substantive_delta_from_prior": ""
+        },
+        "generation": 0,
+        "parent_mutation_ids": [],
+        "runtime_deployed": false,
+        "screen": {
+          "passed": false,
+          "reason": "screen_regression_or_no_target_fix",
+          "fixed_cells": 0,
+          "protected_regressions": 0,
+          "hard_regressions": 0,
+          "stuck_count_delta": 0,
+          "old_metrics": {
+            "accuracy": 0,
+            "unknown_count": 0,
+            "stuck_rate": 1,
+            "max_steps_count": 2,
+            "mean_steps": 4,
+            "p95_steps": 4,
+            "mean_tool_calls": 1,
+            "mean_tokens": 28,
+            "hard_violations": 0,
+            "mixed_text_tool_call": 0
+          },
+          "new_metrics": {
+            "accuracy": 0,
+            "unknown_count": 0,
+            "stuck_rate": 1,
+            "max_steps_count": 2,
+            "mean_steps": 4,
+            "p95_steps": 4,
+            "mean_tool_calls": 1,
+            "mean_tokens": 42,
+            "hard_violations": 0,
+            "mixed_text_tool_call": 0
+          }
+        },
+        "gate": null,
+        "effect": {
+          "mutation_id": "g0000-scope-0",
+          "generation": 0,
+          "parent_memory_id": "f0a9e404e39ab085",
+          "proposed_memory_id": "7208522b44f1abd9",
+          "semantic_family": "scope",
+          "root_cause_cluster_id": "scope",
+          "mutation_type": "add",
+          "old_accuracy": 0,
+          "candidate_accuracy": 0,
+          "fail_to_pass": [],
+          "pass_to_fail": [],
+          "fail_to_fail": [
+            "66"
+          ],
+          "pass_to_pass": [],
+          "helpfulness": 0.0,
+          "harmfulness": null,
+          "old_stuck_rate": 1,
+          "new_stuck_rate": 1,
+          "step_delta": 0,
+          "token_delta": 14,
+          "accepted": false,
+          "rejection_reason": "screen_regression_or_no_target_fix",
+          "parent_mutation_ids": [],
+          "tool_call_delta": 0,
+          "policy_protocol_delta": 0,
+          "benefit_risk": null
+        },
+        "decision": "REJECTED",
+        "proposed_memory": {
+          "schema_version": 2,
+          "skills": [
+            {
+              "skill_id": "skill-0001",
+              "trigger": "Ambiguous scope before confirmation.",
+              "guidance": "Ask one concise question only when necessary.",
+              "activation_signature": {
+                "positive_conditions": [
+                  "Ambiguous scope is visible."
+                ],
+                "negative_conditions": [
+                  "Scope is clear."
+                ],
+                "interaction_phase": [
+                  "before_confirmation"
+                ]
+              }
+            }
+          ]
+        },
+        "semantic_validation": {
+          "reusable": true,
+          "policy_subordinate": true,
+          "no_task_entities": true
+        },
+        "failure_matrix": [
+          {
+            "task_id": "66",
+            "seed": 1,
+            "generation": 0,
+            "candidate_id": "g0000-scope-0",
+            "status": "PERSISTENT_FAIL",
+            "cross_generation": "NEW_FAILURE",
+            "old_success": false,
+            "new_success": false,
+            "old_episode_id": "evotau-phase0-444a4103-3335-483e-954c-93e7f66eef3c",
+            "episode_id": "evotau-phase0-7a7df9d9-9815-4193-85f8-b3e1f4b8feb3",
+            "termination_reason": "max_steps",
+            "max_steps": true,
+            "total_steps": 4,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "protocol_violations": 0,
+            "mixed_text_tool_call": 0,
+            "prompt_tokens": 30,
+            "completion_tokens": 12,
+            "activated_skill_ids": [
+              "skill-0001"
+            ]
+          },
+          {
+            "task_id": "66",
+            "seed": 2,
+            "generation": 0,
+            "candidate_id": "g0000-scope-0",
+            "status": "PERSISTENT_FAIL",
+            "cross_generation": "NEW_FAILURE",
+            "old_success": false,
+            "new_success": false,
+            "old_episode_id": "evotau-phase0-546b17c2-58f0-4a64-8b74-3967be7424b3",
+            "episode_id": "evotau-phase0-772062af-edde-4e1a-bc66-0c456d0ee08c",
+            "termination_reason": "max_steps",
+            "max_steps": true,
+            "total_steps": 4,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "protocol_violations": 0,
+            "mixed_text_tool_call": 0,
+            "prompt_tokens": 30,
+            "completion_tokens": 12,
+            "activated_skill_ids": [
+              "skill-0001"
+            ]
+          }
+        ],
+        "evaluation_scope": "paired_screen_E",
+        "full_gate_episodes": []
+      }
+    ],
+    "failure_matrix": [
+      {
+        "task_id": "66",
+        "seed": 1,
+        "generation": 0,
+        "candidate_id": "g0000-scope-0",
+        "status": "PERSISTENT_FAIL",
+        "cross_generation": "NEW_FAILURE",
+        "old_success": false,
+        "new_success": false,
+        "old_episode_id": "evotau-phase0-444a4103-3335-483e-954c-93e7f66eef3c",
+        "episode_id": "evotau-phase0-7a7df9d9-9815-4193-85f8-b3e1f4b8feb3",
+        "termination_reason": "max_steps",
+        "max_steps": true,
+        "total_steps": 4,
+        "tool_calls": 1,
+        "tool_errors": 0,
+        "protocol_violations": 0,
+        "mixed_text_tool_call": 0,
+        "prompt_tokens": 30,
+        "completion_tokens": 12,
+        "activated_skill_ids": [
+          "skill-0001"
+        ]
+      },
+      {
+        "task_id": "66",
+        "seed": 2,
+        "generation": 0,
+        "candidate_id": "g0000-scope-0",
+        "status": "PERSISTENT_FAIL",
+        "cross_generation": "NEW_FAILURE",
+        "old_success": false,
+        "new_success": false,
+        "old_episode_id": "evotau-phase0-546b17c2-58f0-4a64-8b74-3967be7424b3",
+        "episode_id": "evotau-phase0-772062af-edde-4e1a-bc66-0c456d0ee08c",
+        "termination_reason": "max_steps",
+        "max_steps": true,
+        "total_steps": 4,
+        "tool_calls": 1,
+        "tool_errors": 0,
+        "protocol_violations": 0,
+        "mixed_text_tool_call": 0,
+        "prompt_tokens": 30,
+        "completion_tokens": 12,
+        "activated_skill_ids": [
+          "skill-0001"
+        ]
+      }
+    ],
+    "evolution_archive": {
+      "entries": [
+        {
+          "mutation_id": "g0000-scope-0",
+          "mutation": {
+            "analysis": "One local repair; fix count 1; risk count 0.",
+            "semantic_family": "scope",
+            "target_cluster_id": "scope",
+            "operation": "add",
+            "target_skill_id": null,
+            "skill": {
+              "trigger": "Ambiguous scope before confirmation.",
+              "guidance": "Ask one concise question only when necessary.",
+              "activation_signature": {
+                "positive_conditions": [
+                  "Ambiguous scope is visible."
+                ],
+                "negative_conditions": [
+                  "Scope is clear."
+                ],
+                "interaction_phase": [
+                  "before_confirmation"
+                ]
+              }
+            },
+            "expected_fixes": [
+              "66"
+            ],
+            "protected_cases_at_risk": [],
+            "substantive_delta_from_prior": ""
+          },
+          "generation": 0,
+          "parent_mutation_ids": [],
+          "runtime_deployed": false,
+          "screen": {
+            "passed": false,
+            "reason": "screen_regression_or_no_target_fix",
+            "fixed_cells": 0,
+            "protected_regressions": 0,
+            "hard_regressions": 0,
+            "stuck_count_delta": 0,
+            "old_metrics": {
+              "accuracy": 0,
+              "unknown_count": 0,
+              "stuck_rate": 1,
+              "max_steps_count": 2,
+              "mean_steps": 4,
+              "p95_steps": 4,
+              "mean_tool_calls": 1,
+              "mean_tokens": 28,
+              "hard_violations": 0,
+              "mixed_text_tool_call": 0
+            },
+            "new_metrics": {
+              "accuracy": 0,
+              "unknown_count": 0,
+              "stuck_rate": 1,
+              "max_steps_count": 2,
+              "mean_steps": 4,
+              "p95_steps": 4,
+              "mean_tool_calls": 1,
+              "mean_tokens": 42,
+              "hard_violations": 0,
+              "mixed_text_tool_call": 0
+            }
+          },
+          "gate": null,
+          "effect": {
+            "mutation_id": "g0000-scope-0",
+            "generation": 0,
+            "parent_memory_id": "f0a9e404e39ab085",
+            "proposed_memory_id": "7208522b44f1abd9",
+            "semantic_family": "scope",
+            "root_cause_cluster_id": "scope",
+            "mutation_type": "add",
+            "old_accuracy": 0,
+            "candidate_accuracy": 0,
+            "fail_to_pass": [],
+            "pass_to_fail": [],
+            "fail_to_fail": [
+              "66"
+            ],
+            "pass_to_pass": [],
+            "helpfulness": 0.0,
+            "harmfulness": null,
+            "old_stuck_rate": 1,
+            "new_stuck_rate": 1,
+            "step_delta": 0,
+            "token_delta": 14,
+            "accepted": false,
+            "rejection_reason": "screen_regression_or_no_target_fix",
+            "parent_mutation_ids": [],
+            "tool_call_delta": 0,
+            "policy_protocol_delta": 0,
+            "benefit_risk": null
+          },
+          "decision": "REJECTED",
+          "proposed_memory": {
+            "schema_version": 2,
+            "skills": [
+              {
+                "skill_id": "skill-0001",
+                "trigger": "Ambiguous scope before confirmation.",
+                "guidance": "Ask one concise question only when necessary.",
+                "activation_signature": {
+                  "positive_conditions": [
+                    "Ambiguous scope is visible."
+                  ],
+                  "negative_conditions": [
+                    "Scope is clear."
+                  ],
+                  "interaction_phase": [
+                    "before_confirmation"
+                  ]
+                }
+              }
+            ]
+          },
+          "semantic_validation": {
+            "reusable": true,
+            "policy_subordinate": true,
+            "no_task_entities": true
+          },
+          "failure_matrix": [
+            {
+              "task_id": "66",
+              "seed": 1,
+              "generation": 0,
+              "candidate_id": "g0000-scope-0",
+              "status": "PERSISTENT_FAIL",
+              "cross_generation": "NEW_FAILURE",
+              "old_success": false,
+              "new_success": false,
+              "old_episode_id": "evotau-phase0-444a4103-3335-483e-954c-93e7f66eef3c",
+              "episode_id": "evotau-phase0-7a7df9d9-9815-4193-85f8-b3e1f4b8feb3",
+              "termination_reason": "max_steps",
+              "max_steps": true,
+              "total_steps": 4,
+              "tool_calls": 1,
+              "tool_errors": 0,
+              "protocol_violations": 0,
+              "mixed_text_tool_call": 0,
+              "prompt_tokens": 30,
+              "completion_tokens": 12,
+              "activated_skill_ids": [
+                "skill-0001"
+              ]
+            },
+            {
+              "task_id": "66",
+              "seed": 2,
+              "generation": 0,
+              "candidate_id": "g0000-scope-0",
+              "status": "PERSISTENT_FAIL",
+              "cross_generation": "NEW_FAILURE",
+              "old_success": false,
+              "new_success": false,
+              "old_episode_id": "evotau-phase0-546b17c2-58f0-4a64-8b74-3967be7424b3",
+              "episode_id": "evotau-phase0-772062af-edde-4e1a-bc66-0c456d0ee08c",
+              "termination_reason": "max_steps",
+              "max_steps": true,
+              "total_steps": 4,
+              "tool_calls": 1,
+              "tool_errors": 0,
+              "protocol_violations": 0,
+              "mixed_text_tool_call": 0,
+              "prompt_tokens": 30,
+              "completion_tokens": 12,
+              "activated_skill_ids": [
+                "skill-0001"
+              ]
+            }
+          ],
+          "evaluation_scope": "paired_screen_E",
+          "full_gate_episodes": []
+        }
+      ],
+      "max_candidates": 5,
+      "runtime_deployed": false
+    },
+    "customer_archive": [
+      {
+        "strategy_id": "b44f67079b25f3db",
+        "strategy": "Ask for clarification without changing facts or objective.",
+        "semantic_family": "clarification",
+        "target_weakness_family": "scope",
+        "substantive_delta_from_prior": "",
+        "accuracy": 0.0,
+        "generation": 0,
+        "last_generation": 0,
+        "accepted": false,
+        "novelty": 1,
+        "overlap": 0,
+        "semantic_preservation_status": true,
+        "failure_frequency": 1.0
+      }
+    ],
+    "history_summary": [
+      {
+        "family": "scope",
+        "attempts": 1,
+        "successful_mechanisms": [],
+        "rejected_mechanisms": [
+          {
+            "mutation_id": "g0000-scope-0",
+            "type": "add",
+            "reason": "screen_regression_or_no_target_fix",
+            "mechanism": "Ambiguous scope before confirmation. Ask one concise question only when necessary.",
+            "locally_helpful": false,
+            "helpfulness": 0.0,
+            "harmfulness": null
+          }
+        ],
+        "known_fixes": [],
+        "known_regressions": [],
+        "unresolved": [
+          "66"
+        ]
+      }
+    ],
+    "activation_config": {
+      "model": "offline-activator",
+      "model_args": {
+        "temperature": 0
+      }
+    },
+    "activation_summary": {
+      "available": true,
+      "scope": "completed E/V research rollouts including rejected candidates",
+      "interpretation": "success rate is episode-level association; per-skill tokens are joint-turn overhead",
+      "total_service_turns": 5,
+      "activated_turns": 2,
+      "activation_rate": 0.4,
+      "rendered_skill_tokens": 266,
+      "skills": {
+        "skill-0001": {
+          "count": 2,
+          "tokens": 266,
+          "scored_episodes": {
+            "evotau-phase0-772062af-edde-4e1a-bc66-0c456d0ee08c": false,
+            "evotau-phase0-7a7df9d9-9815-4193-85f8-b3e1f4b8feb3": false
+          },
+          "success_rate": 0.0
+        }
+      }
+    },
+    "statistical_gate_state": {
+      "policy": {
+        "bootstrap_samples": 2000,
+        "confidence": 0.95,
+        "enabled": true,
+        "max_harmfulness": 0.05,
+        "max_stuck_delta": 0.0,
+        "min_tasks": 8,
+        "multiple_look_correction": "bonferroni",
+        "require_positive_success_lower_bound": true
+      },
+      "looks": 3
+    },
+    "final_evolution_episodes": [
+      {
+        "episode_id": "evotau-phase0-444a4103-3335-483e-954c-93e7f66eef3c",
+        "task_id": "66",
+        "seed": 1,
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "status": "complete",
+        "task_success": false,
+        "native_reward": 0.0,
+        "termination_reason": "max_steps",
+        "trajectory_ref": "episodes/ac8b12ddfe054ec888f08d7597976887/native-simulation.json",
+        "tool_calls": 1,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 0,
+        "raw_review": {},
+        "notes": "",
+        "total_steps": 4,
+        "prompt_tokens": 20,
+        "completion_tokens": 8,
+        "tool_errors": 0,
+        "hard_policy_protocol_violations": 0,
+        "activated_skill_ids": []
+      }
+    ]
+  },
+  "checkpoint_sha256": "cad2aa4c89ed1df9fc83ade9fe25b074686f3f9a1376b0f01c65b273fbebc77a"
+}
