@@ -735,3 +735,74 @@ def test_web_strategy_view_and_diff_render_service_skills_by_stable_id() -> None
     )
     assert "skill-0001" in generation["proposed_service_text"]
     assert generation["service_diff"]["added"] == ("skill-0001",)
+
+
+def test_skill_proposal_partial_evaluation_resume_reuses_immutable_artifacts(tmp_path):
+    tasks = {key: SimpleNamespace(id=key, description=key, user_scenario=key, user_tools=[])
+             for key in ('a', 'b')}
+    cache = {}
+    completed = []
+    interrupted = False
+    evolver_calls = []
+
+    def runner(*, task_id, seed, customer, service, panel_name):
+        nonlocal interrupted
+        key = (task_id, seed, customer.text, service_strategy_id(service))
+        if key in cache:
+            return cache[key]
+        if service.skills and task_id == 'b' and not interrupted:
+            interrupted = True
+            raise RuntimeError('provider disconnected')
+        success = bool(service.skills) or task_id == 'a'
+        record = EpisodeRecord(
+            episode_id=str(len(completed)), task_id=task_id, seed=seed,
+            customer_strategy_id=customer.text,
+            service_strategy_id=service_strategy_id(service),
+            status=EpisodeStatus.COMPLETE, task_success=success,
+            native_reward=float(success), termination_reason='user_stop', raw_review={},
+        )
+        completed.append(key)
+        cache[key] = record
+        return record
+
+    def customer_evolver(*_args):
+        evolver_calls.append('customer')
+        return ['C0']
+
+    def service_evolver(*_args):
+        evolver_calls.append('service')
+        return _mutation('add', trigger='Reusable trigger.', guidance='Reusable guidance.')
+
+    kwargs = {
+        "tasks": tasks, "evolution_task_ids": ('a', 'b'), "validation_task_ids": (), "seed": 1,
+        "generations": 1, "customer_candidate_count": 1, "clean_panel_size": 1,
+        "max_parallel_episodes": 1, "run_validation": False,
+        "initial_customer": PromptStrategy('C0'), "initial_service": ServiceSkillMemory(),
+        "service_carrier": 'skill_memory_v1', "runner": runner,
+        "customer_evolver": customer_evolver, "service_evolver": service_evolver,
+        "domain_policy": 'Fixed policy.', "output_directory": tmp_path,
+        "checkpoint_path": tmp_path / 'checkpoint.json', "manifest_sha256": 'frozen',
+    }
+    with pytest.raises(RuntimeError, match='provider disconnected'):
+        run_alternating_evolution(**kwargs)
+    paths = [tmp_path / 'service-memory/generation-0000-input.json',
+             tmp_path / 'service-memory/generation-0000-proposed.json',
+             tmp_path / 'generation-0000-service-proposal.json']
+    before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths]
+    assert len(completed) == 3
+    result = run_alternating_evolution(**kwargs)
+    assert len(completed) == 4
+    assert evolver_calls == ['customer', 'service']
+    assert result.generations[0]['service_phase']['accepted'] is True
+    assert [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths] == before
+
+
+def test_immutable_artifact_same_bytes_reused_but_changes_rejected(tmp_path):
+    path = tmp_path / 'artifact.json'
+    alternating._write_json_once(path, {'value': 1})
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    alternating._write_json_once(path, {'value': 1})
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    with pytest.raises(FileExistsError, match='content differs'):
+        alternating._write_json_once(path, {'value': True})
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before

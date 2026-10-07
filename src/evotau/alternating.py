@@ -1390,7 +1390,10 @@ def _write_json_once(path: Path, value: Mapping[str, Any]) -> None:
         try:
             os.link(temp_name, path)
         except FileExistsError as exc:
-            raise FileExistsError(f"immutable proposal already exists: {path}") from exc
+            if (not path.is_symlink() and path.is_file()
+                    and path.read_text(encoding="utf-8") == payload):
+                return
+            raise FileExistsError(f"immutable proposal content differs: {path}") from exc
         directory_fd = os.open(path.parent, os.O_RDONLY)
         try:
             os.fsync(directory_fd)
