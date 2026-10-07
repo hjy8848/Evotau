@@ -88,7 +88,10 @@ class EvolutionArchive:
         def dominated(e):
             x = score(e)
             return any(
-                all(a >= b for a, b in zip(score(other), x, strict=True))
+                e.get("comparison_key") is not None
+                and e.get("comparison_key") == other.get("comparison_key")
+                and e.get("evaluation_scope") == other.get("evaluation_scope")
+                and all(a >= b for a, b in zip(score(other), x, strict=True))
                 and score(other) != x
                 for other in self.entries
             )
@@ -99,7 +102,9 @@ class EvolutionArchive:
                 dominated(e),
                 not e["effect"]["accepted"],
                 -len(e["effect"]["fail_to_pass"]),
-                tuple(-x for x in score(e)),
+                # Never rank incomparable screen/full-E accuracies as one fitness scale.
+                e.get("evaluation_scope") != "full_E",
+                e.get("generation", 0),
                 e["mutation_id"],
             ),
         )

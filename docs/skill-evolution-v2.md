@@ -19,7 +19,7 @@ E native incumbent rollouts
   → locally useful research archive, rejection lineage, failure matrix
 ```
 
-E-only mechanism smoke uses E for the promotion comparison with strict positive paired accuracy. It is explicitly labeled **NO GENERALIZATION CLAIM**. Formal mode uses V, never H, for promotion. In both modes a proposal must pass every replay opponent's gate; the recorded current weight does not allow averaging away another opponent's regression.
+Current Customer repair requires **superiority on paired E**. Archived and native Customers require **preservation**, so equal scores can pass. In V-enabled runs, a candidate must first improve current-Customer E, then preserve V against every replay opponent (including current Customer). E-only mechanism smoke uses these distinct objectives on E, with **NO GENERALIZATION CLAIM**. No weighted average can hide another opponent's regression. Screen protection covers each incumbent-passing task×seed cell, even a passing seed of a task that also contains a target failure.
 
 Only accepted `ServiceSkillMemoryV2` enters runtime. Before each native Service generation, `SkillActivator` sees previous/current observable messages, tool results and the accepted catalog (ID, trigger, signature). It never receives task IDs, hidden scenarios, native reward, evaluator targets or future messages. Selected guidance is appended to the native policy for that turn only; the next turn rebuilds the prompt from the native baseline. An empty catalog records an empty decision without a request. K is at most two. The explicit `render_all_v1` ablation uses a no-provider selector to inject all accepted V2 skills and records what was actually rendered on each turn.
 
@@ -40,7 +40,7 @@ Customer proposal/validation can see E scenarios. Service diagnosis/mutation can
 
 Runtime V2 memory is `{schema_version: 2, skills: [...]}`. Each skill has `skill_id`, `trigger`, `guidance`, and `activation_signature` with positive/negative conditions and interaction phases. IDs are assigned by a persistent high watermark; rejected proposals do not free IDs for reuse. Supported intent is ADD, NARROW_TRIGGER, EXPAND_TRIGGER, REWRITE_GUIDANCE, SPLIT, DELETE, NO_OP. Applicability-only edits preserve guidance; guidance-only edits preserve trigger/signature. SPLIT assigns two new IDs. Extra draft fields cannot override generated IDs.
 
-V2 checkpoint/result/generation schema is **3**. The checkpoint saves active memory/provenance, high watermark, accepted and rejected `MutationEffects`, full failure matrix, evolution archive, Customer archive, bounded history, activation configuration/statistics, statistical policy/looks, final E records and committed generations. MutationEffect includes paired fixes/breaks/persistent outcomes, helpfulness/harmfulness, stuck/step/tool/token/observed violation deltas, decision/reason and parent mutations. Candidate artifacts distinguish screen-only E attribution from full E attribution; V promotion evidence is separate.
+V2 checkpoint/result/generation schema is **3**. The checkpoint saves active memory/provenance, high watermark, accepted and rejected `MutationEffects`, full failure matrix, evolution archive, Customer archive, bounded history, activation configuration/statistics, statistical policy/looks, final E records and committed generations. MutationEffect includes paired fixes/breaks/persistent outcomes, helpfulness/harmfulness, stuck/step/tool/token/observed violation deltas, decision/reason and parent mutations. Candidate artifacts distinguish screen-only E attribution from full E attribution; V promotion evidence is separate. Archive Pareto dominance requires the same evaluation scope and exact paired-cell/baseline comparison key. Screen accuracy and full-E accuracy are never compared as if they shared a denominator.
 
 `evolution-v2/<stage>.json` is an immutable envelope containing manifest SHA, input SHA, payload SHA and envelope SHA. Frozen diagnosis, proposals, semantic validation, panel records, screen, gate, selection and generation commit are reused only on exact binding. The provider-call record has a response SHA so a completed Evolver request can also be recovered after a crash before stage publication. Corruption or changed input fails closed. Per-turn activation artifacts and their aggregate trace have independent hashes bound to manifest and episode condition.
 
@@ -50,9 +50,14 @@ Native episode identity remains task + seed + Customer strategy + Service carrie
 
 All pairs require identical unique task×seed cells. Missing/unknown scores are never failure. The bootstrap resamples **tasks as blocks**, retaining all seeds within a task; extra seeds are not extra independent tasks. Bonferroni corrects a frozen upper bound on candidate × replay-opponent looks within each generation. This is not a guarantee against every later adaptive analysis across generations or post-hoc experiment selection.
 
-Formal acceptance requires adequate task/seed coverage, positive success lower bound, harmfulness upper bound below the frozen threshold, and acceptable stuck delta. Zero observed regressions do not imply zero risk: a conservative task-level Wilson upper bound supplements degenerate all-zero bootstrap intervals. Hard observed regressions reject. Ties/insufficient evidence produce `INCONCLUSIVE`. `pass^k` is the within-task without-replacement estimate over available repeated seeds; unavailable trial counts are not invented.
+The frozen `statistical_gate.method` distinguishes two contracts:
 
-The formal example has **E20 / V3 / H5** to preserve current panels. Its V3 is below the default minimum of eight independent tasks and cannot substantiate the 5% harmfulness bound. Expect `INCONCLUSIVE`, not relaxed thresholds. A real formal generalization study needs a prospectively frozen adequately sized V panel; even eight tasks may be far too few for the risk bound after multiple-look correction. The E-only example is the first mechanism check, not a substitute for that study.
+- `task_block_bootstrap`: population-inference acceptance requires adequate independent tasks/seeds, a positive success lower bound for superiority (a nonnegative lower bound for preservation), the harmfulness upper bound, and stuck checks. A task-level Wilson bound prevents false zero-risk claims. Insufficient evidence remains `INCONCLUSIVE`.
+- `finite_panel_paired`: a small fixed-panel check, requiring at least two paired seeds, zero observed pass→fail cells, zero newly stuck cells, and no hard violation increase. Superiority additionally requires strictly increased accuracy; preservation permits ties. Bootstrap/Wilson intervals are recorded as diagnostics, **not acceptance evidence**. `inference_scope=frozen_tasks_observed_seeds_only` and `population_risk_certified=false`. This contract cannot certify a population harmfulness bound or generalization.
+
+`pass^k` is the within-task without-replacement estimate over available repeated seeds; unavailable trial counts are not invented.
+
+The V-enabled example retains **E20 / V3 / H5** and explicitly selects `finite_panel_paired`. V3 can now accept observed preservation without pretending to substantiate the 5% population harmfulness bound. The bootstrap minimum remains eight; it has not been lowered. A formal population study must instead freeze `task_block_bootstrap` and an adequately sized V panel; even eight independent tasks may be insufficient for the risk bound. Neither a finite-panel promotion nor the E-only smoke substitutes for that study.
 
 `max_steps` is independent reliability evidence (count/rate, mean/p95 steps). Token budgets use `tiktoken` cl100k_base for deterministic accounting, not claimed Qwen/DeepSeek billing tokenization. Rendered tokens are measured on actual selected blocks; API usage comes from provider responses, separately by role. Episode total tokens include runtime calls including activation; role-specific usage isolates Service and activator costs. An episode-level activation success rate is association, **not causal credit**. Per-skill overhead on a multi-skill turn is joint overhead and must not be summed as uniquely attributed cost.
 
@@ -71,7 +76,7 @@ The Console renders stored statistics; it does not run providers/bootstrap or se
 New configurations:
 
 - `configs/alternating-skill-memory-v2-qwen3-7-plus-retail-mechanism-smoke.yaml`: G2, C1, E20, P4, max_steps32, V/H disabled; paired multi-seed screens/gates and native/archived replay.
-- `configs/alternating-skill-memory-v2-qwen3-7-plus-retail.yaml`: same new V2 treatment, V/H enabled, formal V gate. V3 is intentionally insufficient as described above.
+- `configs/alternating-skill-memory-v2-qwen3-7-plus-retail.yaml`: same new V2 treatment, V/H enabled, explicitly finite-panel V preservation; no population-risk certificate.
 
 Both retain the pinned Retail train/test IDs and exclude 46/47. Agent/Customer/Evaluator/Activator use the existing InferAI Qwen3.7-plus configuration, thinking disabled; Evolver uses the existing InferAI DeepSeek V4 Pro thinking-enabled/high request. Provider availability and the actual reasoning behavior are **not live-verified by this implementation**. Use an independent output/checkpoint for every treatment. No old real directory is reused.
 
@@ -144,3 +149,17 @@ The following are the **design influences supplied in the task**, not claims of 
 | Self-play / Reflective Experience Replay | archived adversaries and native clean replay |
 
 Live activation applicability, semantic validators, diagnosis quality, mutation diversity and useful crossover remain empirical risks. The semantic duplicate check is a deterministic combined structure/family/text/delta heuristic, not a proof of semantic equivalence; a misleading delta claim can evade some near-duplicate detection. Multi-seed evaluation, replay and per-turn activation add compute and provider latency. Formal statistical power is limited by independent V tasks, and repeated seeds/provider determinism may not be independent draws. No live InferAI request or research-effectiveness claim is made by this implementation delivery.
+
+
+## Gate calibration and controlled live measurement
+
+`configs/skill-evolution-v2-activation-morphology-smoke.yaml` isolates the archived V1 repair's activation boundary. It freezes the previous Customer, trigger and guidance; Pro proposes only a narrower signature from observable E trajectories. The measurement runs empty memory, render-all, and activation against six diagnostic Retail train tasks (22, 80, 98, 4, 21, 35), each with seeds 1 and 2: **36 episodes**, P4, max_steps32, V/H disabled. Each treatment has its own manifest, cache, usage ledger and native artifacts. No new Customer search or multi-generation selection runs. This tests a known repair morphology; it does not prove the complete V2 search finds good skills.
+
+```bash
+PYTHONPATH=src python experiments/execution/run-v2-activation-morphology-smoke.py \
+  --config configs/skill-evolution-v2-activation-morphology-smoke.yaml \
+  --tau2-data-dir /path/to/pinned/data --dry-run
+# Remove --dry-run only for the authorized live measurement.
+```
+
+The live launcher performs one no-tools JSON check per model, obtains the existing Chinese-group key from Keychain without persisting it, and shares the existing 30/60.1-second dispatch pacing across native and evolution calls. Total budget is unlimited. Provider errors remain recorded unknown attempts; there is no automatic model fallback or retry loop. Resume binds saved manifests and exact journal inputs and reuses completed native episodes/stages. Reporting distinguishes per-seed cell counts from the historic single-seed task counts (2 fixes/4 breaks); two seeds cannot be counted as two independent tasks.

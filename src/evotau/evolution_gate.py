@@ -26,7 +26,11 @@ def _wilson_upper(events, trials, alpha):
     ) / (1 + z * z / trials)
 
 
-def evaluate_gate(old, new, policy, *, looks=1, smoke=False, seed=1):
+def evaluate_gate(
+    old, new, policy, *, looks=1, smoke=False, seed=1, objective="superiority"
+):
+    if objective not in ("superiority", "preservation"):
+        raise ValueError("unknown opponent gate objective")
     a = {(r.task_id, r.seed): r for r in old}
     b = {(r.task_id, r.seed): r for r in new}
     if len(a) != len(old) or len(b) != len(new) or a.keys() != b.keys() or not a:
@@ -41,6 +45,8 @@ def evaluate_gate(old, new, policy, *, looks=1, smoke=False, seed=1):
         "task_count": len({r.task_id for r in old}),
         "old_metrics": episode_metrics(old),
         "new_metrics": episode_metrics(new),
+        "objective": objective,
+        "method": policy.get("method", "task_block_bootstrap"),
     }
     if any(observable_outcome(r) is None for r in (*old, *new)):
         return {
@@ -96,18 +102,67 @@ def evaluate_gate(old, new, policy, *, looks=1, smoke=False, seed=1):
         stuck_delta_ci=_interval(stuck, alpha),
         adjusted_confidence=1 - alpha,
         hard_regressions=hard_regressions,
+        regression_cells=[
+            {"task_id": k[0], "seed": k[1]}
+            for k, x in a.items()
+            if x.task_success and not b[k].task_success
+        ],
+        new_stuck_cells=[
+            {"task_id": k[0], "seed": k[1]}
+            for k, x in a.items()
+            if not is_stuck(x) and is_stuck(b[k])
+        ],
     )
     stuck_delta = mean(c[3] for block in values for c in block)
+    finite_panel = policy.get("method") == "finite_panel_paired"
+    result.update(
+        inference_scope="frozen_tasks_observed_seeds_only"
+        if finite_panel or smoke or not policy["enabled"]
+        else "task_block_population_inference",
+        population_risk_certified=False,
+    )
     if hard_regressions or stuck_delta > policy["max_stuck_delta"]:
         verdict, reason = (
             "REJECTED",
             "hard policy/protocol regression or increased stuck rate",
         )
+    elif finite_panel:
+        # This certifies observed cells only. It never claims V3 proves a 5% population risk bound.
+        if result["regression_cells"] or result["new_stuck_cells"]:
+            verdict, reason = "REJECTED", "observed paired-cell preservation violated"
+        elif len(result["seeds"]) < 2:
+            verdict, reason = (
+                "INCONCLUSIVE",
+                "finite-panel check requires repeated paired seeds",
+            )
+        elif objective == "preservation" or paired_delta > 0:
+            verdict, reason = (
+                "ACCEPTED",
+                "observed paired-cell preservation"
+                if objective == "preservation"
+                else "observed paired-cell superiority with preservation",
+            )
+        else:
+            verdict, reason = (
+                "REJECTED",
+                "current Customer native success did not strictly improve",
+            )
     elif smoke or not policy["enabled"]:
         verdict, reason = (
-            ("ACCEPTED", "strict native success improvement")
-            if paired_delta > 0
-            else ("REJECTED", "native success did not strictly improve")
+            (
+                "ACCEPTED",
+                "strict native success improvement"
+                if objective == "superiority"
+                else "observed opponent preservation",
+            )
+            if (
+                paired_delta > 0
+                if objective == "superiority"
+                else paired_delta >= 0
+                and not result["regression_cells"]
+                and not result["new_stuck_cells"]
+            )
+            else ("REJECTED", "native success did not satisfy opponent objective")
         )
     elif paired_delta < 0 or harmfulness_ci[0] > policy["max_harmfulness"]:
         verdict, reason = "REJECTED", "native regression or harmfulness above policy"
@@ -118,13 +173,23 @@ def evaluate_gate(old, new, policy, *, looks=1, smoke=False, seed=1):
         )
     elif (
         (
-            not policy["require_positive_success_lower_bound"]
-            or result["success_ci"][0] > 0
+            (
+                objective == "preservation"
+                and result["success_ci"][0] >= -policy.get("preservation_margin", 0.0)
+            )
+            or (
+                objective == "superiority"
+                and (
+                    not policy["require_positive_success_lower_bound"]
+                    or result["success_ci"][0] > 0
+                )
+            )
         )
         and harmfulness_ci[1] <= policy["max_harmfulness"]
         and result["stuck_delta_ci"][1] <= policy["max_stuck_delta"]
     ):
         verdict, reason = "ACCEPTED", "task-block confidence and risk gates passed"
+        result["population_risk_certified"] = True
     else:
         verdict, reason = (
             "INCONCLUSIVE",
@@ -144,10 +209,10 @@ def cheap_screen(old, new, target_ids, protected_ids):
         k[0] in target_ids and not x.task_success and b[k].task_success
         for k, x in a.items()
     )
-    broken = sum(
-        k[0] in protected_ids and x.task_success and not b[k].task_success
-        for k, x in a.items()
-    )
+    # Every incumbent passing cell is protected, even when another seed of the same task is a target failure.
+    protected_cells = [k for k, x in a.items() if x.task_success]
+    broken_cells = [k for k in protected_cells if not b[k].task_success]
+    broken = len(broken_cells)
     hard = sum(
         max(0, b[k].hard_policy_protocol_violations - x.hard_policy_protocol_violations)
         for k, x in a.items()
@@ -160,6 +225,14 @@ def cheap_screen(old, new, target_ids, protected_ids):
         else "screen_regression_or_no_target_fix",
         "fixed_cells": fixed,
         "protected_regressions": broken,
+        "protected_cells": [{"task_id": t, "seed": s} for t, s in protected_cells],
+        "broken_cells": [{"task_id": t, "seed": s} for t, s in broken_cells],
+        "target_cells": [
+            {"task_id": k[0], "seed": k[1]}
+            for k, x in a.items()
+            if k[0] in target_ids and not x.task_success
+        ],
+        "declared_protected_task_ids": sorted(protected_ids),
         "hard_regressions": hard,
         "stuck_count_delta": stuck,
         "old_metrics": episode_metrics(old),

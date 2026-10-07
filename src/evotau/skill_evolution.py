@@ -401,7 +401,7 @@ def run_skill_evolution_v2(
             )
             if replay["include_native_customer"]:
                 opponents.append(("native", None, 1.0))
-        looks *= len(opponents)
+        looks *= len(opponents) + int(not smoke)
         all_proposals = []
         for cluster in clusters:
             allowed = set(e)
@@ -620,7 +620,45 @@ def run_skill_evolution_v2(
                     )
                 gate_ids = e if smoke else v
                 gate_seeds = policy["evaluation"]["gate_seeds"]
-                for label, opponent, weight in opponents:
+                repair_gate = None
+                if not smoke:
+                    repair_gate = stage(
+                        g,
+                        f"service_full_gate-{ident}-repair-superiority-decision",
+                        {
+                            "old": [r.to_dict() for r in attribution_old],
+                            "new": [r.to_dict() for r in attribution_new],
+                            "policy": policy["statistical_gate"],
+                            "objective": "superiority",
+                            "smoke": True,
+                            "looks": looks,
+                        },
+                        lambda: evaluate_gate(
+                            attribution_old,
+                            attribution_new,
+                            policy["statistical_gate"],
+                            objective="superiority",
+                            looks=looks,
+                            smoke=True,
+                            seed=seed,
+                        ),
+                    )
+                    repair_gate.update(
+                        opponent="current-repair-E",
+                        pass_power_k={
+                            str(k): pass_power_k(attribution_new, k) for k in (1, 2)
+                        },
+                    )
+                for label, opponent, weight in (
+                    opponents
+                    if repair_gate is None or repair_gate["verdict"] == "ACCEPTED"
+                    else []
+                ):
+                    objective = (
+                        "superiority"
+                        if smoke and label == "current"
+                        else "preservation"
+                    )
                     old_gate = panel(
                         g,
                         f"service_full_gate-{ident}-{label}-old",
@@ -643,18 +681,22 @@ def run_skill_evolution_v2(
                         "policy": policy["statistical_gate"],
                         "looks": looks,
                         "smoke": smoke,
+                        "objective": objective,
                     }
                     gate = stage(
                         g,
                         f"service_full_gate-{ident}-{label}-decision",
                         args,
-                        lambda baseline=old_gate, proposed_runs=new_gate: evaluate_gate(
-                            baseline,
-                            proposed_runs,
-                            policy["statistical_gate"],
-                            looks=looks,
-                            smoke=smoke,
-                            seed=seed,
+                        lambda baseline=old_gate, proposed_runs=new_gate, objective=objective: (
+                            evaluate_gate(
+                                baseline,
+                                proposed_runs,
+                                policy["statistical_gate"],
+                                looks=looks,
+                                smoke=smoke,
+                                seed=seed,
+                                objective=objective,
+                            )
                         ),
                     )
                     gate.update(
@@ -669,19 +711,23 @@ def run_skill_evolution_v2(
                         full_runs = new_gate
                         if smoke:
                             attribution_old, attribution_new = old_gate, new_gate
+                required_gates = gates + (
+                    [repair_gate] if repair_gate is not None else []
+                )
                 verdict = (
                     "REJECTED"
-                    if any(x["verdict"] == "REJECTED" for x in gates)
+                    if any(x["verdict"] == "REJECTED" for x in required_gates)
                     else "INCONCLUSIVE"
-                    if any(x["verdict"] == "INCONCLUSIVE" for x in gates)
+                    if any(x["verdict"] == "INCONCLUSIVE" for x in required_gates)
                     else "ACCEPTED"
                 )
                 row["gate"] = {
                     "verdict": verdict,
                     "opponents": gates,
+                    "repair_superiority": repair_gate,
                     "gate_looks": looks,
                     "reason": "; ".join(
-                        x["opponent"] + ": " + x["reason"] for x in gates
+                        x["opponent"] + ": " + x["reason"] for x in required_gates
                     ),
                 }
             else:
@@ -710,6 +756,17 @@ def run_skill_evolution_v2(
                 ),
                 evaluation_scope="full_E" if screen["passed"] else "paired_screen_E",
                 full_gate_episodes=[r.to_dict() for r in full_runs],
+                comparison_key=sha256_json(
+                    {
+                        "cells": sorted((r.task_id, r.seed) for r in attribution_old),
+                        "customer_ids": sorted(
+                            {r.customer_strategy_id for r in attribution_old}
+                        ),
+                        "service_ids": sorted(
+                            {r.service_strategy_id for r in attribution_old}
+                        ),
+                    }
+                ),
             )
             return row, full_runs
 
@@ -787,7 +844,9 @@ def run_skill_evolution_v2(
 
         def quality(pair):
             row = pair[0]
-            current_gate = row["gate"]["opponents"][0]
+            current_gate = (
+                row["gate"].get("repair_superiority") or row["gate"]["opponents"][0]
+            )
             return (
                 -current_gate["new_metrics"]["accuracy"],
                 row["effect"]["harmfulness"] or 0,

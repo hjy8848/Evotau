@@ -1,5 +1,5 @@
 experiment:
-  id: evotau-alternating-skill-memory-v2-qwen3-7-plus-retail-20261007
+  id: evotau-v2-gate-calibration-morphology-20261007
   phase: alternating-self-evolution
   upstream:
     repository: sierra-research/tau2-bench
@@ -11,26 +11,12 @@ experiment:
   task_selection:
     source_split: train
     evolution:
-    - '66'
-    - '92'
-    - '29'
-    - '67'
-    - '106'
     - '22'
-    - '69'
+    - '80'
     - '98'
-    - '93'
-    - '88'
     - '4'
     - '21'
-    - '8'
-    - '54'
-    - '107'
-    - '48'
-    - '52'
-    - '80'
     - '35'
-    - '16'
     validation:
     - '44'
     - '25'
@@ -46,7 +32,7 @@ experiment:
     - '46'
     - '47'
   seed: 1
-  generations: 2
+  generations: 1
   customer_candidates: 1
   clean_panel_size: 3
   max_steps: 32
@@ -78,8 +64,8 @@ experiment:
       max_tokens: 65536
   customer_strategy: ''
   service_strategy: ''
-  output_path: experiments/runs/evotau-alternating-skill-memory-v2-qwen3-7-plus-retail-20261007
-  checkpoint_path: experiments/checkpoints/evotau-alternating-skill-memory-v2-qwen3-7-plus-retail-20261007.json
+  output_path: experiments/diagnostics/evotau-v2-gate-calibration-morphology-20261007
+  checkpoint_path: experiments/checkpoints/evotau-v2-gate-calibration-morphology-20261007.json
   source_blob_sha1:
     data/tau2/domains/retail/tasks.json: e95a9f898b2d1f6568ea8faec78edc3767ce747d
     data/tau2/domains/retail/split_tasks.json: 8b20704a17aa1940b1e58668f89dcef2ddaeeea3
@@ -99,8 +85,8 @@ experiment:
     src/tau2/evaluator/evaluator_nl_assertions.py: 1f5397c5b8f8b105bf3d76027518d3bc3eb3e0f7
     src/tau2/utils/llm_utils.py: cc704825a14d1a81a791b9ca2a08aa2eb8989f8c
   evolution_fitness_seed: 1
-  run_validation: true
-  run_heldout: true
+  run_validation: false
+  run_heldout: false
   evolution:
     customer_carrier: prompt_strategy
     service_carrier: skill_memory_v2
@@ -153,8 +139,6 @@ experiment:
       gate_seeds:
       - 1
       - 2
-      - 3
-      - 4
       screen_clean_tasks: 2
     statistical_gate:
       enabled: true
@@ -185,3 +169,20 @@ experiment:
       guidance_tokens: 800
       active_tokens: 2000
       max_active_skills: 2
+measurement_protocol:
+  kind: fixed-customer-fixed-guidance-activation-morphology
+  historical_source: experiments/runs/evotau-retail-skillmemory-v1-qwen3-7-plus-runtime-v4-pro-e20-g2-p4-20261007/generation-0000-service-proposal.json
+  historical_sha256: fbe7767486dfe6bacd72d6a49b17628b0b9796513332a1a82db148398ebe9740
+  seeds:
+  - 1
+  - 2
+  conditions:
+  - empty
+  - render-all
+  - activation
+  planned_episodes: 36
+  no_search_generations: true
+  V_evaluated: false
+  H_evaluated: false
+  interpretation: Targeted diagnostic tasks selected to revisit known local fixes
+    and regressions; not a representative benchmark sample.

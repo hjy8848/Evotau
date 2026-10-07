@@ -26,6 +26,8 @@ DEFAULT_V2 = {
         "screen_clean_tasks": 2,
     },
     "statistical_gate": {
+        "method": "task_block_bootstrap",
+        "preservation_margin": 0.0,
         "enabled": True,
         "confidence": 0.95,
         "max_harmfulness": 0.05,
@@ -108,6 +110,7 @@ def freeze_v2_policy(raw, models, model_args):
         gate["confidence"],
         gate["max_harmfulness"],
         gate["max_stuck_delta"],
+        gate["preservation_margin"],
         policy["opponent_replay"]["current_weight"],
     ):
         if type(value) not in (int, float) or not math.isfinite(value):
@@ -123,6 +126,12 @@ def freeze_v2_policy(raw, models, model_args):
         raise ValueError("invalid confidence/harmfulness policy")
     if gate["multiple_look_correction"] != "bonferroni":
         raise ValueError("unsupported multiple look correction")
+    if gate["method"] not in ("task_block_bootstrap", "finite_panel_paired"):
+        raise ValueError("unsupported gate method")
+    if gate["preservation_margin"] != 0:
+        raise ValueError(
+            "opponent preservation cannot permit a native accuracy regression"
+        )
     if policy["opponent_replay"]["current_weight"] <= 0:
         raise ValueError("current replay weight must be positive")
     for value in policy["skill_budgets"].values():
