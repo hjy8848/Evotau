@@ -124,6 +124,33 @@ def test_population_preservation_can_accept_tie_without_requiring_superiority():
     )
 
 
+@pytest.mark.parametrize("method", ["finite_panel_paired", "task_block_bootstrap"])
+@pytest.mark.parametrize("objective", ["superiority", "preservation"])
+def test_gate_needs_complete_repeated_seed_coverage_per_task(method, objective):
+    # Two seeds somewhere in the panel are not two trials of every task.
+    old = [record(str(t), t >= 50, 1 + t % 2) for t in range(100)]
+    new = [record(str(t), True, 1 + t % 2) for t in range(100)]
+    policy = finite_policy()
+    policy["method"] = method
+    result = evaluate_gate(old, new, policy, objective=objective)
+    assert result["seeds"] == [1, 2]
+    assert not result["complete_paired_seed_coverage"]
+    assert result["seed_coverage_by_task"]["0"] == [1]
+    assert result["verdict"] == "INCONCLUSIVE"
+    assert not result["population_risk_certified"]
+
+
+def test_finite_gate_rejects_partially_covered_task_panel():
+    old = [record("a", True, 1), record("a", True, 2), record("b", True, 1)]
+    result = evaluate_gate(old, old, finite_policy(), objective="preservation")
+    assert result["verdict"] == "INCONCLUSIVE"
+    assert result["seed_coverage_by_task"] == {"a": [1, 2], "b": [1]}
+    complete = old + [record("b", True, 2)]
+    result = evaluate_gate(complete, complete, finite_policy(), objective="preservation")
+    assert result["verdict"] == "ACCEPTED"
+    assert result["complete_paired_seed_coverage"]
+
+
 def test_formal_orchestrator_requires_E_superiority_but_V_preservation(tmp_path):
     policy = deepcopy(DEFAULT_V2)
     policy["statistical_gate"].update(finite_policy())

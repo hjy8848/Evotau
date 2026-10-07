@@ -35,6 +35,13 @@ def evaluate_gate(
     b = {(r.task_id, r.seed): r for r in new}
     if len(a) != len(old) or len(b) != len(new) or a.keys() != b.keys() or not a:
         raise ValueError("statistical gate requires aligned nonempty paired cells")
+    seed_coverage = {}
+    for task_id, episode_seed in a:
+        seed_coverage.setdefault(task_id, set()).add(episode_seed)
+    expected_seeds = {r.seed for r in old}
+    complete_seed_coverage = len(expected_seeds) >= 2 and all(
+        seeds == expected_seeds for seeds in seed_coverage.values()
+    )
     result = {
         "policy": dict(policy),
         "gate_looks": looks,
@@ -42,6 +49,10 @@ def evaluate_gate(
         "multiplicity": "bonferroni",
         "panel": "E" if smoke else "V",
         "seeds": sorted({r.seed for r in old}),
+        "seed_coverage_by_task": {
+            task_id: sorted(seeds) for task_id, seeds in seed_coverage.items()
+        },
+        "complete_paired_seed_coverage": complete_seed_coverage,
         "task_count": len({r.task_id for r in old}),
         "old_metrics": episode_metrics(old),
         "new_metrics": episode_metrics(new),
@@ -130,10 +141,10 @@ def evaluate_gate(
         # This certifies observed cells only. It never claims V3 proves a 5% population risk bound.
         if result["regression_cells"] or result["new_stuck_cells"]:
             verdict, reason = "REJECTED", "observed paired-cell preservation violated"
-        elif len(result["seeds"]) < 2:
+        elif not complete_seed_coverage:
             verdict, reason = (
                 "INCONCLUSIVE",
-                "finite-panel check requires repeated paired seeds",
+                "finite-panel check requires the same repeated paired seeds for every task",
             )
         elif objective == "preservation" or paired_delta > 0:
             verdict, reason = (
@@ -166,7 +177,7 @@ def evaluate_gate(
         )
     elif paired_delta < 0 or harmfulness_ci[0] > policy["max_harmfulness"]:
         verdict, reason = "REJECTED", "native regression or harmfulness above policy"
-    elif len(values) < policy["min_tasks"] or len(result["seeds"]) < 2:
+    elif len(values) < policy["min_tasks"] or not complete_seed_coverage:
         verdict, reason = (
             "INCONCLUSIVE",
             "insufficient tasks or stochastic seed coverage",
