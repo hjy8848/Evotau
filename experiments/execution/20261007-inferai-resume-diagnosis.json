@@ -1,0 +1,176 @@
+{
+  "status": "blocked_on_flash_thinking_disabled_condition",
+  "pro_preflight": {
+    "model": "openai/deepseek-v4-pro",
+    "request_args": {
+      "api_base": "https://inferaiapi.com/v1",
+      "thinking": {
+        "type": "enabled"
+      },
+      "reasoning_effort": "high",
+      "max_tokens": 65536
+    },
+    "num_retries": 0,
+    "tools": false,
+    "success": true,
+    "response": {
+      "ok": true
+    },
+    "elapsed_seconds": 7.797030708054081
+  },
+  "anomalies": [
+    {
+      "condition_anomaly": {
+        "event": "condition_anomaly",
+        "event_id": "3baa9b44ec5344068083bf06f913ecb3",
+        "reason": "Flash response contains reasoning despite thinking disabled",
+        "at": "2026-10-07T10:43:40.065386+00:00",
+        "thread": "MainThread"
+      },
+      "actual_request": {
+        "event": "request",
+        "event_id": "3baa9b44ec5344068083bf06f913ecb3",
+        "method": "POST",
+        "url": "https://inferaiapi.com/v1/chat/completions",
+        "body_parameters": {
+          "model": "deepseek-v4-flash",
+          "thinking": {
+            "type": "disabled"
+          },
+          "temperature": 0.0
+        },
+        "tools_count": 0,
+        "messages_count": 10,
+        "at": "2026-10-07T10:43:25.448669+00:00",
+        "thread": "MainThread"
+      },
+      "actual_response": {
+        "event": "response",
+        "event_id": "3baa9b44ec5344068083bf06f913ecb3",
+        "http_status": 200,
+        "metadata": {
+          "response_id": "resp_6ac62256d33043c303cc423e",
+          "response_model": "deepseek-v4-flash",
+          "finish_reason": "stop",
+          "response_status": null,
+          "incomplete_reason": null,
+          "visible_content_chars": 118,
+          "reasoning_content_chars": null,
+          "reasoning_tokens": 763,
+          "tool_call_count": 0,
+          "output_state": "usable",
+          "prompt_tokens": 1626,
+          "completion_tokens": 802
+        },
+        "elapsed_seconds": 14.616134791867808,
+        "at": "2026-10-07T10:43:40.065013+00:00",
+        "thread": "MainThread"
+      }
+    },
+    {
+      "condition_anomaly": {
+        "event": "condition_anomaly",
+        "event_id": "e3ce6c33708c49cbb2c96cf19955a677",
+        "reason": "Flash response contains reasoning despite thinking disabled",
+        "at": "2026-10-07T10:47:58.999580+00:00",
+        "thread": "MainThread"
+      },
+      "actual_request": {
+        "event": "request",
+        "event_id": "e3ce6c33708c49cbb2c96cf19955a677",
+        "method": "POST",
+        "url": "https://inferaiapi.com/v1/chat/completions",
+        "body_parameters": {
+          "model": "deepseek-v4-flash",
+          "thinking": {
+            "type": "disabled"
+          },
+          "temperature": 0.0
+        },
+        "tools_count": 16,
+        "messages_count": 23,
+        "at": "2026-10-07T10:47:27.404763+00:00",
+        "thread": "MainThread"
+      },
+      "actual_response": {
+        "event": "response",
+        "event_id": "e3ce6c33708c49cbb2c96cf19955a677",
+        "http_status": 200,
+        "metadata": {
+          "response_id": "resp_6ac623551fefdaef12a94a16",
+          "response_model": "deepseek-v4-flash",
+          "finish_reason": "stop",
+          "response_status": null,
+          "incomplete_reason": null,
+          "visible_content_chars": 939,
+          "reasoning_content_chars": null,
+          "reasoning_tokens": 1060,
+          "tool_call_count": 0,
+          "output_state": "usable",
+          "prompt_tokens": 8097,
+          "completion_tokens": 1344
+        },
+        "elapsed_seconds": 31.593436083057895,
+        "at": "2026-10-07T10:47:58.998907+00:00",
+        "thread": "MainThread"
+      }
+    }
+  ],
+  "attempts": [
+    {
+      "invocation": 2,
+      "started_at": "2026-10-07T10:41:08.757476+00:00",
+      "status": "failed",
+      "evotau": {
+        "git_commit": null,
+        "working_tree_clean": null,
+        "source_sha256": "965497fcfd0260fdf20cc2525fecc024d8853bd82d1baa44730f1b0ce3902f3e"
+      },
+      "ended_at": "2026-10-07T10:43:40.093061+00:00",
+      "wall_clock_seconds": 151.335585,
+      "failure": {
+        "stage": "evolution",
+        "failure_type": "NativeEpisodeRunError",
+        "failure_message": "InternalServerError: litellm.InternalServerError: InternalServerError: OpenAIException - Formal experiment condition anomaly: Flash reasoning leakage",
+        "task_id": "67",
+        "panel_name": "generation-1-customer-candidate-0",
+        "call_name": null,
+        "diagnostics_ref": "episodes/414a111ef2ff4c7ea8839513ac9fd55f/incomplete-run.json",
+        "last_generation_stage": {
+          "generation": 1,
+          "stage": "customer_proposals_ready"
+        }
+      }
+    },
+    {
+      "invocation": 3,
+      "started_at": "2026-10-07T10:46:45.217179+00:00",
+      "status": "failed",
+      "evotau": {
+        "git_commit": null,
+        "working_tree_clean": null,
+        "source_sha256": "965497fcfd0260fdf20cc2525fecc024d8853bd82d1baa44730f1b0ce3902f3e"
+      },
+      "ended_at": "2026-10-07T10:47:59.036131+00:00",
+      "wall_clock_seconds": 73.818952,
+      "failure": {
+        "stage": "evolution",
+        "failure_type": "NativeEpisodeRunError",
+        "failure_message": "InternalServerError: litellm.InternalServerError: InternalServerError: OpenAIException - Formal experiment condition anomaly: Flash reasoning leakage",
+        "task_id": "67",
+        "panel_name": "generation-1-customer-candidate-0",
+        "call_name": null,
+        "diagnostics_ref": "episodes/9ee6cf4870654f7086d6824dfcdf8e46/incomplete-run.json",
+        "last_generation_stage": {
+          "generation": 1,
+          "stage": "customer_proposals_ready"
+        }
+      }
+    }
+  ],
+  "completed_episodes": 63,
+  "candidate_completed_tasks": 3,
+  "fallback_dry_validation": "PASS: 63 cache entries, existing C2 proposal input unchanged, runtime args unchanged, generated launcher compiles; no provider request in dry test",
+  "gpt_fallback_used": false,
+  "reason": "The two violations occurred in Flash runtime calls (Customer then Service), not Pro Evolver. Changing only Evolver does not remove this condition violation. Both responses had visible output and no recorded reasoning text, but reported internal reasoning tokens despite the disabled wire flag. All failed attempts retained and excluded from fitness."
+}
