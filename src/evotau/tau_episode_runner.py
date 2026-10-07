@@ -31,7 +31,12 @@ from .records import (
     customer_strategy_id,
     service_strategy_id,
 )
-from .service_skills import ServiceSkillMemory
+from .service_skills import (
+    ServiceSkillMemory,
+    ServiceSkillMemoryV2,
+    render_selected_service_skills,
+    skill_token_count,
+)
 from .strategies import (
     PromptStrategy,
     ServiceCarrier,
@@ -79,6 +84,7 @@ class TauBenchEpisodeRunner:
             raise RuntimeError("native τ-bench runs require real_provider_enabled")
         if request_budget.snapshot().cap != manifest.request_budget_cap:
             raise ValueError("request budget cap must match the frozen alternating manifest")
+        self.v2_policy = None if manifest.skill_evolution_v2_json is None else json.loads(manifest.skill_evolution_v2_json)
         self.models = dict(manifest.role_models)
         if set(self.models) != {"agent", "customer", "evaluator", "evolver"} or any(
             not self.models[name] for name in self.models
@@ -140,6 +146,7 @@ class TauBenchEpisodeRunner:
         panel_name: str,
     ) -> EpisodeRecord:
         expected_carrier = (
+            ServiceSkillMemoryV2 if self.manifest.service_carrier == "skill_memory_v2" else
             ServiceSkillMemory
             if self.manifest.service_carrier == "skill_memory_v1"
             else PromptStrategy
@@ -257,6 +264,26 @@ class TauBenchEpisodeRunner:
         prompt_hashes: dict[str, Any] = {}
         simulation_payload: dict[str, Any] | None = None
         orchestrator = None
+        activation_rows = []
+        activation_options = None
+        runtime_service = service
+        if isinstance(service, ServiceSkillMemoryV2):
+            if self.v2_policy['service_skill_runtime'] == 'render_all_v1':
+                from .service_skills import ServiceSkill
+                runtime_service = ServiceSkillMemory(tuple(ServiceSkill(s.skill_id,s.trigger,s.guidance) for s in service.skills))
+            else:
+                from .skill_activation import SkillActivator
+                def activation_sink(value):
+                    value = {'schema_version': 3, 'manifest_sha256': self.manifest.sha256,
+                             'episode_key_sha256': episode_key_sha256, 'turn': len(activation_rows), **value}
+                    value['artifact_sha256'] = sha256_json(value)
+                    _write_json_once(episode_directory/'skill-activation'/f'turn-{len(activation_rows):04d}.json', value)
+                    activation_rows.append(value)
+                activation_options = {'activator': SkillActivator(
+                    model=self.v2_policy['activator']['model'],
+                    model_args=role_model_args_for_runtime((('activator',tuple(self.v2_policy['activator']['model_args'].items())),))['activator'],
+                    request_budget=self.request_budget),
+                    'max_active_skills': self.v2_policy['max_active_service_skills'], 'sink': activation_sink}
 
         def on_orchestrator(orchestrator: Any) -> None:
 
@@ -269,7 +296,7 @@ class TauBenchEpisodeRunner:
                     or native_agent_property.fget is None):
                 raise TypeError("EvoTau Service wrapper no longer directly subclasses the native LLMAgent")
             native_agent_prompt = native_agent_property.fget(orchestrator.agent)
-            service_block = render_service_strategy(service)
+            service_block = render_service_strategy(runtime_service)
             expected_agent_prompt = (
                 native_agent_prompt if not service_block
                 else f"{native_agent_prompt}\n\n{service_block}"
@@ -333,7 +360,8 @@ class TauBenchEpisodeRunner:
                     seed=seed,
                     max_steps=self.manifest.max_steps,
                     customer_strategy=customer,
-                    service_strategy=service,
+                    service_strategy=runtime_service,
+                    **({"service_activation": activation_options} if activation_options is not None else {}),
                     enforce_communication_protocol=self.manifest.enforce_communication_protocol,
                 )
                 on_orchestrator(orchestrator)
@@ -387,6 +415,13 @@ class TauBenchEpisodeRunner:
                         protocol_observation["mixed_text_tool_call_message_count"]
                     ),
                     raw_review={},
+                    **({
+                        'total_steps': len(simulation_payload.get('messages') or ()),
+                        'prompt_tokens': episode_usage.snapshot(cap=None).prompt_tokens,
+                        'completion_tokens': episode_usage.snapshot(cap=None).completion_tokens,
+                        'tool_errors': sum(1 for m in simulation_payload.get('messages',[]) if m.get('role') == 'tool' and m.get('error')),
+                        'activated_skill_ids': tuple(sorted({ident for row in activation_rows for ident in row['decision']['active_skill_ids']})),
+                    } if isinstance(service, ServiceSkillMemoryV2) else {}),
                 )
                 after = self.request_budget.snapshot()
                 exact_episode_usage = episode_usage.snapshot(cap=self.request_budget.snapshot().cap)
@@ -405,6 +440,16 @@ class TauBenchEpisodeRunner:
                     "episode_budget_delta": exact_episode_usage.to_dict(),
                     "communication_protocol_observation": protocol_observation,
                 })
+                if isinstance(service, ServiceSkillMemoryV2):
+                    _write_json_once(episode_directory/'skill-activation-trace.json', {
+                        'schema_version': 3, 'manifest_sha256': self.manifest.sha256,
+                        'episode_key_sha256': episode_key_sha256, 'episode_id': record.episode_id,
+                        'activation_mode': self.v2_policy['service_skill_runtime'],
+                        'activator': self.v2_policy['activator'], 'decisions': activation_rows,
+                        'activation_catalog_tokens': sum(row['activation_catalog_tokens'] for row in activation_rows),
+                        'activated_guidance_tokens': sum(row['activated_guidance_tokens'] for row in activation_rows),
+                        'rendered_skill_tokens': skill_token_count(render_selected_service_skills(service, [s.skill_id for s in service.skills])),
+                    })
                 _write_json_once(record_path, record.to_dict())
                 with self._completed_episode_cache_lock:
                     self._completed_episode_cache[episode_key_sha256] = (

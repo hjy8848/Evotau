@@ -28,7 +28,7 @@ from .episode_execution import StopBeforeEpisodeDispatch
 from .phase0 import load_config
 from .phase0_run import _write_json_once
 from .provider_diagnostics import safe_error
-from .service_skills import ServiceSkillMemory
+from .service_skills import ServiceSkillMemory, ServiceSkillMemoryV2
 from .strategies import PromptStrategy
 from .tau_adapter import verify_tau2_installation
 from .tau_episode_runner import TauBenchEpisodeRunner
@@ -147,6 +147,7 @@ def run_from_config(
 
         initial_customer = PromptStrategy(manifest.initial_customer_strategy)
         initial_service = (
+            ServiceSkillMemoryV2() if manifest.service_carrier == "skill_memory_v2" else
             ServiceSkillMemory()
             if manifest.service_carrier == "skill_memory_v1"
             else PromptStrategy(manifest.initial_service_strategy)
@@ -154,7 +155,18 @@ def run_from_config(
         episode_job_telemetry = EpisodeJobTelemetry(manifest.max_parallel_episodes)
         stage = "evolution"
         evolution_started = perf_counter()
-        evolved = run_alternating_evolution(
+        evolution_runner = run_alternating_evolution
+        if manifest.service_carrier == 'skill_memory_v2':
+            from .evolution_candidates import V2Providers
+            from .skill_evolution import run_skill_evolution_v2
+            # Keep legacy public orchestration arguments out of the V2 entry point.
+            def evolution_runner(**kwargs):
+                for key in ('clean_panel_size', 'customer_evolver', 'service_evolver', 'service_carrier',
+                            'service_evolver_model', 'service_evolver_reasoning_effort', 'service_evolver_provider'):
+                    kwargs.pop(key, None)
+                return run_skill_evolution_v2(**kwargs, providers=V2Providers(providers),
+                                             policy=json.loads(manifest.skill_evolution_v2_json))
+        evolved = evolution_runner(
             tasks=runner.tasks,
             evolution_task_ids=manifest.evolution_task_ids,
             validation_task_ids=manifest.validation_task_ids,
@@ -399,7 +411,11 @@ def _api_usage_by_role(
         "service": ("agent_response",),
         "evaluator": ("nl_assertions_eval",),
         "customer_evolver": ("evotau_customer_evolver",),
-        "service_evolver": ("evotau_service_evolver", "evotau_service_skill_evolver"),
+        "service_evolver": ("evotau_service_evolver", "evotau_service_skill_evolver", "evotau_service_skill_mutator"),
+        "service_diagnoser": ("evotau_service_diagnoser",),
+        "skill_activator": ("evotau_skill_activator",),
+        "skill_crossover": ("evotau_skill_crossover",),
+        "semantic_validator": ("evotau_customer_semantic_validator", "evotau_skill_semantic_validator"),
         "reviewer": (
             "llm_judge_review", "llm_judge_streaming_review",
             "classify_authentication", "llm_judge_hallucination_check",

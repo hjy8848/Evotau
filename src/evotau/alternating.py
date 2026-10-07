@@ -31,6 +31,7 @@ from .records import (
 from .service_skills import (
     ServiceMutationOperation,
     ServiceSkillMemory,
+    ServiceSkillMemoryV2,
     ServiceSkillMutation,
     ServiceSkillProvenance,
     apply_skill_mutation,
@@ -1244,6 +1245,8 @@ def _service_from_mapping(value: Mapping[str, Any], carrier: str) -> ServiceCarr
         if set(value) != {"text"} or not isinstance(value.get("text"), str):
             raise ValueError("PromptStrategy checkpoint must contain exactly a text field")
         return PromptStrategy(value["text"])
+    if carrier == "skill_memory_v2":
+        return ServiceSkillMemoryV2.from_mapping(value)
     if carrier == "skill_memory_v1":
         return ServiceSkillMemory.from_mapping(value)
     raise ValueError(f"unsupported Service carrier: {carrier}")
@@ -1802,6 +1805,9 @@ def _episode_ref(episode: EpisodeRecord) -> dict[str, Any]:
 
 
 def _strategy_document(role: str, strategy: PromptStrategy | ServiceCarrier) -> dict[str, Any]:
+    if role == "service" and isinstance(strategy, ServiceSkillMemoryV2):
+        return {"role": role, "carrier": "skill_memory_v2", "strategy_id": service_strategy_id(strategy),
+                "strategy": strategy.to_dict(), "skill_count": len(strategy.skills)}
     if role == "service" and isinstance(strategy, ServiceSkillMemory):
         rendered = render_service_skill_memory(strategy)
         return {

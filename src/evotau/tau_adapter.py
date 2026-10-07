@@ -104,6 +104,7 @@ def build_phase0_orchestrator(
     customer_strategy: PromptStrategy | None = None,
     service_strategy: ServiceCarrier | None = None,
     enforce_communication_protocol: bool = False,
+    service_activation: dict[str, Any] | None = None,
 ) -> Any:
     """Construct native Retail text components directly, without changing the runner."""
 
@@ -116,7 +117,11 @@ def build_phase0_orchestrator(
     from tau2.user.user_simulator import UserSimulator
 
     environment = build_environment("retail")
-    agent_type = service_agent_class(LLMAgent, service_strategy)
+    if service_activation is not None:
+        from .skill_activation import activating_service_agent_class
+        agent_type = activating_service_agent_class(LLMAgent, service_strategy, **service_activation)
+    else:
+        agent_type = service_agent_class(LLMAgent, service_strategy)
     customer_type = customer_user_class(UserSimulator, customer_strategy)
     agent = agent_type(
         tools=environment.get_tools(),
