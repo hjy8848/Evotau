@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from .artifact_reader import ArtifactReader, ArtifactReadError
 from .event_stream import EventJournal, EventJournalError
 from .run_manager import RunManager, RunManagerError
+from .run_progress import read_run_progress
 from .view_models import (
     budget_view,
     current_strategy_for_episode,
@@ -232,10 +233,22 @@ def create_app(
                 "title": "Run 已隐藏", "message": "artifact 缺失、损坏或哈希不匹配，因此 Console 没有展示其内容。",
             }, status_code=422)
         pause_available = run["status"] == "running" and not run["phase"].startswith("0-")
+        run["progress"] = read_run_progress(reader, run)
         return page(request, "run.html", {
             "run": run, "pause_available": pause_available,
             "csrf_token": issue_csrf_token(),
         })
+
+    @app.get("/runs/{run_id}/progress")
+    async def run_progress(run_id: str):
+        try:
+            run = reader.get_run(run_id, live_status=run_manager.status_for_run(run_id))
+            progress = read_run_progress(reader, run)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="run progress unavailable") from None
+        if progress is None:
+            raise HTTPException(status_code=404, detail="no alternating progress for this run")
+        return JSONResponse(progress, headers={"Cache-Control": "no-store"})
 
     @app.post("/runs/{run_id}/pause")
     async def pause_run(run_id: str, request: Request):

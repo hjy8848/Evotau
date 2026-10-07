@@ -102,10 +102,10 @@ class ArtifactReader:
             status = "failed"
         elif complete:
             status = "complete"
+        elif execution is not None and execution.get("status") in {"running", "failed", "paused"}:
+            status = execution["status"]
         elif live_status in {"running", "paused", "failed"}:
             status = live_status
-        elif execution is not None and execution.get("status") in {"failed", "paused"}:
-            status = execution["status"]
         else:
             status = "incomplete" if self._has_resume_artifacts(run_path, phase) else "not_started"
 
@@ -489,6 +489,10 @@ class ArtifactReader:
         self, manifest: dict[str, Any], result: dict[str, Any] | None, run_path: Path,
     ) -> dict[str, Any]:
         snapshot = None if result is None else result.get("provider_usage", result.get("provider_budget"))
+        if snapshot is None:
+            live_path = self._contained_path(run_path, "api-usage-live.json", require_exists=False)
+            if live_path.exists():
+                snapshot = self._read_json(live_path).get("provider_usage")
         if snapshot is None:
             telemetry_path = self._latest_telemetry_path(run_path)
             if telemetry_path is not None:
