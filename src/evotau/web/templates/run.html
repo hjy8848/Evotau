@@ -32,8 +32,8 @@
       <div class="research-only small muted">Commit note: {{ generation.note or 'Unavailable' }} · {{ generation.selection.reason if generation.selection else 'Selection details unavailable' }}</div>
     </article>{% endfor %}
    </div>{% else %}<div class="panel story-empty">Checkpoint 尚无已提交的 generation。当前展示范围来自 run artifacts。</div>{% endif %}
-   {% if run.generation_views %}<div class="panel section">
-     <div class="panel-header"><h2>Generation narrative</h2><span class="badge">Deterministic · no LLM summary</span></div>
+   {% if run.generation_views %}<div class="panel section research-only">
+     <div class="panel-header"><h2>Committed generation narrative · archive</h2><span class="badge">Deterministic · no LLM summary</span></div>
      {% for generation in run.generation_views %}<div class="narrative"><strong>Generation {{ generation.generation }}</strong>{% for line in generation.narrative %}<p>{{ line }}</p>{% endfor %}</div>{% endfor %}
    </div>{% endif %}
   </section>
@@ -51,7 +51,7 @@
   </section>
 
   <section class="section" id="strategies">
-   <div class="section-heading"><div><div class="eyebrow">Strategy evolution</div><h2>Strategy diff</h2></div><span class="small muted">只对照 generation commit 中的 before / after 快照</span></div>
+   <div class="section-heading"><div><div class="eyebrow">Committed strategy history</div><h2>Committed SkillMemory / Customer changes</h2></div><span class="small muted">只对照 generation commit 中的 before / after 快照</span></div>
    {% for generation in run.generation_views %}<div class="panel section">
      <div class="panel-header"><strong>Generation {{ generation.generation }}</strong><span class="small muted">C {{ generation.customer_before.strategy_id }} → {{ generation.customer_id }} · S {{ generation.service_before.strategy_id }} → {{ generation.service_id }}</span></div>
      <div class="panel-body strategy-diff-grid">
@@ -60,7 +60,7 @@
       </div>
       <div class="service-diff"><div class="badge badge-service">Service</div>
        {% if generation.service_diff.available %}
-        {% for row in generation.service_diff.rows %}<div class="list-row"><div><strong>Natural-language strategy</strong><p class="small muted">Before</p><p>{{ row.before }}</p><p class="small muted">After</p><p>{{ row.after }}</p></div><span class="badge {% if row.changed %}badge-service{% else %}badge-neutral{% endif %}">{{ 'Changed' if row.changed else 'Unchanged' }}</span></div>{% endfor %}
+        {% for row in generation.service_diff.rows %}<div class="list-row"><div><strong>{{ "SkillMemory trigger / guidance change" if generation.service_phase.carrier == "skill_memory_v1" else "Archived Service prompt" }}</strong><p class="small muted">Before</p><p>{{ row.before }}</p><p class="small muted">After</p><p>{{ row.after }}</p></div><span class="badge {% if row.changed %}badge-service{% else %}badge-neutral{% endif %}">{{ 'Changed' if row.changed else 'Unchanged' }}</span></div>{% endfor %}
        {% else %}<p class="small muted">本代没有可比较的 Service snapshots。</p>{% endif %}
       </div>
      </div>

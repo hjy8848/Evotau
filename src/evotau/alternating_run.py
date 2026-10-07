@@ -337,7 +337,7 @@ def _begin_execution_attempt(
         first_started_at = now.isoformat()
     attempts.append({
         "invocation": invocation_count, "started_at": now.isoformat(), "status": "running",
-        "evotau": capture_code_provenance().to_dict(),
+        "evotau": capture_code_provenance(runtime_only=True).to_dict(),
     })
     state = {
         "schema_version": 1,

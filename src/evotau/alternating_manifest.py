@@ -63,6 +63,7 @@ class AlternatingManifest:
     heldout_split_name: str = "test"
     enforce_communication_protocol: bool = False
     evaluation_type: str = "all"
+    source_scope: str = "runtime-v2"
     customer_carrier: str = "prompt_strategy"
     service_carrier: str = "prompt_strategy"
     service_skill_runtime: str = "inject_all"
@@ -72,6 +73,8 @@ class AlternatingManifest:
     config_sha256: str | None = None
 
     def __post_init__(self) -> None:
+        if self.source_scope != "runtime-v2":
+            raise ValueError("new alternating manifests require runtime-v2 source provenance")
         if (self.upstream_repository, self.upstream_commit, self.upstream_package_version) != (
             TAU_BENCH_REPOSITORY, TAU_BENCH_COMMIT, TAU2_PACKAGE_VERSION,
         ):
@@ -206,7 +209,7 @@ class AlternatingManifest:
             raise TypeError("provider provenance keys must be strings")
         if any(not isinstance(value, (str, bool)) for value in provider_provenance.values()):
             raise TypeError("provider provenance values must be strings or booleans")
-        code = capture_code_provenance()
+        code = capture_code_provenance(runtime_only=True)
         return cls(
             experiment_id=str(experiment["id"]),
             upstream_repository=str(upstream["repository"]),
@@ -298,6 +301,8 @@ class AlternatingManifest:
                 "git_commit": self.evotau_git_commit,
                 "working_tree_clean": self.evotau_working_tree_clean,
                 "source_sha256": self.evotau_source_sha256,
+                "source_scope": self.source_scope,
+                "runtime_source_sha256": self.evotau_source_sha256,
             },
             "domain": self.domain,
             "task_panels": {

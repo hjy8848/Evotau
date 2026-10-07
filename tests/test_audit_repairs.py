@@ -231,6 +231,30 @@ def test_unrelated_configs_do_not_change_source_fingerprint(tmp_path, monkeypatc
     assert tau_provenance.capture_code_provenance().source_sha256 != before
 
 
+def test_native_runner_publishes_terminal_live_attempt_and_cache_does_not_restart_it(native_fixture):
+    fixture = native_fixture; runner = fixture.make()
+    first = fixture.invoke(runner)
+    paths = list(fixture.output.glob("episodes/*/active-episode.json"))
+    assert len(paths) == 1
+    state = json.loads(paths[0].read_text())
+    assert state["status"] == "complete" and state["task_id"] == "29"
+    assert state["manifest_sha256"] == runner.manifest.sha256
+    assert "PRIVATE_SCENARIO" not in paths[0].read_text()
+    assert fixture.invoke(runner, panel="generation-1-customer-incumbent") == first
+    assert list(fixture.output.glob("episodes/*/active-episode.json")) == paths
+
+
+def test_native_runner_failure_marks_live_attempt_failed(native_fixture, monkeypatch):
+    fixture = native_fixture
+    def fail(*_, **__):
+        raise ValueError("native failure")
+    monkeypatch.setattr("evotau.tau_episode_runner.run_with_budget", fail)
+    with pytest.raises(NativeEpisodeRunError):
+        fixture.invoke(fixture.make())
+    state = json.loads(next(fixture.output.glob("episodes/*/active-episode.json")).read_text())
+    assert state["status"] == "failed"
+
+
 def test_identical_concurrent_conditions_dispatch_once_and_cache_needs_no_reservation(native_fixture, monkeypatch):
     fixture = native_fixture
     entered, release = Event(), Event()

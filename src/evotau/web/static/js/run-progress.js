@@ -20,8 +20,62 @@
   function fact(list, label, value, mono = false) {
     const row = el('div'); row.append(el('dt', '', label), el('dd', mono ? 'mono' : '', value ?? '未记录')); list.append(row);
   }
+  function extras(p, frag, detailState) {
+    function section(title) {
+      const node = el('section', 'progress-extra'); node.append(el('h3', '', title)); frag.append(node); return node;
+    }
+    function detail(parent, id, title, open = false) {
+      const node = el('details', 'progress-proposal'); node.dataset.monitorDetail = id;
+      node.open = detailState.has(id) ? detailState.get(id) : open;
+      node.append(el('summary', '', title)); parent.append(node); return node;
+    }
+    function paragraph(parent, label, text) {
+      const node = el('p'); node.append(el('strong', '', label), el('br'), document.createTextNode(text || '—')); parent.append(node);
+    }
+    function stats(parent, values) {
+      const node = el('div', 'progress-health-stats');
+      values.forEach(([label, value, tasks]) => {
+        const item = el('div'); item.append(el('span', '', label), el('strong', '', value ?? '未记录'));
+        if (tasks) item.append(el('span', 'mono small', `Tasks: ${tasks.length ? tasks.join(', ') : '—'}`)); node.append(item);
+      }); parent.append(node);
+    }
+    if (p.active_episodes.length > 1) {
+      const active = section(`Active episodes · ${p.active_episodes.length}`);
+      p.active_episodes.forEach(ep => active.append(el('p', 'small mono', `Task ${ep.task_id} · ${ep.panel_name} · Turn ${ep.turn ?? '未记录'} · ${ep.role ?? '未记录'} · ${ep.tool_name ?? '—'} · ${ep.updated_at}`)));
+    }
+    const proposals = section('正在进化什么');
+    p.customer_proposals.forEach(proposal => {
+      const node = detail(proposals, `customer-${proposal.strategy_id}`, `Customer candidate ${proposal.index} · ${proposal.committed ? 'committed generation proposal' : 'PENDING · 尚未成为 active Customer'} · ${proposal.strategy_id}`, true);
+      node.append(el('p', '', proposal.text));
+    });
+    if (!p.customer_proposals.length) proposals.append(el('p', 'small muted', '本轮尚无 Customer proposal。'));
+    const mutation = p.service_mutation;
+    if (mutation) {
+      const node = detail(proposals, 'service-mutation', `Service ${mutation.operation} · ${mutation.committed ? '已完成决策' : 'PENDING · 尚未成为 active SkillMemory'}${mutation.target_skill_id ? ` · ${mutation.target_skill_id}` : ''}`, true);
+      if (mutation.skill) { paragraph(node, 'Trigger', mutation.skill.trigger); paragraph(node, 'Guidance', mutation.skill.guidance); }
+      paragraph(node, 'Analysis', mutation.analysis);
+      if (mutation.operation === 'NO_OP') node.append(el('p', '', 'NO_OP · 不生成新 skill，不重复 candidate replay。'));
+      if (mutation.committed) node.append(el('p', '', `Accepted: ${mutation.accepted}`));
+    } else proposals.append(el('p', 'small muted', '本轮尚无 Service mutation。'));
+    const pairs = section('Paired transitions · 同 task / seed');
+    p.paired_transitions.forEach(pair => {
+      const node = detail(pairs, `paired-${pair.label}`, `${pair.label} · ${pair.paired_count}/${pair.total} paired · ${pair.provisional ? 'PROVISIONAL · Not fitness' : 'COMPLETE'}`);
+      stats(node, Object.entries(pair.counts).map(([label, count]) => [label, count, pair.task_ids[label]]));
+    });
+    if (!p.paired_transitions.length) pairs.append(el('p', 'small muted', '尚无配对观察。'));
+    const continuation = section('Continuation provenance · 当前可见 E/V episodes'), c = p.continuation;
+    continuation.append(el('p', 'small mono', `Parent: ${c.parent || '无'}`));
+    stats(continuation, [['Imported complete', c.imported_complete], ['Reused panel references', c.reused_references], ['New complete', c.new_complete], ['Incomplete attempts', c.incomplete_attempts], ['Imported incomplete', c.imported_incomplete], ['New incomplete', c.new_incomplete]]);
+    continuation.append(el('p', 'small muted', 'Reuse 统计 panel 引用；imported/new/incomplete 统计 episode attempts，单位不同。缺少来源清单时不猜测 new 数量。'));
+    if (p.failure) {
+      const f = p.failure, node = el('section', 'progress-failure'), facts = el('dl', 'progress-facts'); node.setAttribute('role', 'status'); node.append(el('h3', '', '运行已停止 · Failure'));
+      [['Stage', f.stage], ['Type', f.type], ['Task', f.task_id], ['Panel', f.panel_name], ['Resume-safe', f.resume_safe], ['Checkpoint preserved', f.checkpoint_preserved]].forEach(([label, value]) => fact(facts, label, value));
+      node.append(facts, el('p', '', f.message)); frag.append(node);
+    }
+  }
   function render(p) {
     const opened = new Set([...root.querySelectorAll('[data-skill-id][open]')].map(node => node.dataset.skillId));
+    const detailState = new Map([...root.querySelectorAll('[data-monitor-detail]')].map(node => [node.dataset.monitorDetail, node.open]));
     const frag = document.createDocumentFragment();
     const header = el('header', 'progress-header'), title = el('div');
     title.append(el('div', 'eyebrow', 'Experiment monitor'), el('h2', '', `${p.domain} E${p.e_size} · G${p.generations ?? '—'} · P${p.parallelism}`));
@@ -35,7 +89,7 @@
     frag.append(context);
     const stage = el('div', 'progress-stage'); stage.append(el('span', 'label-caps', 'Stage'), el('strong', '', p.stage)); frag.append(stage);
     const panels = el('div', 'progress-panels table-scroll'), table = el('table'), head = el('thead'), heading = el('tr'), body = el('tbody');
-    table.append(el('caption', '', `Gen ${p.generation} progress · 未完成的 panel 不计算 accuracy`));
+    table.append(el('caption', '', `Gen ${p.generation} progress · Fitness 仅在完整 panel 上计算；partial 为 PROVISIONAL`));
     ['Phase', 'Condition / Progress', 'Accuracy', 'Status'].forEach(text => heading.append(el('th', '', text)));
     head.append(heading); table.append(head);
     p.rows.forEach(row => {
@@ -53,13 +107,18 @@
       status.append(el('span', `progress-phase-state state-${state.toLowerCase()}`, state));
       if (state === 'WAITING') status.append(el('div', 'small muted', '等待前阶段'));
       if (state === 'NOT_STARTED') status.append(el('div', 'small muted', '前阶段已停止'));
-      tr.append(label, progress, el('td', 'mono', accuracy), status); body.append(tr);
+      const accuracyCell = el('td', 'mono', accuracy);
+      if (row.provisional) {
+        accuracyCell.replaceChildren(el('span', 'provisional', 'PROVISIONAL'), el('div', '', `${row.observed_successes}/${row.count} = ${(row.observed_accuracy * 100).toFixed(0)}%`), el('div', 'small muted', 'Observed so far · Not fitness'));
+      }
+      tr.append(label, progress, accuracyCell, status); body.append(tr);
     });
     table.append(body); panels.append(table); frag.append(panels);
     const details = el('div', 'progress-detail-grid'), episode = el('section', 'progress-detail'), current = p.current_episode;
     episode.append(el('h3', '', current ? current.label : '当前 episode'));
     if (current) {
-      const facts = el('dl', 'progress-facts'); fact(facts, 'Task', current.task_id ?? '等待 task telemetry'); fact(facts, 'Panel', current.panel_name, true); fact(facts, '最后记录的 Turn', current.turn); episode.append(facts);
+      const facts = el('dl', 'progress-facts'); fact(facts, 'Task', current.task_id ?? '等待 task telemetry'); fact(facts, 'Panel', current.panel_name, true); fact(facts, '最后记录的 Turn', current.turn);
+      fact(facts, 'Role / Tool', `${current.role ?? '未记录'} / ${current.tool_name ?? '—'}`); fact(facts, 'Next actor', current.next_role); fact(facts, 'Activity', current.activity ?? '已停止'); fact(facts, 'Updated', current.updated_at); episode.append(facts);
       if (current.episode_id) {
         const link = el('a', '', '打开对话与工具轨迹 →'); link.href = `${runUrl}/episodes/${encodeURIComponent(current.episode_id)}`; episode.append(link);
       }
@@ -83,9 +142,7 @@
     healthValues.forEach(([label, value]) => { const item = el('div'); item.append(el('span', '', label), el('strong', '', value)); stats.append(item); }); health.append(stats);
     if (!p.provider.coverage_complete) health.append(el('p', 'small muted', 'HTTP/thinking/concurrency 来自可用 wire observations；日志不完整时不推断缺失请求。'));
     frag.append(health);
-    if (p.failure_message) {
-      const failure = el('div', 'progress-failure'); failure.setAttribute('role', 'status'); failure.append(el('strong', '', '运行已停止，当前轮尚未提交'), el('p', '', p.failure_message)); frag.append(failure);
-    }
+    extras(p, frag, detailState);
     const footer = el('footer', 'progress-footer'), time = el('span', '', `快照 ${new Date(p.as_of).toLocaleString()}`); time.dataset.progressFreshness = '';
     footer.append(el('span', '', '只读 artifact 监控 · 不会启动或恢复实验'), time); frag.append(footer);
     root.replaceChildren(frag);

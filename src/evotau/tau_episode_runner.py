@@ -23,6 +23,7 @@ from .budget import (
 )
 from .communication import observe_communication_protocol
 from .episode_execution import StopBeforeEpisodeDispatch
+from .observability import EpisodeTelemetry
 from .provider_diagnostics import safe_error
 from .records import (
     EpisodeRecord,
@@ -248,6 +249,10 @@ class TauBenchEpisodeRunner:
         simulation_path = episode_directory / "native-simulation.json"
         record_path = episode_directory / "episode-record.json"
         telemetry_path = episode_directory / "run-telemetry.json"
+        live = EpisodeTelemetry(
+            episode_directory / "active-episode.json", manifest_sha256=self.manifest.sha256,
+            attempt_id=attempt_id, task_id=str(task_id), panel_name=panel_name,
+        )
         before = self.request_budget.snapshot()
         prompt_hashes: dict[str, Any] = {}
         simulation_payload: dict[str, Any] | None = None
@@ -332,14 +337,15 @@ class TauBenchEpisodeRunner:
                     enforce_communication_protocol=self.manifest.enforce_communication_protocol,
                 )
                 on_orchestrator(orchestrator)
-                simulation = run_with_budget(
-                    orchestrator,
-                    self.request_budget,
-                    evaluator_model=self.models["evaluator"],
-                    evaluator_model_args=self.model_args["evaluator"],
-                    run_reviewer=False,
-                    on_simulation=on_simulation,
-                )
+                with live.observe(orchestrator):
+                    simulation = run_with_budget(
+                        orchestrator,
+                        self.request_budget,
+                        evaluator_model=self.models["evaluator"],
+                        evaluator_model_args=self.model_args["evaluator"],
+                        run_reviewer=False,
+                        on_simulation=on_simulation,
+                    )
                 simulation_payload = simulation.model_dump(mode="json")
                 if simulation_payload.get("task_id") is None or str(simulation_payload["task_id"]) != str(task_id):
                     raise ValueError("native τ-bench returned a simulation for a different task")
@@ -404,8 +410,10 @@ class TauBenchEpisodeRunner:
                     self._completed_episode_cache[episode_key_sha256] = (
                         record, exact_episode_usage, False,
                     )
+                live.publish("complete", activity="native_evaluation_complete")
                 return record
             except BaseException as exc:
+                live.publish("failed", activity="native_episode_failed")
                 partial_error = None
                 partial_path = episode_directory / "partial-simulation.json"
                 if orchestrator is not None:

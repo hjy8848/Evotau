@@ -212,6 +212,113 @@ def test_initial_checkpoint_is_active_before_first_commit(monitor):
     assert p["active_service"] == {"label": "S0", "strategy_id": "s0", "skills": []}
 
 
+def test_pending_customer_text_and_provisional_pair_pressure(monitor):
+    p = progress(monitor)
+    assert p["customer_proposals"][0]["text"] == "new challenge"
+    assert p["customer_proposals"][0]["committed"] is False
+    assert p["active_customer"]["strategy_id"] == "c1"
+    candidate = p["rows"][2]
+    assert candidate["accuracy"] is None and candidate["provisional"] is True
+    assert candidate["observed_successes"] == 0 and candidate["observed_accuracy"] == 0
+    pair = p["paired_transitions"][0]
+    assert pair["paired_count"] == 1 and pair["provisional"] is True
+    assert pair["task_ids"]["P→F"] == ["66"]
+    html = monitor["client"].get("/runs/monitor").text
+    assert "new challenge" in html and "PROVISIONAL" in html and "Not fitness" in html
+    monitor["episode"]("92", "generation-1-customer-candidate-0", False)
+    assert progress(monitor)["paired_transitions"][0]["counts"]["F→F"] == 1
+
+
+@pytest.mark.parametrize("operation,target", [("add", None), ("update", "skill-0001"), ("no_op", None)])
+def test_pending_service_mutation_does_not_promote_active_memory(monitor, operation, target):
+    put(monitor["run"] / "generation-0001-service-proposal.json", {
+        "manifest_sha256": monitor["digest"], "strategy_id": "s2" if operation != "no_op" else "s1",
+        "frozen_service": {"strategy_id": "s1"},
+        "mutation": {"operation": operation, "target_skill_id": target, "analysis": "explain repair",
+                     "skill": None if operation == "no_op" else {"trigger": "new trigger", "guidance": "new guidance"}},
+    })
+    p = progress(monitor)
+    mutation = p["service_mutation"]
+    assert mutation["operation"] == operation.upper() and mutation["target_skill_id"] == target
+    assert mutation["committed"] is False
+    assert p["active_service"]["strategy_id"] == "s1"
+    assert p["active_service"]["skills"][0]["guidance"] == "exchange before return"
+    html = monitor["client"].get("/runs/monitor").text
+    assert f"Service {operation.upper()}" in html
+    if operation != "no_op":
+        assert "new trigger" in html and "new guidance" in html
+
+
+def test_live_task_turn_role_and_concurrent_attempts(monitor):
+    put(monitor["run"] / "run-execution-state.json", {**monitor["execution"], "status": "running", "failure": None})
+    for attempt, task, turn in (("live-1", "29", 7), ("live-2", "92", 8)):
+        put(monitor["run"] / f"episodes/{attempt}/active-episode.json", {
+            "manifest_sha256": monitor["digest"], "status": "running", "attempt_id": attempt,
+            "task_id": task, "panel_name": "generation-1-customer-candidate-0", "turn_index": turn,
+            "role": "assistant", "tool_name": "exchange_delivered_order_items",
+            "updated_at": f"2026-10-07T09:00:0{turn}+00:00", "hidden_truth": "NEVER_DISPLAY",
+        })
+    # A heldout telemetry file must not be projected into E/V live progress.
+    put(monitor["run"] / "episodes/live-h/active-episode.json", {
+        "manifest_sha256": monitor["digest"], "status": "running", "attempt_id": "live-h",
+        "task_id": "H_SECRET_TASK", "turn_index": 9,
+    })
+    p = progress(monitor)
+    assert len(p["active_episodes"]) == 2 and p["current_episode"]["task_id"] == "92"
+    assert p["current_episode"]["turn"] == 8
+    assert p["current_episode"]["tool_name"] == "exchange_delivered_order_items"
+    assert "NEVER_DISPLAY" not in json.dumps(p) and "H_SECRET" not in json.dumps(p)
+    html = monitor["client"].get("/runs/monitor").text
+    assert "Active episodes · 2" in html and "exchange_delivered_order_items" in html
+    put(monitor["run"] / "episodes/live-2/active-episode.json", {"manifest_sha256": "wrong"})
+    assert monitor["client"].get("/runs/monitor/progress").status_code == 422
+
+
+def test_full_customer_and_service_pairs_provenance_and_failure_details(monitor):
+    monitor["episode"]("92", "generation-1-customer-candidate-0", True)
+    monitor["episode"]("29", "generation-1-customer-candidate-0", True)
+    for task, success in (("66", True), ("92", True), ("29", False)):
+        monitor["episode"](task, "generation-1-service-candidate", success)
+    put(monitor["run"] / "generation-0001-stage.json", {**monitor["stage"], "stage": "service_E_complete", "selected_customer": 0})
+    pairs = progress(monitor)["paired_transitions"]
+    assert pairs[0]["counts"] == {"P→F": 1, "F→P": 1, "P→P": 1, "F→F": 0}
+    assert pairs[1]["counts"] == {"P→F": 1, "F→P": 1, "P→P": 1, "F→F": 0}
+    assert all(not pair["provisional"] for pair in pairs)
+    parent_path = monitor["run"] / "continuation-provenance.json"
+    put(parent_path, {"source_experiment_id": "parent", "imported_complete_episodes": 3,
+                      "imported_file_sha256": {f"episodes/generation-1-customer-incumbent-{task}/episode-record.json": "hash" for task in ("66", "92", "29")}})
+    p = progress(monitor)
+    assert p["continuation"]["imported_complete"] == 3
+    assert p["continuation"]["new_complete"] == 6
+    assert p["continuation"]["reused_references"] == 3
+    assert p["continuation"]["incomplete_attempts"] == 1
+    assert p["continuation"]["new_incomplete"] == 1
+    assert p["failure"]["stage"] == "evolution" and p["failure"]["task_id"] == "29"
+    assert p["failure"]["checkpoint_preserved"] and not p["failure"]["runtime_matches"]
+
+
+def test_customer_content_is_escaped_and_never_injected_as_html(monitor):
+    path = monitor["run"] / "generation-0001-customer-proposals.json"
+    value = json.loads(path.read_text()); value["customer_candidates"][0]["strategy"] = '<img src=x onerror="alert(1)">'
+    put(path, value)
+    html = monitor["client"].get("/runs/monitor").text
+    assert '&lt;img src=x onerror=' in html and '<img src=x onerror=' not in html
+
+
+def test_terminal_attempt_overrides_stale_live_observer(monitor):
+    put(monitor["run"] / "run-execution-state.json", {**monitor["execution"], "status": "running", "failure": None})
+    put(monitor["run"] / "episodes/failure/active-episode.json", {
+        "manifest_sha256": monitor["digest"], "status": "running", "attempt_id": "failure", "task_id": "29", "turn_index": 7,
+    })
+    assert progress(monitor)["active_episodes"] == []
+
+
+def test_wrong_generation_customer_proposal_is_rejected(monitor):
+    path = monitor["run"] / "generation-0001-customer-proposals.json"
+    value = json.loads(path.read_text()); value["generation"] = 0; put(path, value)
+    assert monitor["client"].get("/runs/monitor/progress").status_code == 422
+
+
 @pytest.mark.parametrize("kind", ["stage", "proposal", "wire", "symlink"])
 def test_corrupt_or_unsafe_monitoring_artifact_is_hidden(monitor, kind):
     run = monitor["run"]

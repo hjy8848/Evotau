@@ -60,15 +60,20 @@ class CodeProvenance:
     git_commit: str | None
     working_tree_clean: bool | None
     source_sha256: str
+    console_source_sha256: str | None = None
 
     def to_dict(self) -> dict[str, str | bool | None]:
-        return {
+        payload = {
             "git_commit": self.git_commit,
             "working_tree_clean": self.working_tree_clean,
             "source_sha256": self.source_sha256,
         }
+        if self.console_source_sha256 is not None:
+            payload.update(source_scope="runtime-v2", runtime_source_sha256=self.source_sha256,
+                           console_source_sha256=self.console_source_sha256)
+        return payload
 
-def capture_code_provenance() -> CodeProvenance:
+def capture_code_provenance(*, runtime_only: bool = False) -> CodeProvenance:
     """Fingerprint EvoTau sources and, when available, the containing Git state."""
 
     package_dir = Path(__file__).resolve().parent
@@ -83,15 +88,25 @@ def capture_code_provenance() -> CodeProvenance:
         source_paths = sorted(package_dir.rglob("*.py"))
         relative = lambda path: f"evotau/{path.relative_to(package_dir).as_posix()}"
     digest = hashlib.sha256()
+    console_digest = hashlib.sha256()
     for path in source_paths:
         if not path.is_file():
             continue
         name = relative(path).encode("utf-8")
         content = path.read_bytes()
-        digest.update(len(name).to_bytes(8, "big"))
-        digest.update(name)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
+        is_console = path.is_relative_to(package_dir / "web") or path == package_dir / "observability.py"
+        target = console_digest if runtime_only and is_console else digest
+        target.update(len(name).to_bytes(8, "big"))
+        target.update(name)
+        target.update(len(content).to_bytes(8, "big"))
+        target.update(content)
+    if runtime_only:
+        for path in sorted((package_dir / "web").rglob("*")):
+            if not path.is_file() or path.suffix not in {".html", ".js", ".css"}:
+                continue
+            name, content = relative(path).encode("utf-8"), path.read_bytes()
+            console_digest.update(len(name).to_bytes(8, "big") + name)
+            console_digest.update(len(content).to_bytes(8, "big") + content)
 
     commit = None
     clean = None
@@ -109,7 +124,7 @@ def capture_code_provenance() -> CodeProvenance:
             clean = not status_result.stdout.strip()
     except (OSError, subprocess.SubprocessError):
         pass
-    return CodeProvenance(commit, clean, digest.hexdigest())
+    return CodeProvenance(commit, clean, digest.hexdigest(), console_digest.hexdigest() if runtime_only else None)
 
 def _validate_code_provenance(git_commit: str | None, source_sha256: str) -> None:
     if git_commit is not None and not re.fullmatch(r"[0-9a-f]{40}", git_commit):
