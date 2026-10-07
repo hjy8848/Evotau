@@ -65,6 +65,7 @@ def test_frozen_morphology_treatments_resume_and_reject_changes(tmp_path, monkey
             calls.append(name)
             if name == "evotau_provider_preflight":
                 return {"ok": True}
+            assert "hidden-target" not in json.dumps(context)
             return {
                 "activation_signature": {
                     "positive_conditions": ["The user adds scope before confirmation."],
@@ -104,7 +105,15 @@ def test_frozen_morphology_treatments_resume_and_reject_changes(tmp_path, monkey
 
         def load_trajectory(self, record):
             return {
-                "messages": [{"role": "user", "content": "Please explain the policy."}]
+                "reward_info": {"reference_actions": "hidden-target"},
+                "info": {"user_scenario": "hidden-target"},
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Please explain the policy.",
+                        "raw_data": "hidden-target",
+                    }
+                ],
             }
 
     monkeypatch.setattr(module, "V2Providers", Provider)

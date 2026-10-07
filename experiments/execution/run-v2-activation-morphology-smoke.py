@@ -23,6 +23,7 @@ from inferai_transport_pacing import SlidingWindowPacer
 from evotau.alternating import (
     LLMAlternatingEvolvers,
     _run_panel,
+    _trajectory_context,
     _write_json_atomic,
     _write_json_once,
 )
@@ -346,7 +347,12 @@ def main():
             "previous_repair_observed_fixes": ["22", "80"],
             "previous_repair_observed_breaks": ["98", "4", "21", "35"],
             "observed_E": [
-                {"record": r.to_dict(), "trajectory": runner.load_trajectory(r)}
+                {
+                    "task_id": r.task_id,
+                    "seed": r.seed,
+                    "task_success": r.task_success,
+                    "trajectory": _trajectory_context(runner.load_trajectory(r)),
+                }
                 for r in records["empty"]
             ],
         }
