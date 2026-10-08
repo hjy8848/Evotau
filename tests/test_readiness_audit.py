@@ -146,3 +146,33 @@ def test_real_tau_generate_collects_stream_inside_one_budgeted_request(tmp_path,
     assert budget.snapshot().attempts == 1
     assert budget.snapshot().prompt_tokens == 7
     assert budget.snapshot().completion_tokens == 4
+
+
+def test_readiness_import_contract_allows_only_E_expansion():
+    from copy import deepcopy
+
+    import yaml
+
+    from evotau.alternating_manifest import AlternatingManifest
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "readiness_baseline_import", root / "experiments/execution/import-v2-readiness-baseline.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    parent = AlternatingManifest.from_mapping(yaml.safe_load(
+        (root / "configs/v2-readiness-pro-rehearsal.yaml").read_text())).to_document()
+    child = AlternatingManifest.from_mapping(yaml.safe_load(
+        (root / "configs/v2-readiness-pro-e5-rehearsal.yaml").read_text())).to_document()
+    assert module.contract(parent) == module.contract(child)
+    for key, value in (("request_budget_cap", 999), ("max_steps", 31),
+                       ("initial_customer_strategy_sha256", "different")):
+        changed = deepcopy(child)
+        changed[key] = value
+        assert module.contract(parent) != module.contract(changed)
+    changed = deepcopy(child)
+    changed["evotau"]["source_sha256"] = "different"
+    assert module.contract(parent) != module.contract(changed)
+    changed = deepcopy(child)
+    changed["role_model_args"]["agent"]["temperature"] = .5
+    assert module.contract(parent) != module.contract(changed)

@@ -1,0 +1,337 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "31ec458ed79729c0c0e3a84079fea8a9609787897ca7e87b77d60fd1b8bf656e",
+  "stage": "g0000-generation_complete",
+  "input_sha256": "7ac1e81e2239eb9f6374047a895f5bf836c038a4f3d6c2e4aba82092c7519d32",
+  "payload": {
+    "generation": {
+      "schema_version": 3,
+      "manifest_sha256": "31ec458ed79729c0c0e3a84079fea8a9609787897ca7e87b77d60fd1b8bf656e",
+      "generation": 0,
+      "evolution_fitness_seed": 1,
+      "customer_before": {
+        "role": "customer",
+        "carrier": "prompt_strategy",
+        "strategy_id": "63be7e41e020bc00",
+        "strategy": ""
+      },
+      "service_before": {
+        "role": "service",
+        "carrier": "skill_memory_v2",
+        "strategy_id": "f0a9e404e39ab085",
+        "strategy": {
+          "schema_version": 2,
+          "skills": []
+        },
+        "skill_count": 0
+      },
+      "customer_after": {
+        "role": "customer",
+        "carrier": "prompt_strategy",
+        "strategy_id": "63be7e41e020bc00",
+        "strategy": ""
+      },
+      "service_after": {
+        "role": "service",
+        "carrier": "skill_memory_v2",
+        "strategy_id": "f0a9e404e39ab085",
+        "strategy": {
+          "schema_version": 2,
+          "skills": []
+        },
+        "skill_count": 0
+      },
+      "customer_phase": {
+        "incumbent_accuracy": 1.0,
+        "candidate_accuracies": [
+          null
+        ],
+        "selected_accuracy": 1.0,
+        "selected_customer": "incumbent",
+        "candidates": [
+          {
+            "strategy": {
+              "text": "RETAIL CUSTOMER STRATEGY: FORGOTTEN SECOND ITEM (POST-EXECUTION DISCLOSURE)\nYou are a private, mildly flustered customer who is unfamiliar with retail jargon and does not remember your email.\nFacts: You have one delivered order containing (among other things) a first item and a second item. You want to exchange BOTH: first item → NEW_ITEM_A and second item → NEW_ITEM_B (each a same-product variant swap), pay any extra price difference via your existing gift card, and afterwards be told your remaining gift card balance.\nInteraction policy:\n- Authenticate only by name + zip; refuse to give email and do not volunteer your user id.\n- First request ONLY the first exchange (item_1 → NEW_ITEM_A) and mention you want to use your gift card for any difference.\n- When the agent reviews the details and asks for confirmation or whether there are other items, reply that this is all you can think of right now and urge them to proceed; do not mention the second item at this point.\n- After the agent completes the exchange action (tool result / summary message), say: 'Oh — I also need to swap the second item to NEW_ITEM_B as well, still using my gift card, and then tell me my remaining balance.'\n- If told the order can no longer be exchanged/modified, say you did not realize it all had to be one request, and ask whether the exchange can still be done, the order redone, or how the second item can still be swapped; do not invent any new identities, products, orders, or addresses.\n- Keep the conversation going until both exchanges are done and the balance is given; never confirm completion unless both objectives are met. If the agent transfers/ends without satisfying them, accept the outcome and stop."
+            },
+            "semantic_family": "deferred/omitted second item revealed after single-use action commitment",
+            "target_weakness_family": "one-time item-modify/exchange tool: post-commitment expansion requests; service's all-items confirmation and irreversible-status handling",
+            "substantive_delta_from_prior": "The archive only pressured the pre-commitment confirmation point (Ethan disclosed the second item immediately before the tool call, which the agent absorbed into a combined call). This candidate delays the disclosure until AFTER the exchange tool has been executed, so the service can no longer invoke the one-time modify/exchange tool and the policy forbids any later item changes; completion now depends on the agent proactively extracting all items before committing. It also moves into the delivered-order exchange flow, which no archived trajectory exercised, targeting the same single-call constraint in the exchange branch rather than the pending-modification branch.",
+            "semantic_validation": {
+              "preserves_facts": false,
+              "preserves_objective": false,
+              "interaction_only": false,
+              "no_benchmark_leakage": true,
+              "reason": "The supplied strategy applies only to a two-item exchange with gift card and balance inquiry, but the scenarios include unrelated objectives: canceling pending orders/returning a watch, and changing a luggage set to a coat with return/cancel fallbacks. It also invents an order structure ('one delivered order containing... first and second item') that is not factually grounded in all scenarios, so it does not preserve factual truth or business objectives."
+            },
+            "accuracy": null,
+            "episodes": [],
+            "pre_rollout_rejection": "semantic_preservation_failed"
+          }
+        ],
+        "incumbent_episodes": [
+          {
+            "episode_id": "evotau-phase0-d0cd9eca-1ead-45d2-b8f1-77826064eb63",
+            "task_id": "21",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "f0a9e404e39ab085",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "termination_reason": "user_stop",
+            "trajectory_ref": "episodes/6639939ac32849db9bccdc0110ecb242/native-simulation.json",
+            "tool_calls": 13,
+            "enforce_communication_protocol": false,
+            "mixed_text_tool_call_messages": 9,
+            "raw_review": {},
+            "notes": "",
+            "total_steps": 32,
+            "prompt_tokens": 108963,
+            "completion_tokens": 2520,
+            "tool_errors": 1,
+            "hard_policy_protocol_violations": 0,
+            "activated_skill_ids": []
+          },
+          {
+            "episode_id": "evotau-phase0-a5b23b65-9d42-4be5-9e12-e0c92abb0e77",
+            "task_id": "16",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "f0a9e404e39ab085",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "termination_reason": "user_stop",
+            "trajectory_ref": "episodes/8186e03777f84fb794eca3cca7a70c96/native-simulation.json",
+            "tool_calls": 8,
+            "enforce_communication_protocol": false,
+            "mixed_text_tool_call_messages": 4,
+            "raw_review": {},
+            "notes": "",
+            "total_steps": 26,
+            "prompt_tokens": 76486,
+            "completion_tokens": 1653,
+            "tool_errors": 0,
+            "hard_policy_protocol_violations": 0,
+            "activated_skill_ids": []
+          },
+          {
+            "episode_id": "evotau-phase0-c3414ba0-0b0f-4735-b80c-9f9007500ec1",
+            "task_id": "66",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "f0a9e404e39ab085",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "termination_reason": "user_stop",
+            "trajectory_ref": "episodes/2e300d939a7547d68aab81d391b373ca/native-simulation.json",
+            "tool_calls": 5,
+            "enforce_communication_protocol": false,
+            "mixed_text_tool_call_messages": 4,
+            "raw_review": {},
+            "notes": "",
+            "total_steps": 25,
+            "prompt_tokens": 71297,
+            "completion_tokens": 1386,
+            "tool_errors": 0,
+            "hard_policy_protocol_violations": 0,
+            "activated_skill_ids": []
+          }
+        ]
+      },
+      "service_phase": {
+        "carrier": "skill_memory_v2",
+        "old_accuracy": 1.0,
+        "final_accuracy": 1.0,
+        "proposed_accuracy": null,
+        "accepted": false,
+        "acceptance_mode": "statistical_validation_gated",
+        "validation_evaluated": false,
+        "selection": {
+          "reason": "no candidate passed all screen/promotion/replay gates"
+        },
+        "skill_count_before": 0,
+        "skill_count_after": 0,
+        "candidates": [],
+        "diagnosis": {
+          "clusters": []
+        },
+        "opponents_replayed": [
+          "current",
+          "native"
+        ],
+        "exploration": {
+          "explore": false,
+          "mode": "REFINE",
+          "no_promotion_generations": 0,
+          "repeated_family": false,
+          "unchanged_failure_cluster": false,
+          "uncertain_improvement": false,
+          "avoid_families": [],
+          "preferred_mutation_types": []
+        }
+      },
+      "evolution_health": {
+        "active_skill_count": 0,
+        "archive_size": 0,
+        "activation_mode": "activate_topk_v2",
+        "mechanism_smoke": false
+      },
+      "activation_summary": {
+        "available": true,
+        "scope": "completed E/V research rollouts including rejected candidates",
+        "interpretation": "success rate is episode-level association; per-skill tokens are joint-turn overhead",
+        "total_service_turns": 34,
+        "activated_turns": 0,
+        "activation_rate": 0.0,
+        "rendered_skill_tokens": 0,
+        "skills": {}
+      },
+      "customer_archive": [],
+      "failure_matrix": [],
+      "history_summary": [],
+      "statistical_policy": {
+        "bootstrap_samples": 2000,
+        "confidence": 0.95,
+        "enabled": true,
+        "max_harmfulness": 0.05,
+        "max_stuck_delta": 0.0,
+        "method": "finite_panel_paired",
+        "min_tasks": 8,
+        "multiple_look_correction": "bonferroni",
+        "preservation_margin": 0.0,
+        "require_positive_success_lower_bound": true
+      },
+      "timing": {
+        "validation_wall_clock_seconds": 0
+      }
+    },
+    "state": {
+      "customer": {
+        "text": ""
+      },
+      "service": {
+        "schema_version": 2,
+        "skills": []
+      },
+      "service_provenance": [],
+      "skill_id_high_watermark": 0,
+      "mutation_effects": [],
+      "failure_matrix": [],
+      "evolution_archive": {
+        "entries": [],
+        "max_candidates": 5,
+        "runtime_deployed": false
+      },
+      "customer_archive": [],
+      "history_summary": [],
+      "activation_config": {
+        "model": "openai/qwen3.7-plus",
+        "model_args": {
+          "api_base": "https://inferaiapi.com/v1",
+          "temperature": 0.0,
+          "thinking_mode": "disabled"
+        }
+      },
+      "activation_summary": {
+        "available": true,
+        "scope": "completed E/V research rollouts including rejected candidates",
+        "interpretation": "success rate is episode-level association; per-skill tokens are joint-turn overhead",
+        "total_service_turns": 34,
+        "activated_turns": 0,
+        "activation_rate": 0.0,
+        "rendered_skill_tokens": 0,
+        "skills": {}
+      },
+      "statistical_gate_state": {
+        "policy": {
+          "bootstrap_samples": 2000,
+          "confidence": 0.95,
+          "enabled": true,
+          "max_harmfulness": 0.05,
+          "max_stuck_delta": 0.0,
+          "method": "finite_panel_paired",
+          "min_tasks": 8,
+          "multiple_look_correction": "bonferroni",
+          "preservation_margin": 0.0,
+          "require_positive_success_lower_bound": true
+        },
+        "looks": 12
+      },
+      "final_evolution_episodes": [
+        {
+          "episode_id": "evotau-phase0-d0cd9eca-1ead-45d2-b8f1-77826064eb63",
+          "task_id": "21",
+          "seed": 1,
+          "customer_strategy_id": "63be7e41e020bc00",
+          "service_strategy_id": "f0a9e404e39ab085",
+          "status": "complete",
+          "task_success": true,
+          "native_reward": 1.0,
+          "termination_reason": "user_stop",
+          "trajectory_ref": "episodes/6639939ac32849db9bccdc0110ecb242/native-simulation.json",
+          "tool_calls": 13,
+          "enforce_communication_protocol": false,
+          "mixed_text_tool_call_messages": 9,
+          "raw_review": {},
+          "notes": "",
+          "total_steps": 32,
+          "prompt_tokens": 108963,
+          "completion_tokens": 2520,
+          "tool_errors": 1,
+          "hard_policy_protocol_violations": 0,
+          "activated_skill_ids": []
+        },
+        {
+          "episode_id": "evotau-phase0-a5b23b65-9d42-4be5-9e12-e0c92abb0e77",
+          "task_id": "16",
+          "seed": 1,
+          "customer_strategy_id": "63be7e41e020bc00",
+          "service_strategy_id": "f0a9e404e39ab085",
+          "status": "complete",
+          "task_success": true,
+          "native_reward": 1.0,
+          "termination_reason": "user_stop",
+          "trajectory_ref": "episodes/8186e03777f84fb794eca3cca7a70c96/native-simulation.json",
+          "tool_calls": 8,
+          "enforce_communication_protocol": false,
+          "mixed_text_tool_call_messages": 4,
+          "raw_review": {},
+          "notes": "",
+          "total_steps": 26,
+          "prompt_tokens": 76486,
+          "completion_tokens": 1653,
+          "tool_errors": 0,
+          "hard_policy_protocol_violations": 0,
+          "activated_skill_ids": []
+        },
+        {
+          "episode_id": "evotau-phase0-c3414ba0-0b0f-4735-b80c-9f9007500ec1",
+          "task_id": "66",
+          "seed": 1,
+          "customer_strategy_id": "63be7e41e020bc00",
+          "service_strategy_id": "f0a9e404e39ab085",
+          "status": "complete",
+          "task_success": true,
+          "native_reward": 1.0,
+          "termination_reason": "user_stop",
+          "trajectory_ref": "episodes/2e300d939a7547d68aab81d391b373ca/native-simulation.json",
+          "tool_calls": 5,
+          "enforce_communication_protocol": false,
+          "mixed_text_tool_call_messages": 4,
+          "raw_review": {},
+          "notes": "",
+          "total_steps": 25,
+          "prompt_tokens": 71297,
+          "completion_tokens": 1386,
+          "tool_errors": 0,
+          "hard_policy_protocol_violations": 0,
+          "activated_skill_ids": []
+        }
+      ]
+    }
+  },
+  "payload_sha256": "c419634f3bb1cfeaedbdc6b34d4f40b3d5b416aebb29ca2916d82e224cb090ef",
+  "envelope_sha256": "091984c22c330d630c2f3dc70dfd74bbd1048430eaa9854a667db41b104efbec"
+}

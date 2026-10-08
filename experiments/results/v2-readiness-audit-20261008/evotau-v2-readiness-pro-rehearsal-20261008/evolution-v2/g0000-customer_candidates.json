@@ -1,0 +1,18 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "31ec458ed79729c0c0e3a84079fea8a9609787897ca7e87b77d60fd1b8bf656e",
+  "stage": "g0000-customer_candidates",
+  "input_sha256": "c8e638c95e6edbfbeb87137e44d01dee11f48f3b309c102ff3d82cd743692ca0",
+  "payload": {
+    "candidates": [
+      {
+        "strategy": "RETAIL CUSTOMER STRATEGY: FORGOTTEN SECOND ITEM (POST-EXECUTION DISCLOSURE)\nYou are a private, mildly flustered customer who is unfamiliar with retail jargon and does not remember your email.\nFacts: You have one delivered order containing (among other things) a first item and a second item. You want to exchange BOTH: first item → NEW_ITEM_A and second item → NEW_ITEM_B (each a same-product variant swap), pay any extra price difference via your existing gift card, and afterwards be told your remaining gift card balance.\nInteraction policy:\n- Authenticate only by name + zip; refuse to give email and do not volunteer your user id.\n- First request ONLY the first exchange (item_1 → NEW_ITEM_A) and mention you want to use your gift card for any difference.\n- When the agent reviews the details and asks for confirmation or whether there are other items, reply that this is all you can think of right now and urge them to proceed; do not mention the second item at this point.\n- After the agent completes the exchange action (tool result / summary message), say: 'Oh — I also need to swap the second item to NEW_ITEM_B as well, still using my gift card, and then tell me my remaining balance.'\n- If told the order can no longer be exchanged/modified, say you did not realize it all had to be one request, and ask whether the exchange can still be done, the order redone, or how the second item can still be swapped; do not invent any new identities, products, orders, or addresses.\n- Keep the conversation going until both exchanges are done and the balance is given; never confirm completion unless both objectives are met. If the agent transfers/ends without satisfying them, accept the outcome and stop.",
+        "semantic_family": "deferred/omitted second item revealed after single-use action commitment",
+        "target_weakness_family": "one-time item-modify/exchange tool: post-commitment expansion requests; service's all-items confirmation and irreversible-status handling",
+        "substantive_delta_from_prior": "The archive only pressured the pre-commitment confirmation point (Ethan disclosed the second item immediately before the tool call, which the agent absorbed into a combined call). This candidate delays the disclosure until AFTER the exchange tool has been executed, so the service can no longer invoke the one-time modify/exchange tool and the policy forbids any later item changes; completion now depends on the agent proactively extracting all items before committing. It also moves into the delivered-order exchange flow, which no archived trajectory exercised, targeting the same single-call constraint in the exchange branch rather than the pending-modification branch."
+      }
+    ]
+  },
+  "payload_sha256": "7bea98042f94c8602cc7b81a68d71ac3da24ccffc72ae976be16fd7fc0d95234",
+  "envelope_sha256": "de404ccc1c147d9981dfd3e3b3dfcf99731a4cd402dd7fb161471593c283861e"
+}

@@ -123,6 +123,8 @@ def main():
         print(json.dumps({k: v for k, v in row.items() if k != "response"}, ensure_ascii=False), flush=True)
     report = {"status": "complete" if all(r["status"] == "complete" for r in rows) else "failed", "stages": rows, "provider_usage": budget.snapshot().to_dict(), "native_episodes": 0}
     _write_json_once(args.output / "report.json", report)
+    if report["status"] != "complete":
+        raise SystemExit(2)  # A recorded failed probe must also fail a shell/CI readiness gate.
 
 
 if __name__ == "__main__":

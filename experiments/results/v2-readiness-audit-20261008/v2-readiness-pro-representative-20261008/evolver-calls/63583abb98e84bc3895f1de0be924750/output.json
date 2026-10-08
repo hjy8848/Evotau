@@ -1,0 +1,37 @@
+{
+  "status": "parsed",
+  "response": {
+    "analysis": "Failures: task 98 is attributable to a real procedural gap: the user asked to cancel a single item (skateboard) from a pending order that also contained other items, and the agent called cancel_pending_order first and discovered afterward that the whole order had been cancelled. The policy requires action details to be listed and explicitly confirmed before irreversible updates, and this skill makes the whole-order scope of a pending-order cancellation explicit before the tool call. Task 21 failed on max_steps after an item/product-ID confusion and a balance lookup; the visible modification succeeded, so its root cause is not cleanly attributable to this cancellation-scope gap. Task 8 visually completed an exchange but still received native reward 0; the cause is not identifiable from trajectory evidence, so it is intentionally left out to keep the repair narrow. Protected successes: 29 and 93 are exchange-only flows and will not activate; 54 is order-level cancellation of pending orders, excluded by the negative condition 'user explicitly requests cancelling the whole pending order'. Expected fix count: 1 (task 98). Risk count: 0 protected successes at risk; the added step is a single pre-action disclosure/confirmation consistent with native policy and cannot break exchanges or returns.",
+    "semantic_family": "pending-order-cancellation-scope",
+    "target_cluster_id": "readiness-fixture",
+    "operation": "add",
+    "target_skill_id": null,
+    "skill": {
+      "trigger": "user asks to cancel a specific item (by product name or item id) from a pending order that also contains other items",
+      "guidance": "Cancelling a pending order cancels the entire order, not just the single item the user named. Before calling cancel_pending_order, state that the whole order including all of its items will be cancelled and refunded, list the order id, the complete item list of that order, and the refund destination, and obtain explicit user confirmation (yes). Do not describe the action as cancelling only the named item, and do not call the tool until that whole-order consequence is confirmed.",
+      "activation_signature": {
+        "positive_conditions": [
+          "user requests cancellation of one specific item in an order",
+          "referenced order status is pending",
+          "referenced pending order contains additional items beyond the named item",
+          "agent is about to call cancel_pending_order"
+        ],
+        "negative_conditions": [
+          "user explicitly requests cancellation of the whole pending order",
+          "referenced order is not pending",
+          "request does not name a specific item as the cancellation target"
+        ],
+        "interaction_phase": [
+          "pre_action_confirmation"
+        ]
+      }
+    },
+    "children": [],
+    "expected_fixes": [
+      "98"
+    ],
+    "protected_cases_at_risk": [],
+    "substantive_delta_from_prior": "First mutation on an empty archive; adds a narrow pre-action disclosure skill for item-level cancellation of multi-item pending orders. No prior mechanism exists, so there is no equivalent rejected mechanism to repeat."
+  },
+  "response_sha256": "dfee9b13183804deab7f0584ee6fef121ebde0bb1ddaa74ff63772bdea9fce9f"
+}

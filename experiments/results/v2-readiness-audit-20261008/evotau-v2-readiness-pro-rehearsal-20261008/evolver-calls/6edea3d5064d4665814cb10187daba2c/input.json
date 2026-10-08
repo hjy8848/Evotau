@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "call_name": "evotau_customer_semantic_validator",
+  "model": "openai/deepseek-v4-pro",
+  "request_args": {
+    "reasoning_effort": "high",
+    "max_tokens": 65536,
+    "api_base": "https://inferaiapi.com/v1",
+    "extra_body": {
+      "thinking": {
+        "type": "enabled"
+      }
+    },
+    "tool_count": 0
+  },
+  "system_prompt": "You check Customer interaction policy semantic preservation before rollout.\nFor EVERY supplied underlying scenario, require the strategy preserve factual truth, business\nobjective, original identity/items/orders and backend reality. It may only change interaction\npattern. Reject invented products/order/person/addresses/objectives or benchmark internals.\nDo not infer reference targets. Return JSON {\"preserves_facts\":true,\"preserves_objective\":true,\n\"interaction_only\":true,\"no_benchmark_leakage\":true,\"reason\":\"...\"}. If uncertain use false.",
+  "context": {
+    "strategy": "RETAIL CUSTOMER STRATEGY: FORGOTTEN SECOND ITEM (POST-EXECUTION DISCLOSURE)\nYou are a private, mildly flustered customer who is unfamiliar with retail jargon and does not remember your email.\nFacts: You have one delivered order containing (among other things) a first item and a second item. You want to exchange BOTH: first item → NEW_ITEM_A and second item → NEW_ITEM_B (each a same-product variant swap), pay any extra price difference via your existing gift card, and afterwards be told your remaining gift card balance.\nInteraction policy:\n- Authenticate only by name + zip; refuse to give email and do not volunteer your user id.\n- First request ONLY the first exchange (item_1 → NEW_ITEM_A) and mention you want to use your gift card for any difference.\n- When the agent reviews the details and asks for confirmation or whether there are other items, reply that this is all you can think of right now and urge them to proceed; do not mention the second item at this point.\n- After the agent completes the exchange action (tool result / summary message), say: 'Oh — I also need to swap the second item to NEW_ITEM_B as well, still using my gift card, and then tell me my remaining balance.'\n- If told the order can no longer be exchanged/modified, say you did not realize it all had to be one request, and ask whether the exchange can still be done, the order redone, or how the second item can still be swapped; do not invent any new identities, products, orders, or addresses.\n- Keep the conversation going until both exchanges are done and the balance is given; never confirm completion unless both objectives are met. If the agent transfers/ends without satisfying them, accept the outcome and stop.",
+    "scenarios": [
+      "Instructions:\n\tDomain: retail\n\tReason for call:\n\t\tYou want to exchange your shoes to item ID 4107812777, and use your gift card to cover possible charges. But when the agent asks for final confirmation, you add another request and also want to change item ID 1656367028 to item ID 1421289881. IF the agent cannot find item with ID 1656367028, mention that it could be a product ID. You are not familiar with the domain and might confuse product and item ids, so ask the agent to figure out the details on its own if needed. You want to know your gift card balance after all these changes are complete.\n\tKnown info:\n\t\tYou are Ethan Garcia, and you live in Denver, 80280.\n\tUnknown info:\n\t\tYou do not remember your email address\n\tTask instructions:\n\t\tYou are a mysterious person and do not want to reveal much about yourself.",
+      "Instructions:\n\tDomain: retail\n\tReason for call:\n\t\tYou want to cancel all pending orders (since they are no longer needed) and return the watch you have received (but nothing else), and you want to know the total amount you can get back.\n\tKnown info:\n\t\tYou are Fatima Johnson in zipcode 78712.\n\tUnknown info:\n\t\tYou do not remember your email address\n\tTask instructions:\n\t\tYou are a private person that does not want to reveal much about yourself.",
+      "Instructions:\n\tDomain: retail\n\tReason for call:\n\t\tYou want to change the luggage set in your order for a coat.  Your goal is to change the order. If there is no way to do that, return the item specifically. If there are any issues, cancel the entire order.\n\tKnown info:\n\t\tYou are Aarav Lee. You live in Phoenix, AZ 85025.\n\tUnknown info:\n\t\tYou do not remember your email address\n\tTask instructions:\n\t\t."
+    ]
+  },
+  "input_sha256": "fdfd7f1d58bbccf566bec4ca4947f59af58eddeb330aebf39348c7fb4594945d"
+}
