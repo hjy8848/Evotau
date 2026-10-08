@@ -377,11 +377,21 @@ def run_skill_evolution_v2(
                 documents, effects, evo["stagnation_patience"]
             ),
         }
+        from .evolution_context import (
+            SERVICE_DIAGNOSIS_EVIDENCE_INSTRUCTIONS,
+            build_service_diagnosis_evidence,
+        )
+
+        diagnosis_context = {
+            **s_context,
+            "task_interactions": build_service_diagnosis_evidence(all_evidence),
+            "evidence_instructions": SERVICE_DIAGNOSIS_EVIDENCE_INSTRUCTIONS,
+        }
         diagnosis = stage(
             g,
             "service_diagnosis",
-            s_context,
-            lambda s_context=s_context: providers.diagnose(s_context),
+            diagnosis_context,
+            lambda diagnosis_context=diagnosis_context: providers.diagnose(diagnosis_context),
         )
         failed_ids = {r.task_id for r in selected if r.task_success is False}
         passed_ids = {r.task_id for r in selected if r.task_success is True}

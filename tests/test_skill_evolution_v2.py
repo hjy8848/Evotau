@@ -110,6 +110,8 @@ class FakeProviders:
     def diagnose(self, context):
         self.calls.append("diagnose")
         assert "secret-hidden" not in json.dumps(context)
+        assert "evidence_instructions" in context
+        assert all("trajectory_overview" in row for row in context["task_interactions"])
         if not any(r["task_success"] is False for r in context["current_outcomes"]):
             return {"clusters": []}
         return {

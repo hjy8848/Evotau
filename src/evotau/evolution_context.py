@@ -1,4 +1,4 @@
-"""Deterministic Customer reflection evidence; never rewrite native artifacts or scores."""
+"""Deterministic reflection evidence; never rewrite native artifacts or scores."""
 import json
 from copy import deepcopy
 
@@ -53,7 +53,7 @@ def _action_result(message):
                    'omitted_fields': omitted, 'content_sha256': sha256_json(content)}
 
 
-def build_customer_evidence(rows, *, representative_cases=4, case_chars=12000):
+def _build_evidence(rows, *, representative_cases=4, case_chars=12000, selection=None):
     """Keep every task/outcome/scenario, plus bounded, digest-linked raw case evidence.
 
     Indices address the existing flattened trajectory projection, not native message
@@ -61,19 +61,20 @@ def build_customer_evidence(rows, *, representative_cases=4, case_chars=12000):
     Excerpts and omitted messages are explicit; no causal diagnosis is fabricated.
     """
     if representative_cases < 2 or case_chars < 1000:
-        raise ValueError('Customer evidence needs contrast cases and a usable case allowance')
+        raise ValueError('Reflection evidence needs contrast cases and a usable case allowance')
     rows = deepcopy(list(rows))
     failed = [i for i, row in enumerate(rows) if row['native_evaluation']['task_success'] is False]
     passed = [i for i, row in enumerate(rows) if row['native_evaluation']['task_success'] is True]
     if len(failed) + len(passed) != len(rows):
-        raise ValueError('Customer reflection requires complete boolean native outcomes')
+        raise ValueError('Reflection requires complete boolean native outcomes')
     order = lambda i: (str(rows[i]['task']['task_id']), rows[i]['seed'])
     # Stable outcome-stratified selection, with a success control whenever available.
-    selection = sorted(failed, key=order)[:representative_cases - bool(passed)]
-    selection += sorted(passed, key=order)[:representative_cases - len(selection)]
-    if len(selection) < min(representative_cases, len(rows)):
-        selection += [i for i in sorted(failed, key=order) if i not in selection][
-            :representative_cases - len(selection)]
+    if selection is None:
+        selection = sorted(failed, key=order)[:representative_cases - bool(passed)]
+        selection += sorted(passed, key=order)[:representative_cases - len(selection)]
+        if len(selection) < min(representative_cases, len(rows)):
+            selection += [i for i in sorted(failed, key=order) if i not in selection][
+                :representative_cases - len(selection)]
     selected = set(selection)
     result = []
     for index, row in enumerate(rows):
@@ -151,7 +152,7 @@ def build_customer_evidence(rows, *, representative_cases=4, case_chars=12000):
                 size = _size(item)
                 if used + size > case_chars:
                     if mi in actions or mi in users:
-                        raise ValueError('Decisive tool/user evidence exceeds Customer case allowance')
+                        raise ValueError('Decisive tool/user evidence exceeds reflection case allowance')
                     omitted.append({'projected_message_index': mi})
                     continue
                 evidence.append(item)
@@ -170,4 +171,49 @@ CUSTOMER_EVIDENCE_INSTRUCTIONS = (
     'your proposal rationale. Indices refer to the flattened projection; digests link to source '
     'messages. Explicit prefix excerpts, selected JSON fields and omitted messages are not complete evidence. Do not '
     'invent omitted facts or treat an observed failure as an established root cause.'
+)
+
+
+def build_customer_evidence(rows, *, representative_cases=4, case_chars=12000):
+    return _build_evidence(rows, representative_cases=representative_cases, case_chars=case_chars)
+
+
+def build_service_diagnosis_evidence(rows, *, representative_cases=4, case_chars=12000):
+    """All E outcomes; deterministic failure cases and visible-tool-path success controls.
+
+    Only observed evidence is admitted. Hidden task metadata and strategy text are
+    excluded structurally, even if a caller accidentally passes Customer rows.
+    """
+    safe = [
+        {'task': {'task_id': row['task']['task_id']},
+         **{key: deepcopy(row[key]) for key in
+            ('seed', 'native_evaluation', 'trajectory_ref', 'trajectory')}}
+        for row in rows
+    ]
+    order = lambda i: (str(safe[i]['task']['task_id']), safe[i]['seed'])
+    failed = sorted([i for i, row in enumerate(safe)
+                     if row['native_evaluation']['task_success'] is False], key=order)
+    passed = [i for i, row in enumerate(safe)
+              if row['native_evaluation']['task_success'] is True]
+
+    def tools(i):
+        return {call.get('name') or (call.get('function') or {}).get('name')
+                for message in safe[i]['trajectory']['messages'] for call in _calls(message)} - {None}
+
+    failure_tools = set().union(*(tools(i) for i in failed))
+    passed.sort(key=lambda i: (-len(tools(i) & failure_tools), order(i)))
+    chosen = failed[:representative_cases - bool(passed)]
+    chosen += passed[:representative_cases - len(chosen)]
+    chosen += [i for i in failed if i not in chosen][:representative_cases - len(chosen)]
+    return _build_evidence(safe, representative_cases=representative_cases,
+                           case_chars=case_chars, selection=chosen)
+
+
+SERVICE_DIAGNOSIS_EVIDENCE_INSTRUCTIONS = (
+    CUSTOMER_EVIDENCE_INSTRUCTIONS +
+    ' Only observed interactions are provided; hidden Customer scenarios are unavailable. '
+    'All listed task IDs may be referenced by the existing diagnosis schema. '
+    'A structural overview alone does not establish a failure mechanism. '
+    'Use detailed failure evidence and passing controls to support a cluster; '
+    'do not infer missing dialogue, hidden intentions or causal categories from tool names or rewards.'
 )
