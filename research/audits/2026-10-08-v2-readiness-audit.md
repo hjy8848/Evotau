@@ -301,3 +301,17 @@ Remaining launch blockers: representative long Pro diagnosis reliability,
 production-path live mutation → screen → gate coverage, and explicit formal
 budget/launch authorization. The E20/V16/H40 configuration is a **disabled draft**,
 not a release-approved final run config. No model or endpoint fallback was taken.
+
+## 7. Explicitly authorized V4.1 Flash follow-up
+
+After the Pro audit, the user explicitly requested `deepseek-v4.1-flash` with
+thinking enabled as an alternative Evolver. The new independent configuration
+keeps native Qwen roles and every V2 prompt/task/seed/gate unchanged. Short
+connectivity succeeded (HTTP200, legal JSON, 41 reported reasoning tokens), but
+the exact same four representative contexts each returned HTTP502. Diagnoser
+took 29.81 seconds; Mutator and both Validators failed in under one second.
+Length alone is not established as the cause. No native episode or full formal
+experiment was started; the alternative config is disabled after the failed
+preflight. Five additional inference requests belong to this separate follow-up,
+not the 128-request audit total above. Raw sanitized evidence and interpretation
+are in [the V4.1 Flash archive](../../experiments/results/v2-readiness-v41flash-thinking-20261008/README.md).

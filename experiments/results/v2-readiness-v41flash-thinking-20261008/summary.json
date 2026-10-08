@@ -1,0 +1,62 @@
+{
+  "status": "FAILED_REPRESENTATIVE_PREFLIGHT",
+  "baseline_commit": "ef6f654b906181412dee0f4e1c45807f9a8a65fc",
+  "replacement_explicitly_authorized": true,
+  "replaced_role": "evolver",
+  "model": "openai/deepseek-v4.1-flash",
+  "same_native_runtime_models": "openai/qwen3.7-plus",
+  "same_prompts_and_gate": true,
+  "identical_representative_contexts": true,
+  "connectivity": "complete HTTP200, legal JSON, reported41 reasoning tokens",
+  "actual_wire_args": {
+    "model": "deepseek-v4.1-flash",
+    "thinking": {
+      "type": "enabled"
+    },
+    "max_tokens": 65536
+  },
+  "reasoning_effort_high_requested_but_not_on_wire": true,
+  "stages": [
+    {
+      "stage": "diagnoser",
+      "status": "failed",
+      "error_type": "BadGatewayError",
+      "error": "litellm.BadGatewayError: BadGatewayError: OpenAIException - Error code: 502",
+      "elapsed_seconds": 29.812180667184293
+    },
+    {
+      "stage": "mutator",
+      "status": "failed",
+      "error_type": "BadGatewayError",
+      "error": "litellm.BadGatewayError: BadGatewayError: OpenAIException - Error code: 502",
+      "elapsed_seconds": 0.20637500006705523
+    },
+    {
+      "stage": "skill_validator",
+      "status": "failed",
+      "error_type": "BadGatewayError",
+      "error": "litellm.BadGatewayError: BadGatewayError: OpenAIException - Error code: 502",
+      "elapsed_seconds": 0.11963487509638071
+    },
+    {
+      "stage": "customer_validator",
+      "status": "failed",
+      "error_type": "BadGatewayError",
+      "error": "litellm.BadGatewayError: BadGatewayError: OpenAIException - Error code: 502",
+      "elapsed_seconds": 0.30251904111355543
+    }
+  ],
+  "inference_calls": 5,
+  "successful_calls": 1,
+  "failed_calls": 4,
+  "reported_prompt_tokens": 245,
+  "reported_completion_tokens": 47,
+  "failed_call_usage_unavailable": 4,
+  "automatic_retries": 0,
+  "native_episodes_started": 0,
+  "formal_experiment_started": false,
+  "baseline_cache_imported": false,
+  "config_enabled_after_test": false,
+  "live_full_flow_verified": false,
+  "interpretation": "Four independent representative stages each attempted once, not four retries. No claim that length alone caused failure: Validators also returned502. Short inference success does not establish readiness."
+}
