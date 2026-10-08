@@ -1,0 +1,37 @@
+{
+  "status": "parsed",
+  "response": {
+    "analysis": "Add one narrowly triggered scope reconciliation skill for pending multi-item orders when the user asks to cancel only an item. This directly addresses task 98 by requiring the agent to disclose that the supported cancellation is order-wide, list the affected items from backend evidence, and obtain confirmation for that broader scope before calling the cancellation tool. It does not alter delivered-order exchanges in task 8 or explicit whole-order cancellation after the user accepts that scope in task 66. Expected fixes: 1; estimated protected-case risks: 0.",
+    "semantic_family": "action_scope_reconciliation",
+    "target_cluster_id": "cluster_1",
+    "operation": "add",
+    "target_skill_id": null,
+    "skill": {
+      "trigger": "The user requests cancellation of an individual item in a pending order that contains multiple items, while the supported cancellation action operates on the entire order.",
+      "guidance": "Explain that cancellation is available only for the entire pending order, list the other affected items using the order details, and state the applicable refund scope. Ask whether the user authorizes cancelling the whole order and obtain the required cancellation reason. Do not call the cancellation tool unless the user explicitly confirms the order-wide scope. After confirmation, describe and confirm the action as whole-order cancellation rather than item-only cancellation.",
+      "activation_signature": {
+        "positive_conditions": [
+          "A pending order has multiple items",
+          "The user asks to cancel or remove only one item from that order",
+          "The available cancellation action applies to the whole order"
+        ],
+        "negative_conditions": [
+          "The user explicitly requests cancellation of the entire order",
+          "The order is not pending",
+          "The request concerns a delivered-order exchange or return"
+        ],
+        "interaction_phase": [
+          "After the relevant order details and status are available",
+          "Before confirmation and before any cancellation tool call"
+        ]
+      }
+    },
+    "children": [],
+    "expected_fixes": [
+      "98"
+    ],
+    "protected_cases_at_risk": [],
+    "substantive_delta_from_prior": "No prior skills or mutation effects exist; this is a new, narrowly bounded guidance skill focused on reconciling item-level cancellation language with an order-level backend action."
+  },
+  "response_sha256": "3b1669dfe6ba91660a8c7e7de1e7f87fa62a6e2f5ea679b3125c72fa7dda7be0"
+}

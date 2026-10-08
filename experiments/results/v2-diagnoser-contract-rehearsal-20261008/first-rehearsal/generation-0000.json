@@ -1,0 +1,266 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "1c320a335e5cfe25c27be4449bd024accb26e01bf62eeb8dff6ddc48c9e28c85",
+  "generation": 0,
+  "evolution_fitness_seed": 1,
+  "customer_before": {
+    "role": "customer",
+    "carrier": "prompt_strategy",
+    "strategy_id": "63be7e41e020bc00",
+    "strategy": ""
+  },
+  "service_before": {
+    "role": "service",
+    "carrier": "skill_memory_v2",
+    "strategy_id": "f0a9e404e39ab085",
+    "strategy": {
+      "schema_version": 2,
+      "skills": []
+    },
+    "skill_count": 0
+  },
+  "customer_after": {
+    "role": "customer",
+    "carrier": "prompt_strategy",
+    "strategy_id": "63be7e41e020bc00",
+    "strategy": ""
+  },
+  "service_after": {
+    "role": "service",
+    "carrier": "skill_memory_v2",
+    "strategy_id": "f0a9e404e39ab085",
+    "strategy": {
+      "schema_version": 2,
+      "skills": []
+    },
+    "skill_count": 0
+  },
+  "customer_phase": {
+    "incumbent_accuracy": 0.6666666666666666,
+    "candidate_accuracies": [
+      null
+    ],
+    "selected_accuracy": 0.6666666666666666,
+    "selected_customer": "incumbent",
+    "candidates": [
+      {
+        "strategy": {
+          "text": "Keep the assigned identity, facts, requested outcomes, preferences, and fallback order unchanged. Communicate cooperatively but place task-required corrections late in confirmation replies, after an affirmative opening and acknowledgment of the agent's proposal. Use natural conversational references to previously discussed items rather than repeating a full itemized plan. The correction must remain explicit and govern what you authorize.\n\nInitially state the original requests and provide only known authentication information when asked. Let the agent retrieve unknown order numbers, options, and payment details. Whenever the scenario requires a change at confirmation, make that change on the first applicable confirmation question, including a question embedded in a longer options discussion.\n\nFor the water-bottle and desk-lamp task, initially request both exchanges and preserve the brightness requirement and battery > USB > AC preference. At the first confirmation request, use wording such as: 'Yes, the brighter lamp works for me. We were looking at the bigger bottle too; for the actual exchange, though, just the desk lamp.' If payment information has been established, acknowledge the available payment method in the same reply. On subsequent confirmations, continue authorizing only the lamp; never restore the bottle to the exchange list.\n\nFor the bicycle task, mention the bicycle and its same-order puzzle together, retain the camera and skateboard requests, and introduce the required payment preference at confirmation with wording such as: 'Yes, those replacement options work for me; one detail before you submit them: use the other card for the exchange differences.' Identify that card only from information the agent has supplied. If individual skateboard cancellation is unavailable, accept whole-order cancellation for 'no longer needed' after its scope is explained.\n\nFor the luggage task, preserve the progression from changing luggage to a coat, to returning only the luggage if the change is unavailable, to cancelling the entire relevant order if the return encounters an issue. Express the currently applicable fallback at the end of the reply instead of restating every branch. Continue answering necessary questions and confirmations until the assigned outcome is resolved."
+        },
+        "semantic_family": "affirmative-leading replies with trailing scope corrections",
+        "target_weakness_family": "stale action-plan execution after a confirmation changes authorized items or payment",
+        "substantive_delta_from_prior": "The challenge archive is empty. Compared with the supplied interactions, this candidate moves the required revision into the first applicable confirmation reply and places it after an affirmative opening. It probes whether the service binds authorization to the complete reply or retains the earlier item list or payment method, especially before a once-per-order exchange.",
+        "semantic_validation": {
+          "preserves_facts": true,
+          "preserves_objective": false,
+          "interaction_only": false,
+          "no_benchmark_leakage": true,
+          "reason": "The strategy preserves identities and requires unknown order and payment details to come from the agent, but it narrows two objectives. Sofia's other-card preference applies to payment or refunds; the proposed confirmation wording applies it only to exchange differences. Aarav's instruction allows whole-order cancellation if there are any issues, while the strategy limits that fallback to issues encountered during the return. These changes go beyond interaction pattern. The water-bottle and desk-lamp instructions are preserved, and no benchmark internals are introduced."
+        },
+        "accuracy": null,
+        "episodes": [],
+        "pre_rollout_rejection": "semantic_preservation_failed"
+      }
+    ],
+    "incumbent_episodes": [
+      {
+        "episode_id": "evotau-phase0-798b7006-1748-47f2-b1dc-5d2f93c64c93",
+        "task_id": "98",
+        "seed": 1,
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "status": "complete",
+        "task_success": false,
+        "native_reward": 0.0,
+        "termination_reason": "user_stop",
+        "trajectory_ref": "episodes/481ac78ff4bc43e98e0bcf0ef5212f56/native-simulation.json",
+        "tool_calls": 12,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 5,
+        "raw_review": {},
+        "notes": "",
+        "total_steps": 31,
+        "prompt_tokens": 105367,
+        "completion_tokens": 4348,
+        "tool_errors": 0,
+        "hard_policy_protocol_violations": 0,
+        "activated_skill_ids": []
+      },
+      {
+        "episode_id": "evotau-phase0-2f8d5111-b244-404e-bb74-0de12ef38a0d",
+        "task_id": "8",
+        "seed": 1,
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "status": "complete",
+        "task_success": true,
+        "native_reward": 1.0,
+        "termination_reason": "user_stop",
+        "trajectory_ref": "episodes/4015166f38374140a7f11c84722049f3/native-simulation.json",
+        "tool_calls": 8,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 5,
+        "raw_review": {},
+        "notes": "",
+        "total_steps": 33,
+        "prompt_tokens": 115970,
+        "completion_tokens": 2415,
+        "tool_errors": 0,
+        "hard_policy_protocol_violations": 0,
+        "activated_skill_ids": []
+      },
+      {
+        "episode_id": "evotau-phase0-f6c8bcc9-58ac-42fc-b250-eefff0600d11",
+        "task_id": "66",
+        "seed": 1,
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "status": "complete",
+        "task_success": true,
+        "native_reward": 1.0,
+        "termination_reason": "user_stop",
+        "trajectory_ref": "episodes/d72c6cfbf30c48c09ce640744fd9eb45/native-simulation.json",
+        "tool_calls": 5,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 3,
+        "raw_review": {},
+        "notes": "",
+        "total_steps": 27,
+        "prompt_tokens": 79728,
+        "completion_tokens": 1433,
+        "tool_errors": 0,
+        "hard_policy_protocol_violations": 0,
+        "activated_skill_ids": []
+      }
+    ]
+  },
+  "service_phase": {
+    "carrier": "skill_memory_v2",
+    "old_accuracy": 0.6666666666666666,
+    "final_accuracy": 0.6666666666666666,
+    "proposed_accuracy": null,
+    "accepted": false,
+    "acceptance_mode": "e_only_mechanism_smoke",
+    "validation_evaluated": false,
+    "selection": {
+      "reason": "no candidate passed all screen/promotion/replay gates"
+    },
+    "skill_count_before": 0,
+    "skill_count_after": 0,
+    "candidates": [
+      {
+        "mutation_id": "g0000-cancellation_scope_expansion-0",
+        "mutation": {
+          "analysis": "Add one narrowly scoped cancellation scope check. Expected fixes: 1 target failure. Risk count: 0 protected passing cases, because the trigger applies only when the user names an item while the available cancellation action operates on the whole pending order; explicit requests to cancel the entire order remain unchanged. The guidance requires disclosure of the full order scope and explicit confirmation before the order-level cancellation call, while preserving the native policy and existing exchange behavior.",
+          "semantic_family": "scope_alignment",
+          "target_cluster_id": "cancellation_scope_expansion",
+          "operation": "add",
+          "target_skill_id": null,
+          "skill": {
+            "trigger": "A user requests cancellation of a specific item in a pending order that contains other items, while the available cancellation action applies to the entire order.",
+            "guidance": "Explain that the available cancellation will cancel the entire order, list the order's items, and obtain explicit confirmation for the entire-order cancellation and an allowed cancellation reason before calling the cancellation action. If the user confirms only the named item, do not call the order-level cancellation action; clarify the scope or provide a supported alternative. If the user explicitly requests cancellation of the entire order, preserve that authorized path.",
+            "activation_signature": {
+              "positive_conditions": [
+                "The requested cancellation names one or more specific items",
+                "The order is pending",
+                "The available cancellation action operates at order scope",
+                "The order contains additional items beyond those named"
+              ],
+              "negative_conditions": [
+                "The user explicitly requests cancellation of the entire order",
+                "The order is not pending",
+                "The request concerns an exchange or return"
+              ],
+              "interaction_phase": [
+                "After identifying the pending order and its complete item list",
+                "Before the required confirmation for a database-changing cancellation action"
+              ]
+            }
+          },
+          "children": [],
+          "expected_fixes": [
+            "Prevent an item-level cancellation request from being executed as an unannounced entire-order cancellation."
+          ],
+          "protected_cases_at_risk": [],
+          "substantive_delta_from_prior": "No prior mutation exists; this adds a boundary specifically for item-scoped cancellation requests and leaves explicit entire-order cancellation and delivered-order exchange guidance unchanged."
+        },
+        "generation": 0,
+        "parent_mutation_ids": [],
+        "runtime_deployed": false,
+        "screen": null,
+        "gate": null,
+        "effect": null,
+        "decision": "REJECTED",
+        "pre_rollout_rejection": "invalid_mutation: proposal names a task outside E"
+      }
+    ],
+    "diagnosis": {
+      "clusters": [
+        {
+          "cluster_id": "cancellation_scope_expansion",
+          "root_cause": "The agent treated a request to cancel one item in a multi-item pending order as authorization to cancel the entire order. In task 98, it repeatedly described the proposed action as cancelling only the skateboard, then invoked an order-level cancellation that also cancelled the air purifier, hiking boots, and yoga mat and refunded the full $1,058.79. The user's confirmations approved the stated item-level action; the agent never disclosed or obtained confirmation for the broader scope. The tool executed successfully, but its effect exceeded the action presented to the user.",
+          "evidence_task_ids": [
+            "98"
+          ],
+          "protected_success_task_ids": [
+            "66",
+            "8"
+          ],
+          "recommended_surface": "skill",
+          "recommended_mutation_types": [
+            "add"
+          ],
+          "risk": "Task 66 demonstrates the passing procedure: explain the available scope, identify the entire order and its contents, and obtain explicit agreement to cancel that entire order. Guidance must preserve that authorized path rather than block cancellations of multi-item orders. Task 8 correctly respects the user's revised item selection, and task 98 correctly selects exchange variants, batches exchanges within an order, and uses the chosen card for exchange price differences; these behaviors should remain protected. All three cases contain repeated confirmations and mixed text/tool messages, and both passing cases also batch lookup calls, so those shared behaviors do not establish the cause of the reward difference. Additional blanket confirmation requirements risk increasing interaction cost without resolving the scope mismatch. There is no prior mutation evidence, and the empty native review leaves the evaluator's precise failure attribution unverified."
+        }
+      ]
+    },
+    "opponents_replayed": [
+      "current",
+      "native"
+    ],
+    "exploration": {
+      "explore": false,
+      "mode": "REFINE",
+      "no_promotion_generations": 0,
+      "repeated_family": false,
+      "unchanged_failure_cluster": false,
+      "uncertain_improvement": false,
+      "avoid_families": [],
+      "preferred_mutation_types": []
+    }
+  },
+  "evolution_health": {
+    "active_skill_count": 0,
+    "archive_size": 0,
+    "activation_mode": "activate_topk_v2",
+    "mechanism_smoke": true
+  },
+  "activation_summary": {
+    "available": true,
+    "scope": "completed E/V research rollouts including rejected candidates",
+    "interpretation": "success rate is episode-level association; per-skill tokens are joint-turn overhead",
+    "total_service_turns": 37,
+    "activated_turns": 0,
+    "activation_rate": 0.0,
+    "rendered_skill_tokens": 0,
+    "skills": {}
+  },
+  "customer_archive": [],
+  "failure_matrix": [],
+  "history_summary": [],
+  "statistical_policy": {
+    "bootstrap_samples": 2000,
+    "confidence": 0.95,
+    "enabled": true,
+    "max_harmfulness": 0.05,
+    "max_stuck_delta": 0.0,
+    "method": "finite_panel_paired",
+    "min_tasks": 8,
+    "multiple_look_correction": "bonferroni",
+    "preservation_margin": 0.0,
+    "require_positive_success_lower_bound": true
+  },
+  "timing": {
+    "validation_wall_clock_seconds": 0
+  }
+}

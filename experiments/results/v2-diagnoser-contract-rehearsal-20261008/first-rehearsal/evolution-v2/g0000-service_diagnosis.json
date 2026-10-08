@@ -1,0 +1,28 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "1c320a335e5cfe25c27be4449bd024accb26e01bf62eeb8dff6ddc48c9e28c85",
+  "stage": "g0000-service_diagnosis",
+  "input_sha256": "6faa8b30544a881c5385113c68622fefeb595e17ae59702e628fa855635d5c00",
+  "payload": {
+    "clusters": [
+      {
+        "cluster_id": "cancellation_scope_expansion",
+        "root_cause": "The agent treated a request to cancel one item in a multi-item pending order as authorization to cancel the entire order. In task 98, it repeatedly described the proposed action as cancelling only the skateboard, then invoked an order-level cancellation that also cancelled the air purifier, hiking boots, and yoga mat and refunded the full $1,058.79. The user's confirmations approved the stated item-level action; the agent never disclosed or obtained confirmation for the broader scope. The tool executed successfully, but its effect exceeded the action presented to the user.",
+        "evidence_task_ids": [
+          "98"
+        ],
+        "protected_success_task_ids": [
+          "66",
+          "8"
+        ],
+        "recommended_surface": "skill",
+        "recommended_mutation_types": [
+          "add"
+        ],
+        "risk": "Task 66 demonstrates the passing procedure: explain the available scope, identify the entire order and its contents, and obtain explicit agreement to cancel that entire order. Guidance must preserve that authorized path rather than block cancellations of multi-item orders. Task 8 correctly respects the user's revised item selection, and task 98 correctly selects exchange variants, batches exchanges within an order, and uses the chosen card for exchange price differences; these behaviors should remain protected. All three cases contain repeated confirmations and mixed text/tool messages, and both passing cases also batch lookup calls, so those shared behaviors do not establish the cause of the reward difference. Additional blanket confirmation requirements risk increasing interaction cost without resolving the scope mismatch. There is no prior mutation evidence, and the empty native review leaves the evaluator's precise failure attribution unverified."
+      }
+    ]
+  },
+  "payload_sha256": "202f3f28392b0c478fee5e864bd0c3a81e59eda4bef9cdc0e5ba5f16ece8a3d9",
+  "envelope_sha256": "f1365f31baff5ef746add8a9a89c738c314ffc1102b4b2952ec63ca9fd3d4ed1"
+}

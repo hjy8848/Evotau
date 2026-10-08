@@ -1,0 +1,190 @@
+{
+  "experiment_id": "offline-v2-native",
+  "phase": "alternating-self-evolution",
+  "upstream": {
+    "repository": "sierra-research/tau2-bench",
+    "commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+    "package_version": "1.0.1"
+  },
+  "evotau": {
+    "git_commit": "12929889c1ffde22f710fd3590f5cf747733c0c8",
+    "working_tree_clean": false,
+    "source_sha256": "224a14e126181da71f00ed4ddfd08ff8653074007a46a0c7e897e11edf7b3cf4",
+    "source_scope": "runtime-v2",
+    "runtime_source_sha256": "224a14e126181da71f00ed4ddfd08ff8653074007a46a0c7e897e11edf7b3cf4"
+  },
+  "domain": "retail",
+  "task_panels": {
+    "E": [
+      "66"
+    ],
+    "V": [
+      "44",
+      "25",
+      "78"
+    ],
+    "H": [
+      "74",
+      "55",
+      "18",
+      "12",
+      "97"
+    ],
+    "excluded": [
+      "46",
+      "47"
+    ],
+    "split": "train",
+    "heldout_split": "test"
+  },
+  "seed": 1,
+  "evolution_fitness_seed": 1,
+  "generations": 1,
+  "customer_candidates": 1,
+  "clean_panel_size": 3,
+  "max_steps": 2,
+  "max_parallel_episodes": 1,
+  "run_validation": false,
+  "run_heldout": false,
+  "request_budget_cap": null,
+  "real_provider_enabled": true,
+  "role_models": {
+    "agent": "offline-agent",
+    "customer": "offline-customer",
+    "evaluator": "offline-evaluator",
+    "evolver": "offline-evolver"
+  },
+  "role_model_args": {
+    "agent": {
+      "temperature": 0
+    },
+    "customer": {
+      "temperature": 0
+    },
+    "evaluator": {
+      "temperature": 0
+    },
+    "evolver": {
+      "temperature": 0
+    }
+  },
+  "source_blob_sha1": {
+    "data/tau2/domains/retail/db.json": "4d67b03b2d39ade5a7ab6facb2edd7ab3e013d48",
+    "data/tau2/domains/retail/policy.md": "d127e6b074654926f337d0d98b0e669ebe90d19e",
+    "data/tau2/domains/retail/split_tasks.json": "8b20704a17aa1940b1e58668f89dcef2ddaeeea3",
+    "data/tau2/domains/retail/tasks.json": "e95a9f898b2d1f6568ea8faec78edc3767ce747d",
+    "data/tau2/user_simulator/simulation_guidelines.md": "b55a28a1d5eaf81e72bdc263307d9f512fe49a99",
+    "src/tau2/agent/llm_agent.py": "652974ff98edb652c582453687977cff1742b7bd",
+    "src/tau2/data_model/simulation.py": "8c23c353ec48209d70554bcfe46c36e2415c7e85",
+    "src/tau2/domains/retail/tools.py": "eba01ab32dca0d4ef33328c22358b794d859f2b6",
+    "src/tau2/environment/environment.py": "0dce3d21826273e789eb25fa167b95ab148fa4f4",
+    "src/tau2/evaluator/evaluator.py": "76c95a83e9049d70a5570b93989797c0626974b6",
+    "src/tau2/evaluator/evaluator_nl_assertions.py": "1f5397c5b8f8b105bf3d76027518d3bc3eb3e0f7",
+    "src/tau2/orchestrator/orchestrator.py": "da030140af392038aef48b149cd22607e600269d",
+    "src/tau2/registry.py": "86a97a1deeea8a8e09cafeac4dfcff171b6454d4",
+    "src/tau2/runner/build.py": "d3e02b3e22281189a534e4f336daf5c88a50534b",
+    "src/tau2/runner/simulation.py": "25330c9d831f548b72edfd959757faefb901da9a",
+    "src/tau2/user/user_simulator.py": "51ef4bba88e2565532ce02da1f36ab3021028178",
+    "src/tau2/utils/llm_utils.py": "cc704825a14d1a81a791b9ca2a08aa2eb8989f8c"
+  },
+  "initial_customer_strategy_sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+  "initial_service_strategy_sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126",
+  "communication_enforcement": false,
+  "output_path": "experiments/runs/offline-v2-native",
+  "checkpoint_path": "experiments/checkpoints/offline-v2-native.json",
+  "evolution": {
+    "customer_carrier": "prompt_strategy",
+    "service_carrier": "skill_memory_v2",
+    "service_skill_runtime": "activate_topk_v2",
+    "service_mutation_ops": [
+      "add",
+      "narrow_trigger",
+      "expand_trigger",
+      "rewrite_guidance",
+      "split",
+      "delete",
+      "no_op"
+    ],
+    "max_service_mutations_per_generation": 3
+  },
+  "skill_evolution_v2": {
+    "activator": {
+      "model": "offline-activator",
+      "model_args": {
+        "temperature": 0
+      }
+    },
+    "archive": {
+      "enabled": true,
+      "max_candidates": 5
+    },
+    "evaluation": {
+      "gate_panel": "V",
+      "gate_seeds": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "repair_panel": "E",
+      "screen_clean_tasks": 2,
+      "screen_seeds": [
+        1,
+        2
+      ]
+    },
+    "history": {
+      "max_families": 8,
+      "representative_cases": 6,
+      "summarize": true
+    },
+    "max_active_service_skills": 2,
+    "opponent_replay": {
+      "archived_customers": 2,
+      "current_weight": 1.0,
+      "enabled": true,
+      "include_native_customer": true
+    },
+    "schema_version": 2,
+    "service_evolution": {
+      "candidates_per_cluster": 1,
+      "crossover": false,
+      "lineage": true,
+      "max_clusters_per_generation": 1,
+      "semantic_dedup": true,
+      "stagnation_patience": 2
+    },
+    "service_skill_runtime": "activate_topk_v2",
+    "skill_budgets": {
+      "active_tokens": 2000,
+      "guidance_chars": 2400,
+      "guidance_tokens": 800,
+      "max_active_skills": 2,
+      "max_skills": 8
+    },
+    "statistical_gate": {
+      "bootstrap_samples": 2000,
+      "confidence": 0.95,
+      "enabled": true,
+      "max_harmfulness": 0.05,
+      "max_stuck_delta": 0.0,
+      "method": "finite_panel_paired",
+      "min_tasks": 8,
+      "multiple_look_correction": "bonferroni",
+      "preservation_margin": 0.0,
+      "require_positive_success_lower_bound": true
+    }
+  },
+  "provider_provenance": {
+    "api_key_source": "macOS Keychain service inferaiapi.com/v1, account openai-api-key; secret omitted",
+    "backend_checkpoint": "not independently verified",
+    "evolver_model_id": "deepseek-v4-pro",
+    "interpretation": "New V2 run; no V1 score/cache imported. Formal uses V promotion; E-only config makes no generalization claim. No real run launched during implementation.",
+    "provider": "InferAI",
+    "reasoning_evidence": "Pro thinking enabled observed in release canary; reasoning_effort=high requested, but high effort is not independently verified. Actual request/response metadata is recorded for this formal run.",
+    "reasoning_parameter_verified_by_provider": false,
+    "runtime_model_id": "qwen3.7-plus"
+  },
+  "config_sha256": "7f776692155535b9217126399f94eff40897c91fa3e2d30009fb3c3ad1ef8ed8",
+  "manifest_sha256": "5a8bb5a452f532234d54fe446dd61eb595b3caf4c3cee1607c443fe78b41018a"
+}

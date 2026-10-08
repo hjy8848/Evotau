@@ -1,0 +1,181 @@
+experiment:
+  id: evotau-v2-gpt61sol-contract-e3-rehearsal-v2-20261008
+  phase: alternating-self-evolution
+  upstream:
+    repository: sierra-research/tau2-bench
+    commit: b7ea9074c1cba482b30687fecdb5c8425fd6f619
+    package_version: 1.0.1
+  domain: retail
+  enforce_communication_protocol: false
+  evaluation_type: all
+  task_selection:
+    source_split: train
+    evolution:
+    - '98'
+    - '8'
+    - '66'
+    validation:
+    - '44'
+    - '25'
+    - '78'
+    heldout:
+    - '74'
+    - '55'
+    - '18'
+    - '12'
+    - '97'
+    heldout_split: test
+    excluded:
+    - '46'
+    - '47'
+  seed: 1
+  generations: 1
+  customer_candidates: 1
+  clean_panel_size: 3
+  max_steps: 32
+  max_parallel_episodes: 2
+  request_budget_cap: 533
+  real_provider_enabled: true
+  models:
+    agent: openai/qwen3.7-plus
+    customer: openai/qwen3.7-plus
+    evaluator: openai/qwen3.7-plus
+    evolver: openai/gpt-6.1-sol
+  model_args:
+    agent:
+      temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
+    customer:
+      temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
+    evaluator:
+      temperature: 0.0
+      api_base: https://inferaiapi.com/v1
+      thinking_mode: disabled
+    evolver:
+      api_base: https://inferaiapi.com/v1
+      api_protocol: responses
+      api_key_env: INFERAI_API_KEY
+      reasoning_effort: high
+  customer_strategy: ''
+  service_strategy: ''
+  output_path: experiments/runs/evotau-v2-gpt61sol-contract-e3-rehearsal-v2-20261008
+  checkpoint_path: experiments/checkpoints/evotau-v2-gpt61sol-contract-e3-rehearsal-v2-20261008.json
+  source_blob_sha1:
+    data/tau2/domains/retail/tasks.json: e95a9f898b2d1f6568ea8faec78edc3767ce747d
+    data/tau2/domains/retail/split_tasks.json: 8b20704a17aa1940b1e58668f89dcef2ddaeeea3
+    data/tau2/domains/retail/db.json: 4d67b03b2d39ade5a7ab6facb2edd7ab3e013d48
+    data/tau2/domains/retail/policy.md: d127e6b074654926f337d0d98b0e669ebe90d19e
+    data/tau2/user_simulator/simulation_guidelines.md: b55a28a1d5eaf81e72bdc263307d9f512fe49a99
+    src/tau2/domains/retail/tools.py: eba01ab32dca0d4ef33328c22358b794d859f2b6
+    src/tau2/environment/environment.py: 0dce3d21826273e789eb25fa167b95ab148fa4f4
+    src/tau2/registry.py: 86a97a1deeea8a8e09cafeac4dfcff171b6454d4
+    src/tau2/orchestrator/orchestrator.py: da030140af392038aef48b149cd22607e600269d
+    src/tau2/user/user_simulator.py: 51ef4bba88e2565532ce02da1f36ab3021028178
+    src/tau2/agent/llm_agent.py: 652974ff98edb652c582453687977cff1742b7bd
+    src/tau2/runner/build.py: d3e02b3e22281189a534e4f336daf5c88a50534b
+    src/tau2/runner/simulation.py: 25330c9d831f548b72edfd959757faefb901da9a
+    src/tau2/data_model/simulation.py: 8c23c353ec48209d70554bcfe46c36e2415c7e85
+    src/tau2/evaluator/evaluator.py: 76c95a83e9049d70a5570b93989797c0626974b6
+    src/tau2/evaluator/evaluator_nl_assertions.py: 1f5397c5b8f8b105bf3d76027518d3bc3eb3e0f7
+    src/tau2/utils/llm_utils.py: cc704825a14d1a81a791b9ca2a08aa2eb8989f8c
+  evolution_fitness_seed: 1
+  run_validation: false
+  run_heldout: false
+  evolution:
+    customer_carrier: prompt_strategy
+    service_carrier: skill_memory_v2
+    service_skill_runtime: activate_topk_v2
+    service_mutation_ops:
+    - add
+    - narrow_trigger
+    - expand_trigger
+    - rewrite_guidance
+    - split
+    - delete
+    - no_op
+    max_service_mutations_per_generation: 3
+  provider_provenance:
+    provider: InferAI
+    evolver_model_id: gpt-6.1-sol
+    backend_checkpoint: not independently verified
+    reasoning_parameter_verified_by_provider: false
+    reasoning_evidence: All five live probes sent reasoning.effort=high via the existing
+      Responses adapter and returned HTTP200, status completed. Reasoning token usage
+      was reported; the provider effort tier is not independently verified. No temperature
+      or output token limit was sent.
+    api_key_source: macOS Keychain service inferaiapi.com/v1, account openai-gpt-api-key;
+      process-local INFERAI_API_KEY; secret omitted
+    runtime_model_id: qwen3.7-plus
+    interpretation: Independent user-authorized E3 end-to-end engineering rehearsal
+      after Diagnoser enum prompt correction. No imported episode scores, no H content,
+      no formal authorization. E tasks are previously observed diagnostic failures
+      plus a passing control, not an unbiased research fitness panel. Follow-up adds
+      only an explicit Mutator case-reference schema contract after the first rehearsal
+      returned prose in expected_fixes. New config and directory; no old scores or
+      proposals are imported. Earlier 67 requests plus this 533 cap bound cumulative
+      rehearsal requests at 600.
+  skill_evolution_v2:
+    schema_version: 2
+    service_skill_runtime: activate_topk_v2
+    max_active_service_skills: 2
+    activator:
+      model: openai/qwen3.7-plus
+      model_args:
+        temperature: 0.0
+        api_base: https://inferaiapi.com/v1
+        thinking_mode: disabled
+    service_evolution:
+      candidates_per_cluster: 1
+      max_clusters_per_generation: 1
+      semantic_dedup: true
+      crossover: false
+      stagnation_patience: 2
+      lineage: true
+    evaluation:
+      repair_panel: E
+      gate_panel: V
+      screen_seeds:
+      - 1
+      - 2
+      gate_seeds:
+      - 1
+      - 2
+      screen_clean_tasks: 2
+    statistical_gate:
+      enabled: true
+      confidence: 0.95
+      max_harmfulness: 0.05
+      require_positive_success_lower_bound: true
+      bootstrap_samples: 2000
+      min_tasks: 8
+      multiple_look_correction: bonferroni
+      max_stuck_delta: 0.0
+      method: finite_panel_paired
+      preservation_margin: 0.0
+    archive:
+      enabled: true
+      max_candidates: 5
+    opponent_replay:
+      enabled: true
+      archived_customers: 2
+      include_native_customer: true
+      current_weight: 1.0
+    history:
+      summarize: true
+      max_families: 8
+      representative_cases: 6
+    skill_budgets:
+      max_skills: 8
+      guidance_chars: 2400
+      guidance_tokens: 800
+      active_tokens: 2000
+      max_active_skills: 2
+readiness_review:
+  baseline_commit: f65dd4d3ef38123485138e06002d4a66c7df092e
+  provider_preflight: pending_case_reference_contract_rehearsal
+  launch_authorized: E3 follow-up rehearsal only; cap 533, previous rehearsal 67 requests,
+    aggregate maximum 600
+  formal_experiment_started: false
