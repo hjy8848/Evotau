@@ -41,7 +41,18 @@ from .tau_provenance import (
 )
 
 
-def run_from_config(
+def run_from_config(config_path, **kwargs):
+    """Serialize all writers before provenance binding and accounting restoration."""
+    from .release_recovery import frozen_run_lock
+
+    file = Path(config_path).expanduser().resolve()
+    manifest = AlternatingManifest.from_mapping(load_config(file))
+    project = file.parent.parent if file.parent.name == "configs" else file.parent
+    with frozen_run_lock(project / manifest.checkpoint_path):
+        return _run_from_config(file, **kwargs)
+
+
+def _run_from_config(
     config_path: str | Path,
     *,
     tau2_data_dir: str | Path | None = None,
@@ -123,6 +134,7 @@ def run_from_config(
             request_budget=budget,
             output_directory=output_directory,
         )
+        providers.stop_before_next_episode_file = stop_before_next_episode_file
         run_context = {
             "schema_version": 2,
             "manifest_sha256": manifest.sha256,
@@ -280,7 +292,7 @@ def run_from_config(
             heldout_tasks = {
                 task_id: heldout_tasks[task_id] for task_id in manifest.heldout_task_ids
             }
-            if fresh_customer is None:
+            if fresh_customer is None and manifest.service_carrier != "skill_memory_v2":
                 raise RuntimeError(
                     "held-out evaluation requires a fresh adaptive Customer"
                 )
@@ -335,6 +347,11 @@ def run_from_config(
             "generations": list(evolved.generations),
             "fresh_adaptive_customer": (
                 None if fresh_customer is None else fresh_customer.to_dict()
+            ),
+            "fresh_customer_outcome": (
+                json.loads((output_directory / "fresh-customer-proposal.json").read_text())
+                if manifest.service_carrier == "skill_memory_v2" and manifest.run_heldout
+                else None
             ),
             "heldout_endpoint_evaluation": heldout_evaluation,
             "evolution_fitness_seed": (

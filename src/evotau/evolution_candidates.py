@@ -1,6 +1,53 @@
 """Strict LLM research stages using the existing recorded provider dispatch chain."""
 
+from functools import wraps
+
 from .service_skills import V2_MUTATION_TYPES
+
+
+class EvolverSchemaError(ValueError):
+    """A parsed response violated its stage contract; never a scored rejection."""
+
+
+def _schema_checked(method):
+    @wraps(method)
+    def checked(self, *args, **kwargs):
+        self.last_call_directory = None
+        try:
+            return method(self, *args, **kwargs)
+        except (ValueError, TypeError, KeyError) as error:
+            directory = self.last_call_directory
+            if directory is None or not (directory / "output.json").exists():
+                raise
+            import json
+
+            from .alternating import _write_json_once
+            from .provider_diagnostics import safe_error
+            from .tau_provenance import sha256_json
+
+            failure = directory / "schema-error.json"
+            _write_json_once(
+                failure,
+                {
+                    "failure_type": "EvolverSchemaError",
+                    "failure_message": safe_error(error),
+                    "input_sha256": sha256_json(
+                        json.loads((directory / "input.json").read_text())
+                    ),
+                    "output_sha256": sha256_json(
+                        json.loads((directory / "output.json").read_text())
+                    ),
+                },
+            )
+            raised = EvolverSchemaError(str(error))
+            raised.call_name = method.__name__
+            raised.diagnostics_ref = failure.relative_to(
+                self.provider.output_directory
+            ).as_posix()
+            raise raised from error
+
+    return checked
+
 
 DIAGNOSER_PROMPT = """You are the EvoTau Service Failure Diagnoser. Your task is NOT to write a repair.
 Group native failures by reusable behavioral/procedural ROOT CAUSE, not task identity or tool name.
@@ -109,10 +156,26 @@ class V2Providers:
                         saved.get("response")
                     ):
                         raise ValueError("saved V2 provider output digest mismatch")
+                    from .release_recovery import schema_retry_authorized
+
+                    if schema_retry_authorized(directory, input_path.parent):
+                        continue
+                    self.last_call_directory = input_path.parent
                     return saved["response"]
         from .alternating import _provider_call
 
-        return _provider_call(
+        signal = getattr(self.provider, "stop_before_next_episode_file", None)
+        if signal is not None:
+            from pathlib import Path
+
+            from .episode_execution import StopBeforeEpisodeDispatch
+
+            if Path(signal).is_symlink():
+                raise ValueError("unsafe pause signal")
+            if Path(signal).exists():
+                raise StopBeforeEpisodeDispatch("paused before next Evolver request")
+
+        result = _provider_call(
             self.provider.request_budget,
             lambda: self.provider._provider_json_call(
                 self.provider.model,
@@ -122,12 +185,15 @@ class V2Providers:
                 call_name=name,
             ),
         )
+        self.last_call_directory = getattr(self.provider, "last_call_directory", None)
+        return result
 
+    @_schema_checked
     def diagnose(self, context):
         result = self.call(DIAGNOSER_PROMPT, context, "evotau_service_diagnoser")
         allowed = {x["task"]["task_id"] for x in context["task_interactions"]}
         clusters = result.get("clusters")
-        if not isinstance(clusters, list):
+        if set(result) != {"clusters"} or not isinstance(clusters, list):
             raise TypeError("diagnosis must contain clusters")
         identifiers = []
         for cluster in clusters:
@@ -140,11 +206,22 @@ class V2Providers:
                 "recommended_mutation_types",
                 "risk",
             }
-            if set(cluster) != fields or not all(
-                isinstance(cluster[k], str) and cluster[k]
-                for k in ("cluster_id", "root_cause", "risk")
+            if (
+                not isinstance(cluster, dict)
+                or set(cluster) != fields
+                or not all(
+                    isinstance(cluster[k], str) and cluster[k]
+                    for k in ("cluster_id", "root_cause", "risk")
+                )
             ):
                 raise ValueError("invalid root-cause cluster")
+            if any(char in cluster["cluster_id"] for char in ("/", "\\", "\x00")):
+                raise ValueError("cluster ID cannot contain path separators")
+            for key in ("evidence_task_ids", "protected_success_task_ids"):
+                if not isinstance(cluster[key], list) or any(
+                    not isinstance(value, str) for value in cluster[key]
+                ):
+                    raise ValueError("diagnosis case IDs must be string arrays")
             if cluster["recommended_surface"] not in (
                 "skill",
                 "tool_boundary",
@@ -156,7 +233,9 @@ class V2Providers:
             if not isinstance(mutation_types, list) or any(
                 not isinstance(value, str) for value in mutation_types
             ):
-                raise ValueError("recommended mutation types must be a JSON string array")
+                raise ValueError(
+                    "recommended mutation types must be a JSON string array"
+                )
             if not set(mutation_types) <= set(V2_MUTATION_TYPES):
                 raise ValueError("unknown recommended mutation")
             if (
@@ -167,10 +246,25 @@ class V2Providers:
             ):
                 raise ValueError("diagnosis references unseen or held-out evidence")
             identifiers.append(cluster["cluster_id"])
+            outcomes = {
+                row["task_id"]: row["task_success"]
+                for row in context.get("current_outcomes", [])
+            }
+            if outcomes and (
+                any(outcomes.get(t) is not False for t in cluster["evidence_task_ids"])
+                or any(
+                    outcomes.get(t) is not True
+                    for t in cluster["protected_success_task_ids"]
+                )
+            ):
+                raise ValueError(
+                    "diagnosis target/protected labels disagree with native E evidence"
+                )
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("duplicate cluster IDs")
         return result
 
+    @_schema_checked
     def mutate(self, context):
         result = self.call(MUTATOR_PROMPT, context, "evotau_service_skill_mutator")
         # A malformed provider proposal is an engineering failure, not bad fitness.
@@ -178,6 +272,7 @@ class V2Providers:
         _validate_mutation_case_references(result, context)
         return result
 
+    @_schema_checked
     def crossover(self, context):
         result = self.call(
             CROSSOVER_PROMPT + "\n" + MUTATOR_PROMPT, context, "evotau_skill_crossover"
@@ -186,6 +281,7 @@ class V2Providers:
         _validate_mutation_case_references(result, context)
         return result
 
+    @_schema_checked
     def customers(self, context, count):
         result = self.call(
             CUSTOMER_PROMPT,
@@ -193,7 +289,11 @@ class V2Providers:
             "evotau_customer_evolver",
         )
         proposals = result.get("candidates")
-        if not isinstance(proposals, list) or len(proposals) != count:
+        if (
+            set(result) != {"candidates"}
+            or not isinstance(proposals, list)
+            or len(proposals) != count
+        ):
             raise ValueError("wrong Customer candidate count")
         fields = {
             "strategy",
@@ -202,7 +302,8 @@ class V2Providers:
             "substantive_delta_from_prior",
         }
         if any(
-            set(p) != fields
+            not isinstance(p, dict)
+            or set(p) != fields
             or any(not isinstance(v, str) for v in p.values())
             or not p["strategy"].strip()
             for p in proposals
@@ -210,22 +311,34 @@ class V2Providers:
             raise ValueError("invalid Customer proposal metadata")
         return result
 
+    @_schema_checked
     def validate_customer(self, context):
         result = self.call(
             CUSTOMER_VALIDATOR_PROMPT, context, "evotau_customer_semantic_validator"
         )
-        return _validator_result(result, (
-            "preserves_facts", "preserves_objective", "interaction_only",
-            "no_benchmark_leakage",
-        ))
+        return _validator_result(
+            result,
+            (
+                "preserves_facts",
+                "preserves_objective",
+                "interaction_only",
+                "no_benchmark_leakage",
+            ),
+        )
 
+    @_schema_checked
     def validate_skill(self, context):
         result = self.call(
             SKILL_VALIDATOR_PROMPT, context, "evotau_skill_semantic_validator"
         )
-        return _validator_result(result, (
-            "reusable", "policy_subordinate", "no_task_entities",
-        ))
+        return _validator_result(
+            result,
+            (
+                "reusable",
+                "policy_subordinate",
+                "no_task_entities",
+            ),
+        )
 
 
 def _validator_result(result, flags):
@@ -244,7 +357,9 @@ def _validate_mutation_case_references(result, context):
         allowed = {row["task"]["task_id"] for row in context["task_interactions"]}
     else:
         cluster = context["root_cause_cluster"]
-        allowed = set(cluster["evidence_task_ids"] + cluster["protected_success_task_ids"])
+        allowed = set(
+            cluster["evidence_task_ids"] + cluster["protected_success_task_ids"]
+        )
         for parent in context.get("parents", []):
             for key in ("fail_to_pass", "pass_to_fail", "pass_to_pass", "fail_to_fail"):
                 allowed.update(parent["effect"].get(key, []))
@@ -264,7 +379,11 @@ def validate_mutation(result):
         "protected_cases_at_risk",
         "substantive_delta_from_prior",
     }
-    if not required <= set(result) or set(result) - required - {"children"}:
+    if (
+        not isinstance(result, dict)
+        or not required <= set(result)
+        or set(result) - required - {"children"}
+    ):
         raise ValueError("invalid mutation fields")
     if result["operation"] not in V2_MUTATION_TYPES or any(
         not isinstance(result[k], str)
@@ -281,4 +400,33 @@ def validate_mutation(result):
             not isinstance(x, str) for x in result[key]
         ):
             raise ValueError("fix/risk cases must be string arrays")
+    from .service_skills import ServiceSkillV2, _validate_v2_draft
+
+    target = result["target_skill_id"]
+    if target is not None and (not isinstance(target, str) or not target.strip()):
+        raise ValueError("target_skill_id must be a nonempty string or null")
+    children = result.get("children", [])
+    if not isinstance(children, list):
+        raise TypeError("children must be an array")
+    operation = result["operation"]
+    if operation in ("delete", "no_op"):
+        if result["skill"] is not None or children:
+            raise ValueError("DELETE/NO_OP cannot carry skill payloads")
+    elif operation == "split":
+        if result["skill"] is not None or len(children) != 2:
+            raise ValueError("SPLIT requires exactly two children and null skill")
+    elif children:
+        raise ValueError("only SPLIT may carry children")
+    if operation in ("add", "no_op") and target is not None:
+        raise ValueError("ADD/NO_OP cannot target a skill")
+    if operation not in ("add", "no_op") and target is None:
+        raise ValueError("an edit must name its target skill")
+    payloads = (
+        children
+        if operation == "split"
+        else ([result["skill"]] if operation not in ("delete", "no_op") else [])
+    )
+    for payload in payloads:
+        _validate_v2_draft(payload)
+        ServiceSkillV2.from_mapping({"skill_id": "skill-0001", **payload})
     return result

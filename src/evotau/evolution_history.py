@@ -65,7 +65,7 @@ def stagnation_state(generations, entries, patience):
         for e in recent
     )
     uncertainty = len(recent) >= patience and all(
-        e.get("gate", {}).get("verdict") == "INCONCLUSIVE" for e in recent
+        (e.get("gate") or {}).get("verdict") == "INCONCLUSIVE" for e in recent
     )
     return {
         "explore": no_promotion >= patience or same_family or uncertainty,

@@ -1,6 +1,7 @@
 """Run the existing V2 CLI, with real probes and the existing InferAI wire observer."""
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -24,7 +25,11 @@ from evotau.alternating_run import load_alternating_tasks, run_from_config
 from evotau.budget import RequestBudget
 from evotau.evolution_candidates import V2Providers
 from evotau.provider_diagnostics import response_metadata, safe_error
-from evotau.tau_provenance import role_model_args_for_runtime, sha256_json
+from evotau.tau_provenance import (
+    role_model_args_for_runtime,
+    sha256_json,
+    write_manifest_once,
+)
 
 
 class WireOutput:
@@ -44,6 +49,13 @@ def validate_launch_authorization(manifest, approved_cap):
         raise ValueError("live readiness/formal runs require a finite request cap")
     if approved_cap != manifest.request_budget_cap:
         raise ValueError("explicit --approved-request-cap must match the frozen cap")
+
+
+def verify_execution_sources(raw):
+    for name, expected in raw.get("launch_readiness", {}).get("execution_source_sha256", {}).items():
+        file = ROOT / name
+        if not file.resolve().is_relative_to(ROOT) or hashlib.sha256(file.read_bytes()).hexdigest() != expected:
+            raise ValueError(f"frozen execution source differs: {name}")
 
 
 def install_responses_observer(route):
@@ -122,13 +134,17 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stop-before-next-episode-file", type=Path)
     parser.add_argument("--approved-request-cap", type=int)
+    parser.add_argument("--frozen-manifest", type=Path)
     parser.add_argument("--probe-models", action="store_true",
                         help="Optional two-call connectivity probe; never substitutes for representative readiness tests")
     args = parser.parse_args()
     os.chdir(ROOT)
     os.environ["TAU2_DATA_DIR"] = str(args.tau2_data_dir.resolve())
     raw = yaml.safe_load(args.config.read_text())
+    verify_execution_sources(raw)
     manifest = AlternatingManifest.from_mapping(raw)
+    if args.frozen_manifest is not None:
+        manifest = manifest.bind_saved_provenance(json.loads(args.frozen_manifest.read_text()))
     output = ROOT / manifest.output_path
     if (output / "manifest.json").exists():
         manifest = manifest.bind_saved_provenance(
@@ -159,7 +175,12 @@ def main():
     print(json.dumps(summary), flush=True)
     if args.dry_run:
         return
+    if args.probe_models and (manifest.run_validation or manifest.run_heldout):
+        raise ValueError("formal release runs do not permit separate unbudgeted connectivity probes")
     validate_launch_authorization(manifest, args.approved_request_cap)
+    if args.frozen_manifest is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        write_manifest_once(output / "manifest.json", manifest)
     key = subprocess.run(
         [
             "security",
@@ -189,6 +210,7 @@ def main():
         {
             "config_sha256": sha256_json(raw),
             "runtime_source_sha256": manifest.evotau_source_sha256,
+            "approved_request_cap": args.approved_request_cap,
         },
     )
     module_path = Path(__file__).with_name("run-v2-activation-morphology-smoke.py")

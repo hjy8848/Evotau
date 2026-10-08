@@ -33,6 +33,8 @@ class EvolutionJournal:
     def freeze(self, name, inputs, callback):
         from .alternating import _write_json_once
 
+        if not name or Path(name).name != name or "\\" in name:
+            raise ValueError("unsafe stage name")
         path = self.root / f"{name}.json"
         input_sha = sha256_json(inputs)
         if path.exists():

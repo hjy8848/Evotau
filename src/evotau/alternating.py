@@ -232,6 +232,7 @@ class LLMAlternatingEvolvers:
                 model, model_args, system_prompt, context, call_name=call_name,
             )
         directory = self.output_directory / "evolver-calls" / uuid4().hex
+        self.last_call_directory = directory
         _write_json_once(
             directory / "input.json",
             {
@@ -1540,7 +1541,7 @@ def run_final_endpoint_evaluation(
     seed: int,
     initial_service: ServiceCarrier,
     final_service: ServiceCarrier,
-    fresh_customer: PromptStrategy,
+    fresh_customer: PromptStrategy | None,
     runner: EpisodeRunner,
     max_parallel_episodes: int = DEFAULT_MAX_PARALLEL_EPISODES,
     telemetry: EpisodeJobTelemetry | None = None,
@@ -1553,10 +1554,9 @@ def run_final_endpoint_evaluation(
     if not task_ids or set(task_ids) - set(heldout_tasks):
         raise ValueError("final endpoint evaluation requires loaded H tasks")
     identical_services = _same_service(final_service, initial_service)
-    customers = (
-        ("native_customer", None),
-        ("fresh_adaptive_customer", fresh_customer),
-    )
+    customers = [("native_customer", None)]
+    if fresh_customer is not None:
+        customers.append(("fresh_adaptive_customer", fresh_customer))
     rows = []
     s0_episodes_by_customer: dict[str, tuple[EpisodeRecord, ...]] = {}
     for customer_label, customer in customers:
@@ -1613,7 +1613,8 @@ def run_final_endpoint_evaluation(
         "initial_service": _strategy_document("service", initial_service),
         "final_service": _strategy_document("service", final_service),
         "services_identical": identical_services,
-        "fresh_customer": fresh_customer.to_dict(),
+        "fresh_customer": None if fresh_customer is None else fresh_customer.to_dict(),
+        "fresh_adaptive_status": "unavailable" if fresh_customer is None else "available",
         "cells": rows,
     }
     if output_path is not None:

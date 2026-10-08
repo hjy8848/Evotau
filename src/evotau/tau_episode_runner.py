@@ -259,8 +259,6 @@ class TauBenchEpisodeRunner:
         episode_directory = self.output_directory / "episodes" / attempt_id
         episode_directory.mkdir(parents=True, exist_ok=False)
         simulation_path = episode_directory / "native-simulation.json"
-        record_path = episode_directory / "episode-record.json"
-        telemetry_path = episode_directory / "run-telemetry.json"
         live = EpisodeTelemetry(
             episode_directory / "active-episode.json", manifest_sha256=self.manifest.sha256,
             attempt_id=attempt_id, task_id=str(task_id), panel_name=panel_name,
@@ -531,9 +529,7 @@ class TauBenchEpisodeRunner:
                 exact_episode_usage = episode_usage.snapshot(
                     cap=self.request_budget.snapshot().cap
                 )
-                _write_json_once(
-                    telemetry_path,
-                    {
+                telemetry_payload = {
                         "attempt_id": attempt_id,
                         "simulation_id": episode_id,
                         "episode_key": episode_key,
@@ -547,8 +543,8 @@ class TauBenchEpisodeRunner:
                         "budget_delta": _snapshot_delta(before, after),
                         "episode_budget_delta": exact_episode_usage.to_dict(),
                         "communication_protocol_observation": protocol_observation,
-                    },
-                )
+                    }
+                activation_trace = None
                 if isinstance(service, ServiceSkillMemoryV2):
                     activation_trace = {
                         "schema_version": 3,
@@ -574,11 +570,20 @@ class TauBenchEpisodeRunner:
                         ),
                     }
                     activation_trace["artifact_sha256"] = sha256_json(activation_trace)
-                    _write_json_once(
-                        episode_directory / "skill-activation-trace.json",
-                        activation_trace,
-                    )
-                _write_json_once(record_path, record.to_dict())
+                completion = {
+                    "manifest_sha256": self.manifest.sha256,
+                    "record": record.to_dict(),
+                    "telemetry": telemetry_payload,
+                    "activation_trace": activation_trace,
+                }
+                completion["completion_sha256"] = sha256_json(completion)
+                _write_json_once(episode_directory / "completion-key.json", {
+                    "task_id": str(task_id),
+                    "manifest_sha256": self.manifest.sha256,
+                    "episode_key_sha256": episode_key_sha256,
+                })
+                _write_json_once(episode_directory / "episode-completion.json", completion)
+                _publish_episode_completion(episode_directory, self.manifest.sha256)
                 with self._completed_episode_cache_lock:
                     self._completed_episode_cache[episode_key_sha256] = (
                         record, exact_episode_usage, False,
@@ -668,10 +673,22 @@ class TauBenchEpisodeRunner:
         for directory in sorted(episode_root.iterdir(), key=lambda item: item.name):
             if directory.is_symlink() or not directory.is_dir():
                 raise ValueError("native episode cache contains a non-directory entry")
+            key_path = directory / "completion-key.json"
+            if key_path.exists():
+                if key_path.is_symlink():
+                    raise ValueError("unsafe completion key")
+                completion_key = json.loads(key_path.read_text())
+                if completion_key.get("manifest_sha256") != self.manifest.sha256:
+                    raise ValueError("completion key belongs to another manifest")
+                if completion_key.get("task_id") not in self.tasks:
+                    continue  # Do not decode an H completion bundle/activation context during E/V resume.
             incomplete_path = directory / "incomplete-run.json"
             telemetry_path = directory / "run-telemetry.json"
             record_path = directory / "episode-record.json"
-            if incomplete_path.exists():
+            committed = (directory / "episode-completion.json").exists()
+            if committed:
+                _publish_episode_completion(directory, self.manifest.sha256)
+            if incomplete_path.exists() and not committed:
                 if not incomplete_path.is_file():
                     raise ValueError("native incomplete-run artifact is not a regular file")
                 incomplete = json.loads(incomplete_path.read_text(encoding="utf-8"))
@@ -818,3 +835,28 @@ def _exception_details(exc: BaseException) -> dict[str, Any]:
         "traceback": safe_error(Exception(formatted[-16_000:]), limit=16_000),
         "traceback_truncated": len(formatted) > 16_000,
     }
+
+
+def _publish_episode_completion(directory, manifest_sha):
+    """Recover publication after an immutable native-evaluation commit, without calls."""
+    path = directory / "episode-completion.json"
+    if path.is_symlink():
+        raise ValueError("unsafe episode completion")
+    payload = json.loads(path.read_text())
+    if (payload["manifest_sha256"] != manifest_sha
+            or payload["completion_sha256"] != sha256_json({
+                k: v for k, v in payload.items() if k != "completion_sha256"})):
+        raise ValueError("episode completion manifest/digest mismatch")
+    key_path = directory / "completion-key.json"
+    if key_path.exists():
+        key = json.loads(key_path.read_text())
+        if key != {
+            "task_id": payload["record"]["task_id"],
+            "manifest_sha256": manifest_sha,
+            "episode_key_sha256": payload["telemetry"]["episode_key_sha256"],
+        }:
+            raise ValueError("completion key disagrees with native completion")
+    _write_json_once(directory / "run-telemetry.json", payload["telemetry"])
+    if payload["activation_trace"] is not None:
+        _write_json_once(directory / "skill-activation-trace.json", payload["activation_trace"])
+    _write_json_once(directory / "episode-record.json", payload["record"])

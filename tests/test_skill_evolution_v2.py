@@ -973,6 +973,12 @@ def test_fresh_challenge_validated_before_heldout_and_endpoint_reuses_identical_
     )
 
     result, provider, runner = run(tmp_path)
+    original_customers = provider.customers
+    def fresh_customers(context, count):
+        result = original_customers(context, count)
+        result["candidates"][0]["strategy"] = "Request a grounded clarification after a correction."
+        return result
+    provider.customers = fresh_customers
     tasks = {
         t: SimpleNamespace(
             id=t, user_scenario="only-E-" + t, description="", user_tools=[]

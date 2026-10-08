@@ -40,6 +40,13 @@ def _document(role, strategy):
     }
 
 
+def _evolution_parent(entry):
+    """E-derived mutation evidence only; never expose raw V gate cells to Evolvers."""
+    return {key: deepcopy(entry[key]) for key in (
+        "mutation_id", "mutation", "effect", "generation", "evaluation_scope"
+    ) if key in entry}
+
+
 def run_skill_evolution_v2(
     *,
     tasks,
@@ -218,6 +225,7 @@ def run_skill_evolution_v2(
             )
             customers = CustomerChallengeArchive(state["customer_archive"])
             documents.append(commit["generation"])
+            _write_json_once(root / f"generation-{g:04d}.json", commit["generation"])
             final_runs = tuple(
                 EpisodeRecord.from_dict(r) for r in state["final_evolution_episodes"]
             )
@@ -234,7 +242,7 @@ def run_skill_evolution_v2(
         history = (
             summarize_effects(effects, max_families=policy["history"]["max_families"])
             if policy["history"]["summarize"]
-            else effects
+            else [_evolution_parent(entry) for entry in effects]
         )
         c_context = {
             "generation": g,
@@ -437,7 +445,7 @@ def run_skill_evolution_v2(
                         }
                     ),
                     "archive_parent": (
-                        archive.entries[bias % len(archive.entries)]
+                        _evolution_parent(archive.entries[bias % len(archive.entries)])
                         if archive.entries and s_context["exploration"]["explore"]
                         else None
                     ),
@@ -820,7 +828,7 @@ def run_skill_evolution_v2(
                     }
                 )
                 ctx = {
-                    "parents": [a, b],
+                    "parents": [_evolution_parent(a), _evolution_parent(b)],
                     "root_cause_cluster": cluster,
                     "current_memory": before_s.to_dict(),
                     "policy": domain_policy,
@@ -954,8 +962,12 @@ def run_skill_evolution_v2(
                 "accepted": winner is not None,
                 "acceptance_mode": "e_only_mechanism_smoke"
                 if smoke
+                else "finite_panel_validation_gated"
+                if policy["statistical_gate"]["method"] == "finite_panel_paired"
                 else "statistical_validation_gated",
-                "validation_evaluated": any(r["gate"] for r in board) and not smoke,
+                "validation_evaluated": any(
+                    (r["gate"] or {}).get("opponents") for r in board
+                ) and not smoke,
                 "selection": {
                     "reason": "qualified candidate promoted"
                     if winner
@@ -985,7 +997,8 @@ def run_skill_evolution_v2(
                 "validation_wall_clock_seconds": sum(
                     elapsed
                     for key, elapsed in timing["stages"].items()
-                    if key.startswith(f"g{g:04d}-service_full_gate") and not smoke
+                    if key.startswith(f"g{g:04d}-service_full_gate")
+                    and "repair-superiority-decision" not in key and not smoke
                 )
             },
         }
@@ -1097,7 +1110,7 @@ def propose_fresh_customer_v2(
         validation_context,
         lambda: providers.validate_customer(validation_context),
     )
-    if not all(
+    valid = all(
         validation.get(key) is True
         for key in (
             "preserves_facts",
@@ -1105,17 +1118,27 @@ def propose_fresh_customer_v2(
             "interaction_only",
             "no_benchmark_leakage",
         )
-    ):
-        raise ValueError("fresh Customer semantic validation failed before H loading")
-    customer = PromptStrategy(proposal["strategy"])
+    )
+    # One predeclared fresh attempt. Rejection is research evidence, not an exception.
+    # Do not relabel an incumbent/archive Customer as a fresh challenge.
+    distinct = proposal["strategy"].strip() not in {
+        result.customer.text.strip(), result.initial_customer.text.strip(),
+        *(entry["strategy"].strip() for entry in context["challenge_archive"]),
+    }
+    customer = PromptStrategy(proposal["strategy"]) if valid and distinct else None
     _write_json_once(
         Path(output_directory) / "fresh-customer-proposal.json",
         {
             "schema_version": 3,
             "manifest_sha256": manifest_sha256,
             "evolver_input_sha256": sha256_json(context),
-            "strategy": customer.text,
-            "strategy_id": customer_strategy_id(customer),
+            "status": "available" if customer is not None else "unavailable",
+            "selection_protocol": "one E-only proposal; semantic preservation and distinct text required; otherwise native H only",
+            "rejection_reason": None if customer is not None else (
+                "semantic_preservation_failed" if not valid else "not_distinct_from_evolution_customers"
+            ),
+            "strategy": proposal["strategy"],
+            "strategy_id": customer_strategy_id(PromptStrategy(proposal["strategy"])),
             "semantic_validation": validation,
         },
     )
@@ -1135,7 +1158,7 @@ def run_v2_endpoint_evaluation(*, gate_seeds, **kwargs):
     summary = deepcopy(per_seed[0])
     summary.update(schema_version=3, seeds=list(gate_seeds), per_seed=per_seed)
     cells = []
-    for index in range(4):
+    for index in range(len(per_seed[0]["cells"])):
         cell = deepcopy(per_seed[0]["cells"][index])
         episodes = [
             e for result in per_seed for e in result["cells"][index]["episodes"]
