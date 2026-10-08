@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from test_skill_evolution_v2 import FakeProviders, FakeRunner, mutation, run
+from test_skill_evolution_v2 import (
+    FakeProviders,
+    FakeRunner,
+    bind_evidence,
+    mutation,
+    run,
+)
 
 from evotau.alternating import LLMAlternatingEvolvers
 from evotau.evolution_candidates import EvolverSchemaError, V2Providers
@@ -26,8 +32,8 @@ from evotau.tau_provenance import sha256_json
 
 def test_gen1_with_screen_rejection_has_nullable_gate(tmp_path):
     class Rejected(FakeProviders):
-        def mutate(self, context):
-            return mutation("Break protected passing behavior.")
+        def propose_skill_mutation(self, context):
+            return bind_evidence(mutation("Break protected passing behavior."), context)
 
     result, _, _ = run(tmp_path, provider=Rejected(), generations=2)
     assert all(not g["service_phase"]["accepted"] for g in result.generations)
@@ -67,7 +73,7 @@ def test_schema_failure_requires_explicit_bound_retry_and_keeps_raw_output(
     tmp_path, monkeypatch
 ):
     (tmp_path / "manifest.json").write_text(json.dumps({"manifest_sha256": "manifest"}))
-    responses = [{"clusters": [{"invented": True}]}, {"clusters": []}]
+    responses = [{"invented": True}, bind_evidence(mutation(operation="no_op"), {})]
     calls = []
 
     def reply(*args, **kwargs):
@@ -82,58 +88,26 @@ def test_schema_failure_requires_explicit_bound_retry_and_keeps_raw_output(
     )
     context = {"task_interactions": []}
     with pytest.raises(EvolverSchemaError) as raised:
-        provider.diagnose(context)
+        provider.propose_skill_mutation(context)
     assert raised.value.diagnostics_ref.endswith("schema-error.json")
     directory = provider.last_call_directory
     frozen = {p.name: p.read_bytes() for p in directory.iterdir()}
     with pytest.raises(EvolverSchemaError):
-        provider.diagnose(context)
+        provider.propose_skill_mutation(context)
     assert len(calls) == 1
     authorize_schema_retry(
         tmp_path,
         directory.name,
         "operator reviewed invalid schema; resend unchanged input once",
     )
-    assert provider.diagnose(context) == {"clusters": []}
-    assert provider.diagnose(context) == {"clusters": []}
+    assert provider.propose_skill_mutation(context) == bind_evidence(mutation(operation="no_op"), {})
+    assert provider.propose_skill_mutation(context) == bind_evidence(mutation(operation="no_op"), {})
     assert len(calls) == 2
     assert all(
         (directory / name).read_bytes() == value for name, value in frozen.items()
     )
     with pytest.raises(FileExistsError):
         authorize_schema_retry(tmp_path, directory.name, "duplicate authorization")
-
-
-def test_wrong_diagnosis_labels_fail_before_stage_freeze(tmp_path, monkeypatch):
-    from evotau.evolution_candidates import DIAGNOSER_PROMPT
-
-    row = {
-        "cluster_id": "scope",
-        "root_cause": "scope",
-        "risk": "risk",
-        "evidence_task_ids": ["66"],
-        "protected_success_task_ids": [],
-        "recommended_surface": "skill",
-        "recommended_mutation_types": ["add"],
-    }
-    monkeypatch.setattr(
-        LLMAlternatingEvolvers,
-        "_json_call",
-        staticmethod(lambda *a, **kw: {"clusters": [row]}),
-    )
-    providers = V2Providers(
-        LLMAlternatingEvolvers(
-            model="offline", model_args={}, output_directory=tmp_path
-        )
-    )
-    with pytest.raises(EvolverSchemaError, match="labels disagree"):
-        providers.diagnose(
-            {
-                "task_interactions": [{"task": {"task_id": "66"}}],
-                "current_outcomes": [{"task_id": "66", "task_success": True}],
-            }
-        )
-    assert DIAGNOSER_PROMPT  # Real contract supplied to the recorded call.
 
 
 @pytest.mark.parametrize("kind", ["rejected", "duplicate", "valid"])
@@ -281,6 +255,7 @@ def test_full_G2_V_replay_fresh_H_finalization_and_resume(
     directory = tmp_path / "configs"
     directory.mkdir()
     file = directory / "formal.yaml"
+    raw["experiment"]["skill_evolution_v2"]["algorithm_version"] = "direct_skill_evolution_v1"
     file.write_text(yaml.safe_dump(raw))
     exp = raw["experiment"]
     output = tmp_path / exp["output_path"]
@@ -343,6 +318,7 @@ def test_full_G2_V_replay_fresh_H_finalization_and_resume(
             native_reward=float(success),
             total_steps=5,
             termination_reason="user_stop",
+            trajectory_ref="episodes/fixture/native-simulation.json",
         )
         native.calls.append(key)
         native.cache[key] = value
@@ -377,37 +353,22 @@ def test_full_G2_V_replay_fresh_H_finalization_and_resume(
             "reason": "offline verdict",
         }
 
-    def diagnose(self, ctx):
+    def propose(self, ctx):
         nonlocal failed_once
-        assert "hidden" not in json.dumps(ctx)
+        from test_skill_evolution_v2 import bind_evidence
+        assert "hidden-" not in json.dumps(ctx)
         if interrupt == "gen1" and ctx["generation"] == 1 and not failed_once:
             failed_once = True
-            raise TimeoutError("offline Gen1 diagnosis timeout")
+            raise TimeoutError("offline Gen1 direct mutation timeout")
         if all(row["task_success"] for row in ctx["current_outcomes"]):
-            return {"clusters": []}
-        return {
-            "clusters": [
-                {
-                    "cluster_id": "scope",
-                    "root_cause": "Scope handling",
-                    "evidence_task_ids": ["66"],
-                    "protected_success_task_ids": ["92"],
-                    "recommended_surface": "skill",
-                    "recommended_mutation_types": ["add"],
-                    "risk": "Confirmation",
-                }
-            ]
-        }
-
-    def mutate(self, ctx):
+            return bind_evidence(bind_evidence(mutation(operation="no_op"), {}), ctx)
         value = mutation()
-        value.update(target_cluster_id="scope", expected_fixes=["66"])
-        return value
+        value.update(target_cluster_id="scope", evidence_task_ids=["66"])
+        return bind_evidence(value, ctx)
 
     monkeypatch.setattr(V2Providers, "customers", customers)
     monkeypatch.setattr(V2Providers, "validate_customer", validator)
-    monkeypatch.setattr(V2Providers, "diagnose", diagnose)
-    monkeypatch.setattr(V2Providers, "mutate", mutate)
+    monkeypatch.setattr(V2Providers, "propose_skill_mutation", propose)
     monkeypatch.setattr(
         V2Providers,
         "validate_skill",
@@ -459,7 +420,7 @@ def test_repair_E_rejection_does_not_claim_V_was_evaluated(tmp_path):
             return result
 
     policy = deepcopy(DEFAULT_V2)
-    policy["service_evolution"].update(candidates_per_cluster=1, crossover=False)
+    policy["service_evolution"].update(candidates_per_generation=1, crossover=False)
     policy["statistical_gate"]["method"] = "finite_panel_paired"
     result, _, _ = run(
         tmp_path, runner=LateSeedRegression(), policy=policy, validation=True
@@ -522,5 +483,5 @@ def test_evolver_pause_file_prevents_next_request(tmp_path, monkeypatch):
         staticmethod(lambda *a, **kw: pytest.fail("must not dispatch while paused")),
     )
     with pytest.raises(StopBeforeEpisodeDispatch):
-        V2Providers(dispatch).diagnose({"task_interactions": []})
+        V2Providers(dispatch).propose_skill_mutation({"task_interactions": []})
     assert not list(tmp_path.glob("evolver-calls/*/input.json"))

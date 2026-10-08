@@ -178,7 +178,7 @@ def build_customer_evidence(rows, *, representative_cases=4, case_chars=12000):
     return _build_evidence(rows, representative_cases=representative_cases, case_chars=case_chars)
 
 
-def build_service_diagnosis_evidence(rows, *, representative_cases=4, case_chars=12000):
+def build_service_mutation_evidence(rows, *, representative_cases=4, case_chars=12000):
     """All E outcomes; deterministic failure cases and visible-tool-path success controls.
 
     Only observed evidence is admitted. Hidden task metadata and strategy text are
@@ -186,8 +186,11 @@ def build_service_diagnosis_evidence(rows, *, representative_cases=4, case_chars
     """
     safe = [
         {'task': {'task_id': row['task']['task_id']},
+         'native_evaluation': {key: deepcopy(row['native_evaluation'][key])
+                               for key in ('task_success', 'reward', 'termination_reason')
+                               if key in row['native_evaluation']},
          **{key: deepcopy(row[key]) for key in
-            ('seed', 'native_evaluation', 'trajectory_ref', 'trajectory')}}
+            ('seed', 'trajectory_ref', 'trajectory')}}
         for row in rows
     ]
     order = lambda i: (str(safe[i]['task']['task_id']), safe[i]['seed'])
@@ -202,18 +205,36 @@ def build_service_diagnosis_evidence(rows, *, representative_cases=4, case_chars
 
     failure_tools = set().union(*(tools(i) for i in failed))
     passed.sort(key=lambda i: (-len(tools(i) & failure_tools), order(i)))
-    chosen = failed[:representative_cases - bool(passed)]
+    chosen = failed[:max(1, representative_cases - bool(passed))]
     chosen += passed[:representative_cases - len(chosen)]
     chosen += [i for i in failed if i not in chosen][:representative_cases - len(chosen)]
     return _build_evidence(safe, representative_cases=representative_cases,
                            case_chars=case_chars, selection=chosen)
 
 
-SERVICE_DIAGNOSIS_EVIDENCE_INSTRUCTIONS = (
+SERVICE_MUTATION_EVIDENCE_INSTRUCTIONS = (
     CUSTOMER_EVIDENCE_INSTRUCTIONS +
     ' Only observed interactions are provided; hidden Customer scenarios are unavailable. '
-    'All listed task IDs may be referenced by the existing diagnosis schema. '
+    'All listed task IDs may be referenced by the direct mutation schema. '
     'A structural overview alone does not establish a failure mechanism. '
-    'Use detailed failure evidence and passing controls to support a cluster; '
+    'Use detailed failure evidence and passing controls to support a repair hypothesis; '
     'do not infer missing dialogue, hidden intentions or causal categories from tool names or rewards.'
 )
+
+
+def enforce_mutation_context_budget(context, prompt, max_proxy_tokens):
+    """Reject oversized reflection requests without silently removing evidence.
+
+    cl100k_base is a reproducible proxy, not the provider's actual tokenizer.
+    To expand evidence, change frozen representative_cases/case_chars in a new config.
+    """
+    import tiktoken
+
+    encoding = tiktoken.get_encoding("cl100k_base")
+    text = prompt + json.dumps(context, ensure_ascii=False, sort_keys=True)
+    count = len(encoding.encode(text, disallowed_special=()))
+    if count > max_proxy_tokens:
+        raise ValueError(
+            f"Direct mutation context exceeds explicit proxy-token allowance: {count} > {max_proxy_tokens}"
+        )
+    return count

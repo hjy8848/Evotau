@@ -16,7 +16,7 @@ EvoTau studies alternating Customer challenge and Service repair on a fixed τ-b
     commit (C_(t+1), S_(t+1)) and checkpoint
 ```
 
-Skill Evolution V2 is an independent `skill_memory_v2` carrier with per-turn observable activation, typed edits, failure diagnosis, independent candidates, paired screening/statistical gates, rejection lineage, research archives/crossover and Customer replay. Its configs, schemas, compatibility rules, risks and ablation matrix are documented in [Skill Evolution V2](docs/skill-evolution-v2.md). The research loop below describes the legacy accuracy-driven carriers; formal V2 uses the stricter paired V promotion gate.
+Skill Evolution V2 is an independent `skill_memory_v2` carrier with per-turn observable activation, typed edits, direct evidence-backed Skill mutation, independent candidates, paired screening/statistical gates, rejection lineage, research archives/crossover and Customer replay. Its configs, schemas, compatibility rules, risks and ablation matrix are documented in [Skill Evolution V2](docs/skill-evolution-v2.md). The research loop below describes the legacy accuracy-driven carriers; formal V2 uses the stricter paired V promotion gate.
 
 The [2026-10-08 pre-formal readiness audit](research/audits/2026-10-08-v2-readiness-audit.md) separates engineering tests, representative real InferAI requests and unverified research effects. Full E/V/H launch remains blocked; the E20/V16/H40 pilot config is disabled pending provider readiness and explicit budget/launch approval.
 

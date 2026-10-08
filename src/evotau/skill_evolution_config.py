@@ -7,12 +7,12 @@ from .service_skills import V2_MUTATION_TYPES
 
 DEFAULT_V2 = {
     "schema_version": 2,
+    "algorithm_version": "direct_skill_evolution_v1",
     "service_skill_runtime": "activate_topk_v2",
     "max_active_service_skills": 2,
     "activator": {"model": None, "model_args": {}},
     "service_evolution": {
-        "candidates_per_cluster": 3,
-        "max_clusters_per_generation": 1,
+        "candidates_per_generation": 3,
         "semantic_dedup": True,
         "crossover": True,
         "stagnation_patience": 2,
@@ -24,6 +24,12 @@ DEFAULT_V2 = {
         "screen_seeds": [1, 2],
         "gate_seeds": [1, 2, 3, 4],
         "screen_clean_tasks": 2,
+        "v_gate_mode": "fail_fast",
+    },
+    "mutation_context": {
+        "representative_cases": 4,
+        "case_chars": 12000,
+        "max_proxy_tokens": 40000,
     },
     "statistical_gate": {
         "method": "task_block_bootstrap",
@@ -44,7 +50,7 @@ DEFAULT_V2 = {
         "include_native_customer": True,
         "current_weight": 1.0,
     },
-    "history": {"summarize": True, "max_families": 8, "representative_cases": 6},
+    "history": {"summarize": True, "max_families": 8},
     "skill_budgets": {
         "max_skills": 8,
         "guidance_chars": 2400,
@@ -56,6 +62,45 @@ DEFAULT_V2 = {
 
 
 def freeze_v2_policy(raw, models, model_args):
+    raw = deepcopy(raw)
+    if not isinstance(raw, dict):
+        raise TypeError("V2 policy must be a mapping")
+    # Old manifests can be inspected, but the runtime explicitly refuses legacy algorithms.
+    version = raw.get("algorithm_version", "diagnoser_v2")
+    if version not in ("direct_skill_evolution_v1", "diagnoser_v2"):
+        raise ValueError("unsupported evolution algorithm version")
+    raw["algorithm_version"] = version
+    evolution = raw.get("service_evolution", {})
+    if not isinstance(evolution, dict):
+        raise TypeError("service_evolution must be a mapping")
+    legacy = {
+        k: evolution[k]
+        for k in ("candidates_per_cluster", "max_clusters_per_generation")
+        if k in evolution
+    }
+    if legacy:
+        if "candidates_per_generation" in evolution:
+            raise ValueError("cannot mix legacy and direct candidate budgets")
+        count = legacy.get("candidates_per_cluster", 3)
+        clusters = legacy.get("max_clusters_per_generation", 1)
+        if any(type(v) is not int or v < 1 for v in (count, clusters)):
+            raise ValueError("legacy candidate limits must be positive integers")
+        evolution = {k: v for k, v in evolution.items() if k not in legacy}
+        evolution["candidates_per_generation"] = count * clusters
+        raw["service_evolution"] = evolution
+    # This old limit only selected Diagnoser cases; direct evidence has its own frozen budget.
+    legacy_context_limit = None
+    if (
+        isinstance(raw.get("history"), dict)
+        and "representative_cases" in raw["history"]
+    ):
+        legacy_context_limit = raw["history"].pop("representative_cases")
+        if type(legacy_context_limit) is not int or legacy_context_limit < 1:
+            raise ValueError(
+                "legacy representative case limit must be a positive integer"
+            )
+        if "mutation_context" not in raw:
+            raw["mutation_context"] = {"representative_cases": legacy_context_limit}
     policy = deepcopy(DEFAULT_V2)
     if not isinstance(raw, dict) or set(raw) - set(policy):
         raise ValueError("unknown Skill Evolution V2 configuration fields")
@@ -105,6 +150,10 @@ def freeze_v2_policy(raw, models, model_args):
         or policy["evaluation"]["gate_panel"] != "V"
     ):
         raise ValueError("V2 uses fixed E repair and disjoint V gate panels")
+    if policy["evaluation"]["v_gate_mode"] not in ("fail_fast", "full_audit"):
+        raise ValueError("v_gate_mode must be fail_fast or full_audit")
+    if any(type(v) is not int or v < 1 for v in policy["mutation_context"].values()):
+        raise ValueError("mutation context limits must be positive integers")
     gate = policy["statistical_gate"]
     for value in (
         gate["confidence"],
@@ -156,6 +205,19 @@ def freeze_v2_policy(raw, models, model_args):
         or not policy["activator"]["model"]
     ):
         raise ValueError("activator model must be frozen")
+    if legacy:
+        policy["legacy_candidate_budget_migration"] = {
+            "candidates_per_cluster": count,
+            "max_clusters_per_generation": clusters,
+            "candidates_per_generation": count * clusters,
+        }
+    if legacy_context_limit is not None:
+        policy["legacy_context_migration"] = {
+            "history.representative_cases": legacy_context_limit,
+            "mutation_context.representative_cases": policy["mutation_context"][
+                "representative_cases"
+            ],
+        }
     return policy
 
 

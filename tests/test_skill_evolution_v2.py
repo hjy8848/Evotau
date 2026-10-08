@@ -52,15 +52,35 @@ def mutation(
 ):
     return {
         "analysis": "Fix count 1; risk count 0.",
+        "root_cause_hypothesis": "Latest scope was not retained.",
+        "expected_effect": "Execute only the confirmed scope.",
+        "regression_risk": "Additional clarification overhead.",
+        "evidence_refs": [],
         "semantic_family": family,
         "target_cluster_id": "cluster-1",
         "operation": operation,
         "target_skill_id": target,
-        "skill": draft(guidance),
-        "expected_fixes": ["1"],
-        "protected_cases_at_risk": [],
+        "skill": None if operation in ("no_op", "delete", "split") else draft(guidance),
+        "evidence_task_ids": ["1"],
+        "protected_success_task_ids": [],
         "substantive_delta_from_prior": "",
     }
+
+
+def bind_evidence(value, context):
+    value = deepcopy(value)
+    if value["operation"] == "no_op":
+        value.update(skill=None, target_skill_id=None, evidence_task_ids=[],
+                     protected_success_task_ids=[], evidence_refs=[])
+        return value
+    ids = set(value["evidence_task_ids"] + value["protected_success_task_ids"])
+    value["evidence_refs"] = [
+        {"task_id": row["task"]["task_id"], "seed": row["seed"],
+         "trajectory_ref": row["trajectory_ref"], **row["trajectory"]["messages"][0]["evidence_ref"]}
+        for row in context["task_interactions"]
+        if row["task"]["task_id"] in ids and row["trajectory"]["messages"]
+    ]
+    return value
 
 
 def record(task, success, seed=1, **kwargs):
@@ -107,35 +127,21 @@ class FakeProviders:
             True,
         )
 
-    def diagnose(self, context):
-        self.calls.append("diagnose")
+    def propose_skill_mutation(self, context):
+        self.calls.append("mutate")
         assert "secret-hidden" not in json.dumps(context)
         assert "evidence_instructions" in context
         assert all("trajectory_overview" in row for row in context["task_interactions"])
         if not any(r["task_success"] is False for r in context["current_outcomes"]):
-            return {"clusters": []}
-        return {
-            "clusters": [
-                {
-                    "cluster_id": "cluster-1",
-                    "root_cause": "Late scope handling.",
-                    "evidence_task_ids": ["1"],
-                    "protected_success_task_ids": ["2"],
-                    "recommended_surface": "skill",
-                    "recommended_mutation_types": ["add"],
-                    "risk": "Ordinary cancellation.",
-                }
-            ]
-        }
-
-    def mutate(self, context):
-        self.calls.append("mutate")
+            return bind_evidence(mutation(operation="no_op"), context)
         bias = context["proposal_bias"]
         if bias == "minimal_behavior":
-            return mutation("Break protected passing behavior.", family="broad")
-        if bias == "structural_decomposition":
-            return mutation(operation="invented")
-        return mutation()
+            value = mutation("Break protected passing behavior.", family="broad")
+        elif bias == "structural_decomposition":
+            value = mutation(operation="no_op")
+        else:
+            value = mutation()
+        return bind_evidence(value, context)
 
     def validate_skill(self, context):
         self.calls.append("skill_validator")
@@ -253,7 +259,7 @@ def test_multi_candidate_rejected_lineage_and_runtime_isolation(tmp_path):
     assert (
         board[1]["effect"]["pass_to_fail"] == ["2"] and not board[1]["runtime_deployed"]
     )
-    assert board[2]["pre_rollout_rejection"].startswith("invalid_mutation")
+    assert board[2]["pre_rollout_rejection"] == "no_op"
     assert provider.calls.count("mutate") == 3
     assert len(runner.calls) == len(set(runner.calls))
     prompt = render_selected_service_skills(result.service, ["skill-0001"])
@@ -267,10 +273,9 @@ def test_multi_candidate_rejected_lineage_and_runtime_isolation(tmp_path):
 @pytest.mark.parametrize(
     "stage",
     [
-        "service_diagnosis",
-        "service_proposals-g0000-cluster-1-0",
-        "service_screen-g0000-cluster-1-0-decision",
-        "service_full_gate-g0000-cluster-1-0-current-decision",
+        "service_proposals-g0000-direct-0",
+        "service_screen-g0000-direct-0-decision",
+        "service_full_gate-g0000-direct-0-current-decision",
         "generation_complete",
     ],
 )
@@ -285,7 +290,7 @@ def test_resume_frozen_stages_and_no_double_episode_dispatch(tmp_path, stage):
     if stage == "generation_complete":
         assert provider.calls == calls
     assert (
-        provider.calls.count("diagnose") == 1 and provider.calls.count("customers") == 1
+        "diagnose" not in provider.calls and provider.calls.count("customers") == 1
     )
     run(tmp_path, provider=provider, runner=runner)
     assert provider.calls.count("mutate") == 3
@@ -293,9 +298,9 @@ def test_resume_frozen_stages_and_no_double_episode_dispatch(tmp_path, stage):
 
 def test_tampered_artifacts_and_checkpoint_fail_closed(tmp_path):
     run(tmp_path)
-    p = tmp_path / "evolution-v2/g0000-service_diagnosis.json"
+    p = tmp_path / "evolution-v2/g0000-service_proposals-g0000-direct-0.json"
     value = json.loads(p.read_text())
-    value["payload"]["clusters"][0]["root_cause"] = "tampered"
+    value["payload"]["root_cause_hypothesis"] = "tampered"
     p.write_text(json.dumps(value))
     with pytest.raises(ValueError, match="digest"):
         run(tmp_path)
@@ -326,17 +331,15 @@ def test_strict_provider_contract_reaches_gate_archive_and_exact_resume(tmp_path
             return scripted.customers(context, context["requested_candidates"])
         if call_name == "evotau_customer_semantic_validator":
             return {**scripted.validate_customer(context), "reason": "Task-faithful interaction."}
-        if call_name == "evotau_service_diagnoser":
-            return scripted.diagnose(context)
         if call_name == "evotau_service_skill_mutator":
-            return scripted.mutate(context)
+            return scripted.propose_skill_mutation(context)
         if call_name == "evotau_skill_semantic_validator":
             return {**scripted.validate_skill(context), "reason": "Policy subordinate."}
         raise AssertionError(call_name)
 
     monkeypatch.setattr(LLMAlternatingEvolvers, "_json_call", staticmethod(dispatch))
     policy = deepcopy(DEFAULT_V2)
-    policy["service_evolution"].update(candidates_per_cluster=1, crossover=False)
+    policy["service_evolution"].update(candidates_per_generation=1, crossover=False)
     providers = V2Providers(LLMAlternatingEvolvers(
         model="offline/contract", model_args={"temperature": 0},
         request_budget=RequestBudget(10), output_directory=tmp_path,
@@ -346,7 +349,7 @@ def test_strict_provider_contract_reaches_gate_archive_and_exact_resume(tmp_path
     assert row["screen"]["passed"] and row["gate"] is not None
     assert (tmp_path / "evolution-v2/g0000-archive_update.json").is_file()
     assert calls == ["evotau_customer_evolver", "evotau_customer_semantic_validator",
-                     "evotau_service_diagnoser", "evotau_service_skill_mutator",
+                     "evotau_service_skill_mutator",
                      "evotau_skill_semantic_validator"]
     frozen = {p: p.read_bytes() for p in (tmp_path / "evolution-v2").glob("*.json")}
     before = list(calls), list(runner.calls)
@@ -356,68 +359,24 @@ def test_strict_provider_contract_reaches_gate_archive_and_exact_resume(tmp_path
     assert all(p.read_bytes() == content for p, content in frozen.items())
 
 
-def test_recorded_live_proposal_reaches_gate_with_explicit_fixture_outcomes(tmp_path, monkeypatch):
-    """Real unchanged GPT output, synthetic paired outcomes; never live efficacy evidence."""
-    from evotau.alternating import LLMAlternatingEvolvers
-    from evotau.evolution_candidates import V2Providers
-    from evotau.tau_provenance import sha256_json
-
-    archive = Path(__file__).resolve().parents[1] / (
-        "experiments/results/v2-diagnoser-contract-rehearsal-20261008"
-    )
-    outputs = {}
+def test_recorded_legacy_proposals_remain_readable_without_schema_reinterpretation():
+    """Old evidence remains immutable; it is not valid direct-generation cache."""
+    from evotau.evolution_candidates import validate_mutation
+    archive = Path(__file__).resolve().parents[1] / "experiments/results/v2-diagnoser-contract-rehearsal-20261008"
+    entries = []
     for folder in (archive / "first-rehearsal", archive / "connected-gpt-provider"):
-        for p in (folder / "evolver-calls").glob("*/input.json"):
-            entry = json.loads(p.read_text())
-            outputs[entry["call_name"]] = json.loads((p.parent / "output.json").read_text())["response"]
-    live_proposal = outputs["evotau_service_skill_mutator"]
-    original_digest = sha256_json(live_proposal)
-    assert live_proposal["expected_fixes"] == ["98"]
-
-    monkeypatch.setattr(LLMAlternatingEvolvers, "_json_call", staticmethod(
-        lambda model, args, prompt, context, *, call_name: deepcopy(outputs[call_name])
-    ))
-    provider = V2Providers(LLMAlternatingEvolvers(
-        model="offline/recorded-gpt-contract", model_args={"temperature": 0},
-        output_directory=tmp_path,
-    ))
-
-    class PairedFixtureRunner(FakeRunner):
-        def __call__(self, *, task_id, seed, customer, service, panel_name):
-            key = task_id, seed, customer_strategy_id(customer), service_strategy_id(service)
-            if key not in self.cache:
-                self.calls.append(key)
-                # Declared test outcome fixture. Does not run or score a native episode.
-                success = task_id != "98" or bool(service.skills)
-                self.cache[key] = EpisodeRecord(
-                    f"fixture-{len(self.cache)}", task_id, seed, key[2], key[3],
-                    EpisodeStatus.COMPLETE, success, termination_reason="user_stop", total_steps=5,
-                )
-            return self.cache[key]
-
-    policy = deepcopy(DEFAULT_V2)
-    policy["service_evolution"].update(candidates_per_cluster=1, crossover=False)
-    runner = PairedFixtureRunner()
-    arguments = {
-        "tasks": {t: SimpleNamespace(id=t, user_scenario="Explicit deterministic fixture.",
-                                  description="", user_tools=[]) for t in ("98", "8", "66")},
-        "evolution_task_ids": ("98", "8", "66"), "validation_task_ids": (), "seed": 1,
-        "generations": 1, "customer_candidate_count": 1, "max_parallel_episodes": 1,
-        "evolution_fitness_seed": 1, "run_validation": False, "initial_customer": PromptStrategy(""),
-        "initial_service": ServiceSkillMemoryV2(), "runner": runner, "providers": provider,
-        "domain_policy": "Deterministic integration fixture, not a native experiment.",
-        "output_directory": tmp_path, "checkpoint_path": tmp_path / "checkpoint.json",
-        "manifest_sha256": "recorded-proposal-fixture", "policy": policy,
-    }
-    result = run_skill_evolution_v2(**arguments)
-    row = result.generations[0]["service_phase"]["candidates"][0]
-    assert row["mutation"] == live_proposal
-    assert sha256_json(live_proposal) == original_digest
-    assert row["screen"]["passed"] and row["gate"] is not None
-    assert (tmp_path / "evolution-v2/g0000-archive_update.json").is_file()
-    before = list(runner.calls)
-    resumed = run_skill_evolution_v2(**arguments)
-    assert resumed.generations == result.generations and runner.calls == before
+        for path in (folder / "evolver-calls").glob("*/input.json"):
+            entry = json.loads(path.read_text())
+            if entry["call_name"] == "evotau_service_skill_mutator":
+                output = path.parent / "output.json"
+                before = output.read_bytes()
+                response = json.loads(before)["response"]
+                assert "expected_fixes" in response and "evidence_refs" not in response
+                with pytest.raises(ValueError):
+                    validate_mutation(response)
+                assert output.read_bytes() == before
+                entries.append(response)
+    assert entries
 
 
 def test_task_block_gate_accepts_clear_positive_and_corrects_looks():
@@ -863,15 +822,15 @@ def test_provider_output_recovered_after_stage_publication_crash(tmp_path, monke
 
 def test_crossover_child_independently_screened_gated_and_resumed(tmp_path):
     class ComplementaryProviders(FakeProviders):
-        def mutate(self, context):
+        def propose_skill_mutation(self, context):
             self.calls.append("mutate")
             bias = context["proposal_bias"]
             if bias == "structural_decomposition":
-                return {"operation": "invalid"}
+                return bind_evidence(mutation(operation="no_op"), context)
             if bias == "narrow_applicability":
-                return mutation(
+                return bind_evidence(mutation(
                     "Validate request contents before committing.", family="contents"
-                )
+                ), context)
             value = mutation(
                 "Reconcile newly disclosed scope with the previous confirmation.",
                 family="reconciliation",
@@ -883,7 +842,7 @@ def test_crossover_child_independently_screened_gated_and_resumed(tmp_path):
             value["substantive_delta_from_prior"] = (
                 "Distinct scope reconciliation instead of request validation."
             )
-            return value
+            return bind_evidence(value, context)
 
         def crossover(self, context):
             self.calls.append("crossover")
@@ -895,7 +854,7 @@ def test_crossover_child_independently_screened_gated_and_resumed(tmp_path):
             value["substantive_delta_from_prior"] = (
                 "Compose independently observed complementary mechanisms."
             )
-            return value
+            return bind_evidence(value, context)
 
     class ComplementaryRunner(FakeRunner):
         def __call__(self, **kwargs):

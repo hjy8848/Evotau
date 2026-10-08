@@ -1,4 +1,4 @@
-"""V2 orchestration: diagnose/diversify/screen/gate, isolated from legacy V1."""
+"""V2 orchestration: direct mutation/diversify/screen/gate, isolated from legacy V1."""
 
 import json
 import random
@@ -13,7 +13,7 @@ from .evolution_archive import (
     semantic_duplicate,
 )
 from .evolution_artifacts import EvolutionJournal
-from .evolution_candidates import validate_mutation
+from .evolution_candidates import validate_direct_evidence, validate_mutation
 from .evolution_failures import episode_metrics, paired_effect, paired_failure_matrix
 from .evolution_gate import cheap_screen, evaluate_gate, pass_power_k
 from .evolution_history import stagnation_state, summarize_effects
@@ -42,9 +42,17 @@ def _document(role, strategy):
 
 def _evolution_parent(entry):
     """E-derived mutation evidence only; never expose raw V gate cells to Evolvers."""
-    return {key: deepcopy(entry[key]) for key in (
-        "mutation_id", "mutation", "effect", "generation", "evaluation_scope"
-    ) if key in entry}
+    return {
+        key: deepcopy(entry[key])
+        for key in (
+            "mutation_id",
+            "mutation",
+            "effect",
+            "generation",
+            "evaluation_scope",
+        )
+        if key in entry
+    }
 
 
 def run_skill_evolution_v2(
@@ -81,6 +89,10 @@ def run_skill_evolution_v2(
         _write_json_once,
     )
 
+    if policy.get("algorithm_version") != "direct_skill_evolution_v1":
+        raise ValueError(
+            "Legacy Diagnoser configuration is read-only; create a versioned Direct Skill config"
+        )
     root = Path(output_directory)
     journal = EvolutionJournal(root, manifest_sha256)
     e, v = tuple(map(str, evolution_task_ids)), tuple(map(str, validation_task_ids))
@@ -251,7 +263,9 @@ def run_skill_evolution_v2(
 
         c_context = {
             "generation": g,
-            "task_interactions": build_customer_evidence(_context_episodes(incumbent, runner, tasks)),
+            "task_interactions": build_customer_evidence(
+                _context_episodes(incumbent, runner, tasks)
+            ),
             "evidence_instructions": CUSTOMER_EVIDENCE_INSTRUCTIONS,
             "current_customer_strategy": customer.text,
             "current_service": service.to_dict(),
@@ -332,88 +346,57 @@ def run_skill_evolution_v2(
                 "customer": customer.to_dict(),
             },
         )
-        # Generate diagnoses only from E; passing and failing examples are equally available.
-        all_evidence = service_evidence(selected)
-        if policy["history"]["summarize"]:
-            limit = policy["history"]["representative_cases"]
-            failures = [
-                row
-                for row in all_evidence
-                if row["native_evaluation"]["task_success"] is False
-            ]
-            passing = [
-                row
-                for row in all_evidence
-                if row["native_evaluation"]["task_success"] is True
-            ]
+        # All E cells are visible; only bounded original evidence is expanded.
+        from .evolution_context import (
+            SERVICE_MUTATION_EVIDENCE_INSTRUCTIONS,
+            build_service_mutation_evidence,
+            enforce_mutation_context_budget,
+        )
 
-            def visible_tools(row):
-                return {
-                    tool.get("name") or (tool.get("function") or {}).get("name")
-                    for message in (row.get("trajectory") or {}).get("messages", [])
-                    for tool in (message.get("tool_calls") or [])
-                }
-
-            failure_tools = set().union(*(visible_tools(row) for row in failures))
-            # Similar visible tool paths are controls, never hidden objectives/task identities.
-            passing.sort(key=lambda row: -len(visible_tools(row) & failure_tools))
-            # Keep failures and passing controls; IDs refer to the full native E panel.
-            representative = (
-                failures[: max(1, limit // 2)]
-                + passing[: max(1, limit - len(failures[: max(1, limit // 2)]))]
-            )
-        else:
-            representative = all_evidence
+        all_evidence = build_service_mutation_evidence(
+            service_evidence(selected),
+            representative_cases=policy["mutation_context"]["representative_cases"],
+            case_chars=policy["mutation_context"]["case_chars"],
+        )
         s_context = {
+            "algorithm_version": policy["algorithm_version"],
+            "evidence_budget": policy["mutation_context"],
             "generation": g,
-            "task_interactions": representative,
+            "task_interactions": all_evidence,
+            "evidence_instructions": SERVICE_MUTATION_EVIDENCE_INSTRUCTIONS,
             "failure_matrix": [r for r in matrix if r["task_id"] in e][-len(e) * 8 :],
             "current_service_memory": before_s.to_dict(),
             "service_policy": domain_policy,
             "interaction_metrics": episode_metrics(selected),
-            "current_outcomes": [r.to_dict() for r in selected],
+            "current_outcomes": [
+                {
+                    key: r.to_dict()[key]
+                    for key in (
+                        "task_id",
+                        "seed",
+                        "status",
+                        "task_success",
+                        "native_reward",
+                        "termination_reason",
+                        "total_steps",
+                        "tool_calls",
+                    )
+                }
+                for r in selected
+            ],
             "previous_mutation_effects": history if evo["lineage"] else [],
+            "prior_fixed_cases": sorted(
+                {t for ent in effects for t in ent["effect"]["fail_to_pass"] if t in e}
+            ),
+            "prior_broken_cases": sorted(
+                {t for ent in effects for t in ent["effect"]["pass_to_fail"] if t in e}
+            ),
             "exploration": stagnation_state(
                 documents, effects, evo["stagnation_patience"]
             ),
         }
-        from .evolution_context import (
-            SERVICE_DIAGNOSIS_EVIDENCE_INSTRUCTIONS,
-            build_service_diagnosis_evidence,
-        )
-
-        diagnosis_context = {
-            **s_context,
-            "task_interactions": build_service_diagnosis_evidence(all_evidence),
-            "evidence_instructions": SERVICE_DIAGNOSIS_EVIDENCE_INSTRUCTIONS,
-        }
-        diagnosis = stage(
-            g,
-            "service_diagnosis",
-            diagnosis_context,
-            lambda diagnosis_context=diagnosis_context: providers.diagnose(diagnosis_context),
-        )
-        failed_ids = {r.task_id for r in selected if r.task_success is False}
-        passed_ids = {r.task_id for r in selected if r.task_success is True}
-        for cluster in diagnosis["clusters"]:
-            if (
-                not set(cluster["evidence_task_ids"]) <= failed_ids
-                or not set(cluster["protected_success_task_ids"]) <= passed_ids
-            ):
-                raise ValueError(
-                    "diagnosis target/protected labels disagree with native E evidence"
-                )
-        clusters = [
-            c for c in diagnosis["clusters"] if c["recommended_surface"] == "skill"
-        ]
-        if s_context["exploration"]["explore"]:
-            used = {entry["mutation"]["target_cluster_id"] for entry in effects[-3:]}
-            clusters.sort(key=lambda c: (c["cluster_id"] in used, c["cluster_id"]))
-        clusters = clusters[: evo["max_clusters_per_generation"]]
         board = []
-        looks = evo["candidates_per_cluster"] * evo[
-            "max_clusters_per_generation"
-        ] + int(evo["crossover"])
+        looks = evo["candidates_per_generation"] + int(evo["crossover"])
         replay = policy["opponent_replay"]
         opponents = [("current", customer, replay["current_weight"])]
         if replay["enabled"]:
@@ -427,77 +410,47 @@ def run_skill_evolution_v2(
                 opponents.append(("native", None, 1.0))
         looks *= len(opponents) + int(not smoke)
         all_proposals = []
-        for cluster in clusters:
-            allowed = set(e)
-            target, protected = (
-                set(cluster["evidence_task_ids"]),
-                set(cluster["protected_success_task_ids"]),
+
+        def candidate_hypothesis(mutation):
+            return {
+                "cluster_id": mutation["target_cluster_id"],
+                "root_cause": mutation["root_cause_hypothesis"],
+                "root_cause_sha256": sha256_json(mutation["root_cause_hypothesis"]),
+                "source": "direct_candidate",
+                "evidence_task_ids": mutation["evidence_task_ids"],
+                "protected_success_task_ids": mutation["protected_success_task_ids"],
+            }
+
+        for bias in range(evo["candidates_per_generation"]):
+            ctx = {
+                **s_context,
+                "proposal_index": bias,
+                "proposal_bias": (
+                    "narrow_applicability",
+                    "minimal_behavior",
+                    "structural_decomposition",
+                )[bias % 3],
+                "archive_parent": (
+                    _evolution_parent(archive.entries[bias % len(archive.entries)])
+                    if archive.entries and s_context["exploration"]["explore"]
+                    else None
+                ),
+            }
+            from .evolution_candidates import MUTATOR_PROMPT
+
+            enforce_mutation_context_budget(
+                ctx, MUTATOR_PROMPT, policy["mutation_context"]["max_proxy_tokens"]
             )
-            if not target <= allowed or not protected <= allowed:
-                raise ValueError("repair clusters must use E evidence only")
-            for bias in range(evo["candidates_per_cluster"]):
-                ctx = {
-                    **s_context,
-                    "root_cause_cluster": cluster,
-                    "proposal_bias": (
-                        "narrow_applicability",
-                        "minimal_behavior",
-                        "structural_decomposition",
-                    )[bias % 3],
-                    "prior_fixed_cases": sorted(
-                        {
-                            t
-                            for ent in effects
-                            for t in ent["effect"]["fail_to_pass"]
-                            if t in e
-                        }
-                    ),
-                    "prior_broken_cases": sorted(
-                        {
-                            t
-                            for ent in effects
-                            for t in ent["effect"]["pass_to_fail"]
-                            if t in e
-                        }
-                    ),
-                    "archive_parent": (
-                        _evolution_parent(archive.entries[bias % len(archive.entries)])
-                        if archive.entries and s_context["exploration"]["explore"]
-                        else None
-                    ),
-                }
-                relevant_ids = (
-                    target
-                    | protected
-                    | set(ctx["prior_fixed_cases"])
-                    | set(ctx["prior_broken_cases"])
-                )
-                relevant = [
-                    row
-                    for row in all_evidence
-                    if row["task"]["task_id"] in relevant_ids
-                ]
-                controls = [
-                    row
-                    for row in representative
-                    if row["task"]["task_id"] not in relevant_ids
-                ]
-                ctx["task_interactions"] = (
-                    relevant
-                    + controls[
-                        : max(
-                            0, policy["history"]["representative_cases"] - len(relevant)
-                        )
-                    ]
-                )
-                ident = f"g{g:04d}-{cluster['cluster_id']}-{bias}"
-                proposal = stage(
-                    g,
-                    f"service_proposals-{ident}",
-                    ctx,
-                    lambda ctx=ctx: providers.mutate(ctx),
-                )
-                all_proposals.append((ident, proposal, cluster, ()))
+            ident = f"g{g:04d}-direct-{bias}"
+            proposal = stage(
+                g,
+                f"service_proposals-{ident}",
+                ctx,
+                lambda ctx=ctx: providers.propose_skill_mutation(ctx),
+            )
+            validate_mutation(proposal)
+            validate_direct_evidence(proposal, ctx)
+            all_proposals.append((ident, proposal, candidate_hypothesis(proposal), ()))
 
         seen_candidates = []
 
@@ -524,6 +477,7 @@ def run_skill_evolution_v2(
             row = {
                 "mutation_id": ident,
                 "mutation": mutation,
+                "hypothesis": cluster,
                 "generation": g,
                 "parent_mutation_ids": list(parents),
                 "runtime_deployed": False,
@@ -537,7 +491,8 @@ def run_skill_evolution_v2(
                 if mutation["target_cluster_id"] != cluster["cluster_id"]:
                     raise ValueError("proposal changed its target cluster")
                 if not set(
-                    mutation["expected_fixes"] + mutation["protected_cases_at_risk"]
+                    mutation["evidence_task_ids"]
+                    + mutation["protected_success_task_ids"]
                 ) <= set(e):
                     raise ValueError("proposal names a task outside E")
                 proposed = apply_v2_mutation(
@@ -673,7 +628,7 @@ def run_skill_evolution_v2(
                             str(k): pass_power_k(attribution_new, k) for k in (1, 2)
                         },
                     )
-                for label, opponent, weight in (
+                for opponent_index, (label, opponent, weight) in enumerate(
                     opponents
                     if repair_gate is None or repair_gate["verdict"] == "ACCEPTED"
                     else []
@@ -735,6 +690,44 @@ def run_skill_evolution_v2(
                         full_runs = new_gate
                         if smoke:
                             attribution_old, attribution_new = old_gate, new_gate
+                    if (
+                        not smoke
+                        and gate["verdict"] == "REJECTED"
+                        and policy["evaluation"]["v_gate_mode"] == "fail_fast"
+                    ):
+                        # The conjunction cannot pass. Preserve frozen looks and explicit gaps.
+                        skipped = stage(
+                            g,
+                            f"service_full_gate-{ident}-remaining-not-evaluated",
+                            {
+                                "rejected_opponent": label,
+                                "remaining": [
+                                    x[0] for x in opponents[opponent_index + 1 :]
+                                ],
+                                "looks": looks,
+                                "panel": "V",
+                                "seeds": gate_seeds,
+                            },
+                            lambda remaining=opponents[opponent_index + 1 :]: {
+                                "opponents": [
+                                    {
+                                        "opponent": later,
+                                        "opponent_weight": later_weight,
+                                        "verdict": "NOT_EVALUATED",
+                                        "objective": "preservation",
+                                        "reason": "Earlier required V gate rejected; incomplete risk profile",
+                                        "panel": "V",
+                                        "seeds": gate_seeds,
+                                        "gate_looks": looks,
+                                        "policy": policy["statistical_gate"],
+                                        "pass_power_k": {},
+                                    }
+                                    for later, _, later_weight in remaining
+                                ]
+                            },
+                        )
+                        gates.extend(skipped["opponents"])
+                        break
                 required_gates = gates + (
                     [repair_gate] if repair_gate is not None else []
                 )
@@ -750,6 +743,9 @@ def run_skill_evolution_v2(
                     "opponents": gates,
                     "repair_superiority": repair_gate,
                     "gate_looks": looks,
+                    "evaluation_mode": policy["evaluation"]["v_gate_mode"],
+                    "risk_profile_complete": len(gates) == len(opponents)
+                    and all(x["verdict"] != "NOT_EVALUATED" for x in gates),
                     "reason": "; ".join(
                         x["opponent"] + ": " + x["reason"] for x in required_gates
                     ),
@@ -828,33 +824,28 @@ def run_skill_evolution_v2(
             )
             if pair:
                 a, b = pair
-                cluster = (
-                    clusters[0]
-                    if clusters
-                    else {
-                        "cluster_id": "crossover",
-                        "evidence_task_ids": sorted(
-                            set(a["effect"]["fail_to_pass"])
-                            | set(b["effect"]["fail_to_pass"])
-                        ),
-                        "protected_success_task_ids": sorted(
-                            set(a["effect"]["pass_to_pass"])
-                            | set(b["effect"]["pass_to_pass"])
-                        ),
-                    }
-                )
                 ctx = {
+                    **s_context,
                     "parents": [_evolution_parent(a), _evolution_parent(b)],
-                    "root_cause_cluster": cluster,
                     "current_memory": before_s.to_dict(),
                     "policy": domain_policy,
                 }
+                from .evolution_candidates import CROSSOVER_PROMPT
+
+                enforce_mutation_context_budget(
+                    ctx,
+                    CROSSOVER_PROMPT + MUTATOR_PROMPT,
+                    policy["mutation_context"]["max_proxy_tokens"],
+                )
                 mutation = stage(
                     g,
                     "service_crossover",
                     ctx,
                     lambda ctx=ctx: providers.crossover(ctx),
                 )
+                validate_mutation(mutation)
+                validate_direct_evidence(mutation, ctx)
+                cluster = candidate_hypothesis(mutation)
                 row, runs = evaluate_candidate(
                     f"g{g:04d}-crossover",
                     mutation,
@@ -983,7 +974,8 @@ def run_skill_evolution_v2(
                 else "statistical_validation_gated",
                 "validation_evaluated": any(
                     (r["gate"] or {}).get("opponents") for r in board
-                ) and not smoke,
+                )
+                and not smoke,
                 "selection": {
                     "reason": "qualified candidate promoted"
                     if winner
@@ -992,8 +984,19 @@ def run_skill_evolution_v2(
                 "skill_count_before": len(before_s.skills),
                 "skill_count_after": len(service.skills),
                 "candidates": board,
-                "diagnosis": diagnosis,
-                "opponents_replayed": [label for label, _, _ in opponents],
+                "algorithm_version": policy["algorithm_version"],
+                "candidate_budget": evo["candidates_per_generation"],
+                "crossover_budget": int(evo["crossover"]),
+                "opponents_planned": [label for label, _, _ in opponents],
+                "opponents_replayed": [
+                    label
+                    for label, _, _ in opponents
+                    if any(
+                        gate["opponent"] == label and gate["verdict"] != "NOT_EVALUATED"
+                        for row in board
+                        for gate in (row.get("gate") or {}).get("opponents", [])
+                    )
+                ],
                 "exploration": s_context["exploration"],
             },
             "evolution_health": {
@@ -1014,7 +1017,8 @@ def run_skill_evolution_v2(
                     elapsed
                     for key, elapsed in timing["stages"].items()
                     if key.startswith(f"g{g:04d}-service_full_gate")
-                    and "repair-superiority-decision" not in key and not smoke
+                    and "repair-superiority-decision" not in key
+                    and not smoke
                 )
             },
         }
@@ -1107,9 +1111,9 @@ def propose_fresh_customer_v2(
 
     journal = EvolutionJournal(output_directory, manifest_sha256)
     context = {
-        "task_interactions": build_customer_evidence(_context_episodes(
-            result.final_evolution_episodes, runner, tasks
-        )),
+        "task_interactions": build_customer_evidence(
+            _context_episodes(result.final_evolution_episodes, runner, tasks)
+        ),
         "evidence_instructions": CUSTOMER_EVIDENCE_INSTRUCTIONS,
         "current_customer_strategy": result.customer.text,
         "current_service_memory": result.service.to_dict(),
@@ -1143,7 +1147,8 @@ def propose_fresh_customer_v2(
     # One predeclared fresh attempt. Rejection is research evidence, not an exception.
     # Do not relabel an incumbent/archive Customer as a fresh challenge.
     distinct = proposal["strategy"].strip() not in {
-        result.customer.text.strip(), result.initial_customer.text.strip(),
+        result.customer.text.strip(),
+        result.initial_customer.text.strip(),
         *(entry["strategy"].strip() for entry in context["challenge_archive"]),
     }
     customer = PromptStrategy(proposal["strategy"]) if valid and distinct else None
@@ -1155,8 +1160,12 @@ def propose_fresh_customer_v2(
             "evolver_input_sha256": sha256_json(context),
             "status": "available" if customer is not None else "unavailable",
             "selection_protocol": "one E-only proposal; semantic preservation and distinct text required; otherwise native H only",
-            "rejection_reason": None if customer is not None else (
-                "semantic_preservation_failed" if not valid else "not_distinct_from_evolution_customers"
+            "rejection_reason": None
+            if customer is not None
+            else (
+                "semantic_preservation_failed"
+                if not valid
+                else "not_distinct_from_evolution_customers"
             ),
             "strategy": proposal["strategy"],
             "strategy_id": customer_strategy_id(PromptStrategy(proposal["strategy"])),

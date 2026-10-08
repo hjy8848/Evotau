@@ -62,6 +62,9 @@ def _run_from_config(
     config_file = Path(config_path).expanduser().resolve()
     config = load_config(config_file)
     manifest = AlternatingManifest.from_mapping(config)
+    if (manifest.service_carrier == "skill_memory_v2"
+            and json.loads(manifest.skill_evolution_v2_json)["algorithm_version"] != "direct_skill_evolution_v1"):
+        raise ValueError("Legacy Diagnoser config is read-only; create a Direct Skill experiment")
     if not manifest.real_provider_enabled:
         raise RuntimeError("provider calls are disabled in this alternating-run config")
     if (
@@ -491,7 +494,6 @@ def _api_usage_by_role(
         "evaluator": ("nl_assertions_eval",),
         "customer_evolver": ("evotau_customer_evolver",),
         "service_evolver": ("evotau_service_evolver", "evotau_service_skill_evolver", "evotau_service_skill_mutator"),
-        "service_diagnoser": ("evotau_service_diagnoser",),
         "skill_activator": ("evotau_skill_activator",),
         "skill_crossover": ("evotau_skill_crossover",),
         "semantic_validator": ("evotau_customer_semantic_validator", "evotau_skill_semantic_validator"),

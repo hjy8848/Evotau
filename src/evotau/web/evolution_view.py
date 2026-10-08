@@ -97,7 +97,7 @@ def evolution_view(reader, run):
                     "service_proposals",
                     "service_screen",
                     "service_full_gate",
-                    "service_diagnosis",
+                    "service_diagnosis",  # Historical read-only artifact compatibility.
                     "service_crossover",
                 )
             ):

@@ -111,7 +111,7 @@ def test_json_fence_normalization_is_explicit_and_visible_output_retained(tmp_pa
 
     monkeypatch.setattr(LLMAlternatingEvolvers, "_json_call", staticmethod(lambda *a, **kw: alternating._parse_evolver_json('```json\n{"clusters":[]}\n```', call_name=kw["call_name"])))
     provider = V2Providers(LLMAlternatingEvolvers(model="test/model", model_args={"temperature": 0}, output_directory=tmp_path))
-    provider.diagnose({"task_interactions": []})
+    provider.call("offline schema", {"task_interactions": []}, "evotau_service_skill_mutator")
     file = next((tmp_path / "evolver-calls").glob("*/visible-completion.json"))
     record = json.loads(file.read_text())
     assert record["visible_text"].startswith('```json')
@@ -140,7 +140,7 @@ def test_real_tau_generate_collects_stream_inside_one_budgeted_request(tmp_path,
     monkeypatch.setattr(llm_utils, "completion", lambda *a, **kw: original(*a, client=client, **kw))
     budget = RequestBudget(1)
     provider = V2Providers(LLMAlternatingEvolvers(model="openai/deepseek-v4-pro", model_args={"api_base": "https://inferai.invalid/v1", "stream": True}, request_budget=budget, output_directory=tmp_path))
-    assert provider.diagnose({"task_interactions": []}) == {"clusters": []}
+    assert provider.call("offline schema", {"task_interactions": []}, "evotau_service_skill_mutator") == {"clusters": []}
     assert observed[0]["stream"] is True
     assert observed[0]["stream_options"] == {"include_usage": True}
     assert budget.snapshot().attempts == 1

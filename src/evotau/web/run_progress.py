@@ -19,7 +19,7 @@ _STAGE_NAMES = {
     "customer_incumbent": "Customer incumbent evaluation",
     "customer_candidates": "Customer candidates",
     "customer_selection": "Customer selection",
-    "service_diagnosis": "Service failure diagnosis",
+    "service_diagnosis": "Legacy service failure diagnosis",
     "service_proposals": "Service mutation proposals",
     "service_screen": "Cheap paired candidate screen",
     "service_crossover": "Complementary crossover",
@@ -571,7 +571,6 @@ def read_run_progress(
             for name, records in sorted(grouped.items())[-12:]
         ]
         result["evolution_stages"] = [
-            "service_diagnosis",
             "service_proposals",
             "service_screen",
             "service_crossover",

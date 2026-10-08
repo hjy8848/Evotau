@@ -9,8 +9,8 @@ E native incumbent rollouts
   → task-faithful Customer proposal + semantic validation
   → native E candidate score (strictly lower wins; ties retain incumbent)
   → observed failing interactions + similar passing controls + bounded effect summary
-  → Diagnose (skill / tool_boundary / runtime_protocol / stochastic_or_weak)
-  → three independently frozen proposal biases per selected skill cluster
+  → deterministic compressed E-wide overviews + bounded raw contrasts
+  → Direct Skill Mutator: same-call hypothesis + three independent proposal biases
   → structural/semantic/budget/dedup checks
   → paired screen: targets + protected passes + prior fixes + seeded clean tasks
   → full E paired attribution for screen survivors
@@ -32,7 +32,7 @@ Customer proposal/validation can see E scenarios. Service diagnosis/mutation can
 | `service_skills.py`, `skill_evolution_config.py` | V2 signatures/memory, typed edits, count/character/token budgets, strict frozen settings |
 | `skill_activation.py`, `tau_adapter.py`, `tau_episode_runner.py` | Direct native agent subclass, observable activation, per-turn sidecars, native completed-episode cache |
 | `evolution_failures.py`, `evolution_gate.py` | Paired task×seed effects, failure matrix, cheap screen, task-block bootstrap and promotion |
-| `evolution_candidates.py` | Diagnose/mutate/crossover/semantic-validation prompts and exact recorded-call recovery |
+| `evolution_candidates.py` | Direct mutation/crossover/semantic-validation prompts and exact recorded-call recovery |
 | `evolution_archive.py`, `evolution_history.py` | Semantic dedup, Pareto-capped archive, complementary ancestry, Customer replay, bounded history/stagnation |
 | `evolution_artifacts.py`, `skill_evolution.py` | Immutable stage journal, activation summary, staged V2 orchestration and resumable search state |
 | `alternating_manifest.py`, `alternating_run.py` | Manifest binding, V1/V2 dispatch, role usage, final E-only fresh challenge and H scorecard |
@@ -71,7 +71,9 @@ V1 carriers, configurations and static render-all semantics remain supported. V1
 
 The Console renders stored statistics; it does not run providers/bootstrap or select candidates. Checkpoint/journal/sidecar hashes and E/V evidence IDs are verified before rendering. H remains sealed until a complete final endpoint scorecard exists, including a completed E-only run with H disabled. Raw result exposure is suppressed or allowlisted while sealed. Redaction covers activation reason and other free text; real numeric token counts remain visible.
 
-## Configurations and first experiments
+## Configurations and first experiments (historical Diagnoser treatment)
+
+These older configs are read-only under the current algorithm. For new direct runs use [Direct Skill Evolution](direct-skill-evolution.md). Do not run the legacy commands below on current HEAD.
 
 New configurations:
 
@@ -101,7 +103,7 @@ All switches are frozen under `experiment.skill_evolution_v2`, except the corres
 | Full V2 | All default mechanisms enabled |
 | no_activation | Set both runtime selector fields to `render_all_v1`; no activator provider calls; budget covers all rendered skills |
 | no_lineage | `service_evolution.lineage: false`; hide prior edit-effect feedback from proposer, retain audit records |
-| single_candidate | `service_evolution.candidates_per_cluster: 1` |
+| single_candidate | `service_evolution.candidates_per_generation: 1` |
 | no_dedup | `service_evolution.semantic_dedup: false` |
 | no_crossover | `service_evolution.crossover: false` |
 | no_archive | `archive.enabled: false` (current-generation complementary candidates can still cross unless crossover also disabled) |
@@ -113,6 +115,8 @@ All switches are frozen under `experiment.skill_evolution_v2`, except the corres
 For the full search comparison, use matched independent seed replications; preserve every rejection and unknown attempt. Report native success/pass^k, helpfulness/harmfulness/benefit-risk, fixed/broken/persistent/recurring outcomes, stuck/steps/tools, observed protocol evidence, role usage/tokens/wall time, proposals/dedup/screen/gates/archive/crossover and V/H flags. More search looks change the correction and compute cost; this is part of the treatment, not hidden.
 
 ## Verification and saved offline evidence
+
+Current Direct Skill tests and context measurements are documented in [Direct Skill Evolution](direct-skill-evolution.md). The following saved exports and counts describe the historical treatment.
 
 ```bash
 TAU2_DATA_DIR=/path/to/pinned/data python -m pytest -q
@@ -135,11 +139,11 @@ The following are the **design influences supplied in the task**, not claims of 
 
 | Supplied influence | V2 design use |
 |---|---|
-| Beyond Prompts / PRISM | root-cause routing, passing controls, constrained edits and reliability risk |
+| Beyond Prompts / PRISM | observable root-cause hypotheses, passing controls, constrained edits and reliability risk |
 | POLCA | stochastic seeds, retained candidates and bounded historical summaries |
 | GEPA | per-instance effects, locally useful losers and complementary synthesis |
 | SEPO | typed structural edits, newly fixed/broken lineage and prompt budgets |
-| ESPO | Diagnose/Diversify/Stabilize and independent proposal biases |
+| ESPO | same-call reflection/diversification/stabilization and independent proposal biases |
 | Reinforced Agent | helpfulness/harmfulness as repair diagnostics |
 | SAGE statistical gate | regression-aware conservative uncertainty handling |
 | EvolveMem | structured actions, reject regressions and explore stagnation |
@@ -148,7 +152,7 @@ The following are the **design influences supplied in the task**, not claims of 
 | AgentSquare / AFlow | modular recombination, staged screening and branching candidates |
 | Self-play / Reflective Experience Replay | archived adversaries and native clean replay |
 
-Live activation applicability, semantic validators, diagnosis quality, mutation diversity and useful crossover remain empirical risks. The semantic duplicate check is a deterministic combined structure/family/text/delta heuristic, not a proof of semantic equivalence; a misleading delta claim can evade some near-duplicate detection. Multi-seed evaluation, replay and per-turn activation add compute and provider latency. Formal statistical power is limited by independent V tasks, and repeated seeds/provider determinism may not be independent draws. The offline delivery does not establish live effectiveness. The subsequent controlled InferAI diagnostic below remains incomplete.
+Live activation applicability, semantic validators, direct hypothesis quality, mutation diversity and useful crossover remain empirical risks. The semantic duplicate check is a deterministic combined structure/family/text/delta heuristic, not a proof of semantic equivalence; a misleading delta claim can evade some near-duplicate detection. Multi-seed evaluation, replay and per-turn activation add compute and provider latency. Formal statistical power is limited by independent V tasks, and repeated seeds/provider determinism may not be independent draws. The offline delivery does not establish live effectiveness. The subsequent controlled InferAI diagnostic below remains incomplete.
 
 
 ## Gate calibration and controlled live measurement

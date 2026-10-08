@@ -89,7 +89,7 @@ def test_legacy_missing_tool_ids_protects_adjacent_result_block_and_exact_fields
 
 
 def test_service_overviews_cover_all_cells_without_hidden_metadata():
-    from evotau.evolution_context import build_service_diagnosis_evidence
+    from evotau.evolution_context import build_service_mutation_evidence
     source = [row(str(i), i >= 3) for i in range(20)]
     source.append(row('0', True))
     source[-1]['seed'] = 2
@@ -97,9 +97,9 @@ def test_service_overviews_cover_all_cells_without_hidden_metadata():
         item['task']['description'] = 'secret-hidden'
         item['private_metadata'] = 'secret-hidden'
     before = deepcopy(source)
-    result = build_service_diagnosis_evidence(source)
+    result = build_service_mutation_evidence(source)
     assert source == before
-    assert result == build_service_diagnosis_evidence(source)
+    assert result == build_service_mutation_evidence(source)
     assert [(r['task']['task_id'], r['seed']) for r in result] == [
         (r['task']['task_id'], r['seed']) for r in source]
     assert all(set(r['task']) == {'task_id'} for r in result)
@@ -112,29 +112,25 @@ def test_service_overviews_cover_all_cells_without_hidden_metadata():
 
 
 def test_service_controls_match_visible_tools_and_unknown_is_not_failure():
-    from evotau.evolution_context import build_service_diagnosis_evidence
+    from evotau.evolution_context import build_service_mutation_evidence
     source = [row('a', False), row('b', True), row('c', True)]
     source[1]['trajectory']['messages'] = [{'role': 'user', 'content': 'Unrelated'}]
-    result = build_service_diagnosis_evidence(source, representative_cases=2)
+    result = build_service_mutation_evidence(source, representative_cases=2)
     assert [r['task']['task_id'] for r in result if r['representative_case']] == ['a', 'c']
     source[0]['native_evaluation']['task_success'] = None
     with pytest.raises(ValueError, match='boolean'):
-        build_service_diagnosis_evidence(source)
+        build_service_mutation_evidence(source)
 
 
-def test_diagnoser_schema_allows_overview_only_panel_ids(monkeypatch):
-    from evotau.alternating import LLMAlternatingEvolvers
-    from evotau.evolution_candidates import V2Providers
-    from evotau.evolution_context import build_service_diagnosis_evidence
-    rows = [row(ident, ident == 'z') for ident in ('a', 'b', 'c', 'd', 'e', 'z')]
-    context = {'task_interactions': build_service_diagnosis_evidence(rows),
-               'current_outcomes': [{'task_id': r['task']['task_id'],
-                                     'task_success': r['native_evaluation']['task_success']} for r in rows]}
-    assert not next(r for r in context['task_interactions'] if r['task']['task_id'] == 'd')['representative_case']
-    provider = V2Providers(LLMAlternatingEvolvers(model='offline', model_args={}))
-    result = {'clusters': [{'cluster_id': 'observed', 'root_cause': 'Evidence is insufficient for a causal skill claim.',
-                           'evidence_task_ids': ['d'], 'protected_success_task_ids': ['z'],
-                           'recommended_surface': 'stochastic_or_weak',
-                           'recommended_mutation_types': [], 'risk': 'Incomplete detailed evidence.'}]}
-    monkeypatch.setattr(provider, 'call', lambda *args: result)
-    assert provider.diagnose(context) == result
+
+
+def test_service_drops_accidental_gold_evaluation_fields_and_can_expand():
+    from evotau.evolution_context import build_service_mutation_evidence
+    source = [row(str(i), i >= 7) for i in range(20)]
+    for item in source:
+        item['native_evaluation']['gold_targets'] = 'GOLD_SECRET'
+        item['task']['user_scenario'] = 'HIDDEN_SECRET'
+    result = build_service_mutation_evidence(source, representative_cases=8)
+    assert len(result) == 20
+    assert sum(r['representative_case'] for r in result) == 8
+    assert 'GOLD_SECRET' not in str(result) and 'HIDDEN_SECRET' not in str(result)

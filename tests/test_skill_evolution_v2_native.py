@@ -50,7 +50,10 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
         "model": "offline-activator",
         "model_args": {"temperature": 0},
     }
-    policy["service_evolution"]["candidates_per_cluster"] = 1
+    policy["algorithm_version"] = "direct_skill_evolution_v1"
+    policy["service_evolution"].pop("max_clusters_per_generation", None)
+    policy["service_evolution"].pop("candidates_per_cluster", None)
+    policy["service_evolution"]["candidates_per_generation"] = 1
     policy["service_evolution"]["crossover"] = False
     directory = tmp_path / "configs"
     directory.mkdir()
@@ -66,7 +69,7 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
         calls.append(model)
         system = messages[0]["content"]
         if not injected and failure_kind and (
-            (model == "offline-evolver" and "Failure Diagnoser" in system
+            (model == "offline-evolver" and "Direct Service Skill Mutator" in system
              and failure_kind != "native_exception")
             or (model == "offline-activator" and failure_kind == "native_exception")
         ):
@@ -134,22 +137,6 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
                         ]
                     }
                 )
-            elif "Failure Diagnoser" in system:
-                content = json.dumps(
-                    {
-                        "clusters": [
-                            {
-                                "cluster_id": "scope",
-                                "root_cause": "Scope ambiguity.",
-                                "evidence_task_ids": ["66"],
-                                "protected_success_task_ids": [],
-                                "recommended_surface": "skill",
-                                "recommended_mutation_types": ["add"],
-                                "risk": "Overhead.",
-                            }
-                        ]
-                    }
-                )
             elif "Validate only whether" in system:
                 content = json.dumps(
                     {
@@ -163,6 +150,14 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
                 content = json.dumps(
                     {
                         "analysis": "One local repair; fix count 1; risk count 0.",
+                        "root_cause_hypothesis": "Scope ambiguity.",
+                        "expected_effect": "Clarify only necessary scope.",
+                        "regression_risk": "Extra confirmation overhead.",
+                        "evidence_refs": [{"task_id": row["task"]["task_id"], "seed": row["seed"],
+                                           "trajectory_ref": row["trajectory_ref"],
+                                           **row["trajectory"]["messages"][0]["evidence_ref"]}
+                                          for row in json.loads(messages[-1]["content"])["task_interactions"]
+                                          if row["task"]["task_id"] == "66"],
                         "semantic_family": "scope",
                         "target_cluster_id": "scope",
                         "operation": "add",
@@ -176,8 +171,8 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
                                 "interaction_phase": ["before_confirmation"],
                             },
                         },
-                        "expected_fixes": ["66"],
-                        "protected_cases_at_risk": [],
+                        "evidence_task_ids": ["66"],
+                        "protected_success_task_ids": [],
                         "substantive_delta_from_prior": "",
                     }
                 )
@@ -239,7 +234,7 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
         assert failure["failure_type"] and failure["failure_message"]
         stage = failure["last_generation_stage"]["stage"]
         assert ("service_screen" in stage if failure_kind == "native_exception"
-                else stage == "service_diagnosis")
+                else stage.startswith("service_proposals"))
         assert not (output / "evolution-v2/g0000-generation_complete.json").exists()
         frozen = {p: p.read_bytes() for p in output.glob("evolution-v2/*.json")}
         frozen.update({p: p.read_bytes() for p in output.glob("episodes/*/episode-record.json")})
@@ -247,7 +242,7 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
         before = len(calls)
         if failure_kind == "schema_error":
             # A parsed but invalid model result is not silently repaired on resume.
-            with pytest.raises(ValueError, match="unknown recommended mutation"):
+            with pytest.raises(ValueError, match="invalid mutation fields"):
                 run_from_config(file, tau2_data_dir=data)
             assert len(calls) == before
             assert all(p.read_bytes() == content for p, content in frozen.items())
@@ -262,10 +257,8 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
     assert result["api_usage_by_role"]["reviewer"]["calls"] == 0
     assert result["provider_usage"]["attempts"] == len(calls)
     assert result["api_usage_by_role"]["customer_evolver"]["calls"] == 1
-    assert result["api_usage_by_role"]["service_evolver"]["calls"] == 1
-    assert result["api_usage_by_role"]["service_diagnoser"]["calls"] == (
-        2 if failure_kind and failure_kind != "native_exception" else 1
-    )
+    assert result["api_usage_by_role"]["service_evolver"]["calls"] == (2 if failure_kind in ("malformed_json", "http_timeout", "budget_exhaustion") else 1)
+    assert "evotau_service_diagnoser" not in result["api_usage_by_call_name"]
     assert result["api_usage_by_role"]["semantic_validator"]["calls"] == 2
     summary = result["generations"][-1]["activation_summary"]
     assert summary["available"] and summary["activated_turns"] > 0
@@ -354,7 +347,7 @@ def test_v2_evolver_real_generate_boundary_honors_request_cap(monkeypatch):
     provider = V2Providers(
         LLMAlternatingEvolvers(model="offline", model_args={}, request_budget=budget)
     )
-    assert provider.call("tiny", {}, "evotau_service_diagnoser") == {"ready": True}
+    assert provider.call("tiny", {}, "evotau_service_skill_mutator") == {"ready": True}
     with pytest.raises(ProviderBudgetExceeded):
         provider.call("another", {}, "evotau_service_skill_mutator")
     assert len(dispatches) == 1 and budget.snapshot().attempts == 1

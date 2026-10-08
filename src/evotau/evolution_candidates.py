@@ -49,46 +49,35 @@ def _schema_checked(method):
     return checked
 
 
-DIAGNOSER_PROMPT = """You are the EvoTau Service Failure Diagnoser. Your task is NOT to write a repair.
-Group native failures by reusable behavioral/procedural ROOT CAUSE, not task identity or tool name.
-Inspect structurally similar passing cases and explicitly identify regression risk. Prior mutation
-fixes AND breaks and interaction costs are evidence. Do not convert every failure into a skill.
-Return JSON {"clusters":[{"cluster_id":"...","root_cause":"...","evidence_task_ids":[],
-"protected_success_task_ids":[],"recommended_surface":"skill|tool_boundary|runtime_protocol|stochastic_or_weak",
-"recommended_mutation_types":[],"risk":"..."}]}.
-The output must conform exactly to this strict JSON schema; do not add fields.
-root_cause describes the observed failure mechanism in natural language.
-recommended_surface must be exactly one of skill, tool_boundary, runtime_protocol,
-stochastic_or_weak. recommended_mutation_types must be a JSON array whose elements
-are only add, narrow_trigger, expand_trigger, rewrite_guidance, split, delete, no_op.
-Do not put failure categories, root causes, mechanism names or invented labels in
-recommended_mutation_types. For a non-skill problem, do not force a skill mutation;
-an empty recommended_mutation_types array is valid. Never repair native backend,
-policy, evaluator or runtime protocol through a skill recommendation.
-Native policy, tools, backend, evaluation, facts and objectives are immutable. No hidden targets."""
-MUTATOR_PROMPT = """You are the EvoTau Service Skill Mutator. Make ONE minimal attributable structural edit.
-Use target failures AND protected passing cases, previous fixed/broken cases, native policy,
-current accepted memory, failure matrix, and accepted AND rejected mutation effects.
-Explain expected fix count and risk count. Rejected repairs with useful local fixes should first
-be narrowed or simplified. Do not repeat an equivalent rejected mechanism without a substantive
-new mechanism or applicability boundary. Keep edits local; guidance rewrite preserves applicability;
-trigger edits preserve guidance. Prefer deletion/simplification over caveats when overhead/max_steps
-is the problem. Never add task IDs, people, order IDs, product names, addresses, hidden targets or new
-facts/objectives. Guidance is subordinate to native policy and visible backend evidence.
-Bias A: narrow applicability; B: minimal behavior and fewer confirmations; C: structural decomposition.
-On EXPLORE_ON_STAGNATION choose another cluster, different mutation type or distinct archive mechanism;
-prefer SPLIT/DELETE over repeating the same semantic family. NO_OP is valid.
-Return JSON {"analysis":"...","semantic_family":"...","target_cluster_id":"...",
+MUTATOR_PROMPT = """You are the EvoTau Direct Service Skill Mutator. Analyze observed E failures and
+passing controls, then propose ONE minimal reusable behavioral repair in this same inference.
+No upstream diagnosis or repair-surface label decides whether you may try a skill.
+Runtime termination or uncertain reward may still reveal behavioral opportunities, but never
+change native task/policy/tools/evaluator/step limits, invent hidden goals, or assert an unseen cause.
+Use all E result overviews, retained raw failure evidence and success contrasts, accepted/rejected
+mutation effects, current memory, prior fixes/breaks, native policy and the supplied proposal_bias.
+Preserve narrow applicability, minimal behavior, and structural decomposition as distinct searches.
+On stagnation explore a different hypothesis or archive mechanism. Do not repeat an equivalent
+rejected repair without a substantive delta. Keep guidance subordinate to native policy.
+Return exactly the structured mutation schema:
+{"analysis":"...","root_cause_hypothesis":"observable hypothesis or evidence insufficiency",
+"semantic_family":"...","target_cluster_id":"candidate-owned short hypothesis identifier",
 "operation":"add|narrow_trigger|expand_trigger|rewrite_guidance|split|delete|no_op",
-"target_skill_id":null,"skill":null,"children":[],"expected_fixes":[],"protected_cases_at_risk":[],
-"substantive_delta_from_prior":"..."}.
-A skill payload has exactly trigger, guidance, activation_signature (positive_conditions,
-negative_conditions, interaction_phase arrays). SPLIT uses exactly two child payloads. No skill IDs.
-expected_fixes and protected_cases_at_risk are JSON arrays of task ID strings from
-the supplied task_interactions only (for example ["98"]), or supplied parent effect
-and root-cause-cluster case IDs for crossover. Never use descriptions,
-counts or invented IDs. Put explanations and fix/risk count estimates in analysis.
-An empty task ID array is valid when no corresponding case is supported."""
+"target_skill_id":null,"skill":null,"children":[],"evidence_task_ids":[],
+"protected_success_task_ids":[],"evidence_refs":[],"expected_effect":"...",
+"regression_risk":"...","substantive_delta_from_prior":"..."}.
+Each evidence_ref has exactly task_id, seed, trajectory_ref, projected_message_index,
+message_sha256 copied from a supplied retained raw message and its containing row.
+Targets must be observed failed E tasks; controls must be observed successful E tasks.
+Every non-NO_OP target must have at least one such original-message reference. Never cite omitted
+messages or fabricate indices/hashes. Partial excerpts/JSON field projections are explicitly marked:
+do not infer omitted fields. References may only support declared targets or controls.
+Skill payloads have exactly trigger, guidance, activation_signature (positive_conditions,
+negative_conditions, interaction_phase arrays). SPLIT has exactly two children, no skill IDs.
+NO_OP is valid: use null skill/target_skill_id, no children, explain insufficiency in
+root_cause_hypothesis/expected_effect/regression_risk; empty case/ref arrays are valid.
+Do not force a Skill when evidence is insufficient. No hidden scenarios, gold targets or V/H data.
+"""
 CROSSOVER_PROMPT = """You are the EvoTau Skill Crossover Architect. Given two non-deployed mutations
 with complementary validated local fixes, synthesize the smallest coherent child. Identify each
 parent's fixes, regressions, useful mechanism and unsafe scope. Preserve only evidence-supported
@@ -189,87 +178,10 @@ class V2Providers:
         return result
 
     @_schema_checked
-    def diagnose(self, context):
-        result = self.call(DIAGNOSER_PROMPT, context, "evotau_service_diagnoser")
-        allowed = {x["task"]["task_id"] for x in context["task_interactions"]}
-        clusters = result.get("clusters")
-        if set(result) != {"clusters"} or not isinstance(clusters, list):
-            raise TypeError("diagnosis must contain clusters")
-        identifiers = []
-        for cluster in clusters:
-            fields = {
-                "cluster_id",
-                "root_cause",
-                "evidence_task_ids",
-                "protected_success_task_ids",
-                "recommended_surface",
-                "recommended_mutation_types",
-                "risk",
-            }
-            if (
-                not isinstance(cluster, dict)
-                or set(cluster) != fields
-                or not all(
-                    isinstance(cluster[k], str) and cluster[k]
-                    for k in ("cluster_id", "root_cause", "risk")
-                )
-            ):
-                raise ValueError("invalid root-cause cluster")
-            if any(char in cluster["cluster_id"] for char in ("/", "\\", "\x00")):
-                raise ValueError("cluster ID cannot contain path separators")
-            for key in ("evidence_task_ids", "protected_success_task_ids"):
-                if not isinstance(cluster[key], list) or any(
-                    not isinstance(value, str) for value in cluster[key]
-                ):
-                    raise ValueError("diagnosis case IDs must be string arrays")
-            if cluster["recommended_surface"] not in (
-                "skill",
-                "tool_boundary",
-                "runtime_protocol",
-                "stochastic_or_weak",
-            ):
-                raise ValueError("unknown repair surface")
-            mutation_types = cluster["recommended_mutation_types"]
-            if not isinstance(mutation_types, list) or any(
-                not isinstance(value, str) for value in mutation_types
-            ):
-                raise ValueError(
-                    "recommended mutation types must be a JSON string array"
-                )
-            if not set(mutation_types) <= set(V2_MUTATION_TYPES):
-                raise ValueError("unknown recommended mutation")
-            if (
-                not set(
-                    cluster["evidence_task_ids"] + cluster["protected_success_task_ids"]
-                )
-                <= allowed
-            ):
-                raise ValueError("diagnosis references unseen or held-out evidence")
-            identifiers.append(cluster["cluster_id"])
-            outcomes = {
-                row["task_id"]: row["task_success"]
-                for row in context.get("current_outcomes", [])
-            }
-            if outcomes and (
-                any(outcomes.get(t) is not False for t in cluster["evidence_task_ids"])
-                or any(
-                    outcomes.get(t) is not True
-                    for t in cluster["protected_success_task_ids"]
-                )
-            ):
-                raise ValueError(
-                    "diagnosis target/protected labels disagree with native E evidence"
-                )
-        if len(set(identifiers)) != len(identifiers):
-            raise ValueError("duplicate cluster IDs")
-        return result
-
-    @_schema_checked
-    def mutate(self, context):
+    def propose_skill_mutation(self, context):
         result = self.call(MUTATOR_PROMPT, context, "evotau_service_skill_mutator")
-        # A malformed provider proposal is an engineering failure, not bad fitness.
         validate_mutation(result)
-        _validate_mutation_case_references(result, context)
+        validate_direct_evidence(result, context)
         return result
 
     @_schema_checked
@@ -278,7 +190,7 @@ class V2Providers:
             CROSSOVER_PROMPT + "\n" + MUTATOR_PROMPT, context, "evotau_skill_crossover"
         )
         validate_mutation(result)
-        _validate_mutation_case_references(result, context)
+        validate_direct_evidence(result, context)
         return result
 
     @_schema_checked
@@ -352,19 +264,86 @@ def _validator_result(result, flags):
     return result
 
 
-def _validate_mutation_case_references(result, context):
-    if "task_interactions" in context:
-        allowed = {row["task"]["task_id"] for row in context["task_interactions"]}
-    else:
-        cluster = context["root_cause_cluster"]
-        allowed = set(
-            cluster["evidence_task_ids"] + cluster["protected_success_task_ids"]
+def validate_direct_evidence(result, context):
+    """Bind hypotheses to supplied observed E cells; never reinterpret provider output."""
+    rows = context["task_interactions"]
+    failed = {
+        row["task"]["task_id"]
+        for row in rows
+        if row["native_evaluation"]["task_success"] is False
+    }
+    passed = {
+        row["task"]["task_id"]
+        for row in rows
+        if row["native_evaluation"]["task_success"] is True
+    }
+    if (
+        not set(result["evidence_task_ids"]) <= failed
+        or not set(result["protected_success_task_ids"]) <= passed
+    ):
+        raise ValueError(
+            "mutation target/protected labels disagree with observed E outcomes"
         )
-        for parent in context.get("parents", []):
-            for key in ("fail_to_pass", "pass_to_fail", "pass_to_pass", "fail_to_fail"):
-                allowed.update(parent["effect"].get(key, []))
-    if not set(result["expected_fixes"] + result["protected_cases_at_risk"]) <= allowed:
-        raise ValueError("mutation case references must name observed task IDs")
+    registry = {}
+    for row in rows:
+        outcome = row["native_evaluation"]["task_success"]
+        if type(outcome) is not bool:
+            raise ValueError("mutation evidence requires known boolean outcomes")
+        for item in row["trajectory"]["messages"]:
+            ref = item["evidence_ref"]
+            key = (
+                row["task"]["task_id"],
+                row["seed"],
+                row["trajectory_ref"],
+                ref["projected_message_index"],
+                ref["message_sha256"],
+            )
+            registry[key] = outcome
+    fields = (
+        "task_id",
+        "seed",
+        "trajectory_ref",
+        "projected_message_index",
+        "message_sha256",
+    )
+    cited = set()
+    for ref in result["evidence_refs"]:
+        if (
+            not isinstance(ref, dict)
+            or set(ref) != set(fields)
+            or type(ref["seed"]) is not int
+            or type(ref["projected_message_index"]) is not int
+            or any(
+                not isinstance(ref[key], str)
+                for key in ("task_id", "trajectory_ref", "message_sha256")
+            )
+        ):
+            raise ValueError("invalid evidence reference schema")
+        if tuple(ref[key] for key in fields) not in registry:
+            raise ValueError("evidence reference is not a supplied original message")
+        if ref["task_id"] not in set(
+            result["evidence_task_ids"] + result["protected_success_task_ids"]
+        ):
+            raise ValueError(
+                "evidence reference must support a declared target or control"
+            )
+        observed_success = registry[tuple(ref[key] for key in fields)]
+        expected_ids = (
+            result["protected_success_task_ids"]
+            if observed_success
+            else result["evidence_task_ids"]
+        )
+        if ref["task_id"] not in expected_ids:
+            raise ValueError("evidence cell outcome disagrees with target/control role")
+        if not observed_success:
+            cited.add(ref["task_id"])
+    if result["operation"] != "no_op" and (
+        not result["evidence_task_ids"] or not set(result["evidence_task_ids"]) <= cited
+    ):
+        raise ValueError(
+            "non-NO_OP mutation requires cited failure evidence for every target"
+        )
+    return result
 
 
 def validate_mutation(result):
@@ -375,8 +354,12 @@ def validate_mutation(result):
         "operation",
         "target_skill_id",
         "skill",
-        "expected_fixes",
-        "protected_cases_at_risk",
+        "evidence_task_ids",
+        "protected_success_task_ids",
+        "root_cause_hypothesis",
+        "evidence_refs",
+        "expected_effect",
+        "regression_risk",
         "substantive_delta_from_prior",
     }
     if (
@@ -392,14 +375,31 @@ def validate_mutation(result):
             "semantic_family",
             "target_cluster_id",
             "substantive_delta_from_prior",
+            "root_cause_hypothesis",
+            "expected_effect",
+            "regression_risk",
         )
     ):
         raise ValueError("invalid mutation identity or intent")
-    for key in ("expected_fixes", "protected_cases_at_risk"):
+    for key in ("evidence_task_ids", "protected_success_task_ids"):
         if not isinstance(result[key], list) or any(
             not isinstance(x, str) for x in result[key]
         ):
             raise ValueError("fix/risk cases must be string arrays")
+    if any(
+        not result[key].strip()
+        for key in (
+            "root_cause_hypothesis",
+            "expected_effect",
+            "regression_risk",
+            "target_cluster_id",
+        )
+    ):
+        raise ValueError("mutation hypotheses/effect/risk must be explicit")
+    if any(char in result["target_cluster_id"] for char in ("/", "\\", "\x00")):
+        raise ValueError("candidate-owned cluster ID cannot contain path separators")
+    if not isinstance(result["evidence_refs"], list):
+        raise TypeError("evidence_refs must be an array")
     from .service_skills import ServiceSkillV2, _validate_v2_draft
 
     target = result["target_skill_id"]
