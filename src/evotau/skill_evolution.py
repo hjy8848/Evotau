@@ -244,9 +244,15 @@ def run_skill_evolution_v2(
             if policy["history"]["summarize"]
             else [_evolution_parent(entry) for entry in effects]
         )
+        from .evolution_context import (
+            CUSTOMER_EVIDENCE_INSTRUCTIONS,
+            build_customer_evidence,
+        )
+
         c_context = {
             "generation": g,
-            "task_interactions": _context_episodes(incumbent, runner, tasks),
+            "task_interactions": build_customer_evidence(_context_episodes(incumbent, runner, tasks)),
+            "evidence_instructions": CUSTOMER_EVIDENCE_INSTRUCTIONS,
             "current_customer_strategy": customer.text,
             "current_service": service.to_dict(),
             "incumbent_accuracy": _accuracy(incumbent),
@@ -1084,12 +1090,17 @@ def propose_fresh_customer_v2(
 ):
     """Freeze and validate the final adaptive challenge using E-only evidence before H loads."""
     from .alternating import _context_episodes, _write_json_once
+    from .evolution_context import (
+        CUSTOMER_EVIDENCE_INSTRUCTIONS,
+        build_customer_evidence,
+    )
 
     journal = EvolutionJournal(output_directory, manifest_sha256)
     context = {
-        "task_interactions": _context_episodes(
+        "task_interactions": build_customer_evidence(_context_episodes(
             result.final_evolution_episodes, runner, tasks
-        ),
+        )),
+        "evidence_instructions": CUSTOMER_EVIDENCE_INSTRUCTIONS,
         "current_customer_strategy": result.customer.text,
         "current_service_memory": result.service.to_dict(),
         "service_policy": domain_policy,
