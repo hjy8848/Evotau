@@ -1,0 +1,100 @@
+{
+  "status": "failed",
+  "stages": [
+    {
+      "stage": "diagnoser",
+      "status": "failed",
+      "error_type": "ValueError",
+      "error": "unknown recommended mutation",
+      "elapsed_seconds": 67.66719733388163
+    },
+    {
+      "stage": "mutator",
+      "status": "complete",
+      "response": {
+        "analysis": "The supplied multi-item failures show a consistent ordering problem: mutation calls send original item IDs out of ascending order, while backend responses reorder the originals and retain the replacement list order. This breaks the intended pairings. A local repair is supported: sort complete original/replacement pairs before constructing the parallel argument lists. Expected full fixes: 1 (case 8). Cases 98 and 21 may benefit, but are not counted as full fixes because unauthorized whole-order cancellation and max_steps termination remain separate problems. Protected cases at risk: 0; cases 29 and 93 use single-item exchange calls, and case 54 performs cancellations and a return without a multi-item replacement. Memory, failure matrix, previous mutation effects, and prior fixed/broken case lists are empty, so there is no prior mechanism to preserve or narrow. The edit adds no tools or confirmation turns and remains subordinate to native policy and visible backend evidence.",
+        "semantic_family": "aligned_multi_item_replacement_order",
+        "target_cluster_id": "readiness-fixture",
+        "operation": "add",
+        "target_skill_id": null,
+        "skill": {
+          "trigger": "Preparing a single pending-order item modification or delivered-order exchange containing at least two original/replacement item pairs for the same order.",
+          "guidance": "Keep each original item ID paired with its selected replacement item ID. Sort the complete pairs by original item ID in ascending order, then derive item_ids and new_item_ids from that same pair sequence; never sort either list independently. Submit the batch once after the confirmation required by native policy.",
+          "activation_signature": {
+            "positive_conditions": [
+              "At least two items in the same order are being replaced in one modification or exchange call",
+              "Each original item has a selected replacement supported by visible product evidence"
+            ],
+            "negative_conditions": [
+              "Only one item is being replaced in the call",
+              "The action is a cancellation or return"
+            ],
+            "interaction_phase": [
+              "Constructing modification or exchange tool arguments"
+            ]
+          }
+        },
+        "children": [],
+        "expected_fixes": [
+          "8"
+        ],
+        "protected_cases_at_risk": [],
+        "substantive_delta_from_prior": "First mutation: adds a narrowly applicable ordering procedure for complete replacement pairs, grounded in the supplied backend responses."
+      },
+      "elapsed_seconds": 40.2066089999862
+    },
+    {
+      "stage": "skill_validator",
+      "status": "complete",
+      "response": {
+        "reusable": true,
+        "policy_subordinate": false,
+        "no_task_entities": true,
+        "reason": "The skill describes a reusable workflow without task-specific entities. However, it unconditionally directs the agent to say that instructions will be emailed after any action. Native policy supports that statement only for returns and exchanges, so applying it to cancellations or modifications would violate the prohibition on inventing information or procedures."
+      },
+      "elapsed_seconds": 14.85412345896475
+    },
+    {
+      "stage": "customer_validator",
+      "status": "complete",
+      "response": {
+        "preserves_facts": true,
+        "preserves_objective": false,
+        "interaction_only": false,
+        "no_benchmark_leakage": true,
+        "reason": "The strategy restricts factual details to supplied information or database-confirmed facts and introduces no benchmark internals, but it conflicts with several scenario-specific requirements. Mei Ahmed must not immediately confirm the skateboard return because she also wants to return the smart watch and e-reader; the strategy instead mandates terse approval at confirmation. Mei Kovacs must exchange only the desk lamp when asked for confirmation, whereas approving the listed actions could also authorize the water bottle exchange. Sofia Li must mention the bicycle and puzzle exchanges together and request the other card at confirmation; fragmenting every subgoal and replying with approval does not preserve those requirements. Aarav Lee requires cancellation of the entire order if any issues arise, but the strategy permits cancellation only after the primary option is established as impossible. These conflicts affect requested actions, timing-dependent choices, and fallback conditions, so the strategy does not preserve every objective and is not solely an interaction-pattern change."
+      },
+      "elapsed_seconds": 18.34669675002806
+    }
+  ],
+  "provider_usage": {
+    "cap": 4,
+    "attempts": 4,
+    "successes": 4,
+    "failures": 0,
+    "denied": 0,
+    "prompt_tokens": 129341,
+    "completion_tokens": 3913,
+    "usage_responses": 4,
+    "usage_unavailable": 0,
+    "cache_hits": 0,
+    "in_flight": 0,
+    "reserved": 0,
+    "model_usage": [
+      {
+        "model_id": "openai/gpt-6.1-sol",
+        "attempts": 4,
+        "successes": 4,
+        "failures": 0,
+        "denied": 0,
+        "prompt_tokens": 129341,
+        "completion_tokens": 3913,
+        "usage_responses": 4,
+        "usage_unavailable": 0,
+        "cache_hits": 0,
+        "in_flight": 0
+      }
+    ]
+  },
+  "native_episodes": 0
+}

@@ -1,0 +1,35 @@
+{
+  "stage": "mutator",
+  "status": "complete",
+  "response": {
+    "analysis": "The supplied multi-item failures show a consistent ordering problem: mutation calls send original item IDs out of ascending order, while backend responses reorder the originals and retain the replacement list order. This breaks the intended pairings. A local repair is supported: sort complete original/replacement pairs before constructing the parallel argument lists. Expected full fixes: 1 (case 8). Cases 98 and 21 may benefit, but are not counted as full fixes because unauthorized whole-order cancellation and max_steps termination remain separate problems. Protected cases at risk: 0; cases 29 and 93 use single-item exchange calls, and case 54 performs cancellations and a return without a multi-item replacement. Memory, failure matrix, previous mutation effects, and prior fixed/broken case lists are empty, so there is no prior mechanism to preserve or narrow. The edit adds no tools or confirmation turns and remains subordinate to native policy and visible backend evidence.",
+    "semantic_family": "aligned_multi_item_replacement_order",
+    "target_cluster_id": "readiness-fixture",
+    "operation": "add",
+    "target_skill_id": null,
+    "skill": {
+      "trigger": "Preparing a single pending-order item modification or delivered-order exchange containing at least two original/replacement item pairs for the same order.",
+      "guidance": "Keep each original item ID paired with its selected replacement item ID. Sort the complete pairs by original item ID in ascending order, then derive item_ids and new_item_ids from that same pair sequence; never sort either list independently. Submit the batch once after the confirmation required by native policy.",
+      "activation_signature": {
+        "positive_conditions": [
+          "At least two items in the same order are being replaced in one modification or exchange call",
+          "Each original item has a selected replacement supported by visible product evidence"
+        ],
+        "negative_conditions": [
+          "Only one item is being replaced in the call",
+          "The action is a cancellation or return"
+        ],
+        "interaction_phase": [
+          "Constructing modification or exchange tool arguments"
+        ]
+      }
+    },
+    "children": [],
+    "expected_fixes": [
+      "8"
+    ],
+    "protected_cases_at_risk": [],
+    "substantive_delta_from_prior": "First mutation: adds a narrowly applicable ordering procedure for complete replacement pairs, grounded in the supplied backend responses."
+  },
+  "elapsed_seconds": 40.2066089999862
+}

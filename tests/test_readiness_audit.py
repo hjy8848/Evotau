@@ -176,3 +176,17 @@ def test_readiness_import_contract_allows_only_E_expansion():
     changed = deepcopy(child)
     changed["role_model_args"]["agent"]["temperature"] = .5
     assert module.contract(parent) != module.contract(changed)
+
+
+def test_representative_audit_routes_credentials_to_frozen_protocol():
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "representative_credential_binding", root / "experiments/execution/audit-v2-provider-readiness.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.credential_binding({"api_base": "https://inferaiapi.com/v1"}) == (
+        "openai-api-key", "OPENAI_API_KEY")
+    assert module.credential_binding({"api_protocol": "responses"}) == (
+        "openai-gpt-api-key", "INFERAI_API_KEY")
+    assert module.credential_binding({"api_protocol": "responses", "api_key_env": "GPT_PROBE_KEY"}) == (
+        "openai-gpt-api-key", "GPT_PROBE_KEY")

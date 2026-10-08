@@ -315,3 +315,35 @@ experiment was started; the alternative config is disabled after the failed
 preflight. Five additional inference requests belong to this separate follow-up,
 not the 128-request audit total above. Raw sanitized evidence and interpretation
 are in [the V4.1 Flash archive](../../experiments/results/v2-readiness-v41flash-thinking-20261008/README.md).
+
+## 8. Explicitly authorized GPT6 follow-up
+
+The user next requested the previously specified `openai/gpt-6.1-sol`. A separate
+disabled config uses the existing InferAI GPT-group Keychain credential and direct
+Responses adapter, with `reasoning.effort=high`, no temperature, no tools, and zero
+automatic retries. The diagnostic helper now selects that protocol's credential
+group explicitly and attaches the existing Responses observer. No evolution
+algorithm, prompt, native role, evaluator or task evidence changed.
+
+Connectivity and all four representative requests returned HTTP200 with
+`status=completed` and visible legal JSON. The 181,114-character Diagnoser context
+completed in 67.67 seconds; the 181,708-character Mutator context in 40.21 seconds.
+All context hashes match the Pro and V4.1 Flash probes. This establishes that
+representative long requests can succeed through this route, not that length had
+no effect on the earlier providers.
+
+The preflight still **failed**: Diagnoser returned unsupported mutation labels
+such as `action_scope_validation`; the strict parser accepts only
+`add,narrow_trigger,expand_trigger,rewrite_guidance,split,delete,no_op`.
+The unchanged Diagnoser prompt does not state that enum, unlike the Mutator prompt.
+This is a concrete prompt/schema contract gap. The original output is preserved;
+no label translation, output repair, prompt change or retry was performed in this
+model-only comparison. Mutator and both Validators passed their structure checks;
+the Validators rejected their declared independent fixtures semantically. They
+are not evidence of a successful connected diagnosis → mutation → screen → gate.
+
+This follow-up used five requests, 133,589 reported prompt tokens and 3,933
+reported completion tokens, with usage available on every response. It executed
+zero native episodes and promoted zero skills. Full offline tests passed (227);
+formal budget and launch authorization remain outstanding. Evidence is in
+[the GPT6 archive](../../experiments/results/v2-readiness-gpt61sol-20261008/README.md).

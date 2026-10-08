@@ -1,0 +1,90 @@
+{
+  "status": "parsed",
+  "response": {
+    "clusters": [
+      {
+        "cluster_id": "action_scope_exceeds_confirmation",
+        "root_cause": "The agent treated confirmation of an item-level request as authorization for an order-level action without first checking the action's full scope. In task 98, the customer repeatedly confirmed cancellation of the skateboard, but the agent cancelled an order containing four items. It recognized the scope mismatch only after the mutation. The customer's later acceptance does not establish prior authorization.",
+        "evidence_task_ids": [
+          "98"
+        ],
+        "protected_success_task_ids": [
+          "54"
+        ],
+        "recommended_surface": "skill",
+        "recommended_mutation_types": [
+          "action_scope_validation",
+          "confirmation_scope_tracking"
+        ],
+        "risk": "Task 54 demonstrates successful cancellation of entire multi-item orders after a summary naming their contents and explicit confirmation. A blanket rule against cancelling multi-item orders would regress this success. Additional clarification should depend on a mismatch between the requested scope and the available action, rather than becoming mandatory for every cancellation. Task 98 also has a separate replacement-mapping anomaly, so cancellation scope cannot be established as its sole reward-zero cause."
+      },
+      {
+        "cluster_id": "replacement_mapping_changes_at_boundary",
+        "root_cause": "Multi-item replacement requests are submitted in conversational order, while returned state reorders the original-item list without correspondingly reordering the replacement-item list. In task 8, the request pairs water bottle with water bottle and lamp with lamp, but the response stores originals as lamp then bottle and replacements as bottle then lamp. Task 98 similarly submits bicycle then puzzle, while returned originals are puzzle then bicycle and replacements remain bicycle then puzzle. Successful status and aggregate price differences mask the loss of positional correspondence.",
+        "evidence_task_ids": [
+          "8",
+          "98"
+        ],
+        "protected_success_task_ids": [
+          "29",
+          "93"
+        ],
+        "recommended_surface": "tool_boundary",
+        "recommended_mutation_types": [
+          "replacement_mapping_contract_clarification",
+          "boundary_invariant_validation"
+        ],
+        "risk": "The submitted pairings are semantically correct; the observable anomaly occurs in returned state. Evaluation details are absent, so its exact contribution to native failure remains inferred. Task 29 successfully handles two exchanges on separate orders, and task 93 handles one item; neither exhibits the within-order ordering issue. Boundary guidance must preserve these successes and must not prohibit supported multi-item exchanges, split a once-per-order action into multiple mutations, or alter the immutable backend."
+      },
+      {
+        "cluster_id": "avoidable_interactions_exhaust_completion_budget",
+        "root_cause": "The agent spends interactions on discovery questions and repeated confirmations after enough information is available to continue. Task 21 asks whether to inspect orders already accessible from the authenticated profile, performs overlapping item and product lookups, attempts an item lookup using a product ID already present in the order, and requests another confirmation after the customer explicitly approves both replacements, payment, and completeness. The requested mutation and subsequent balance answer are delivered, but the episode reaches max_steps before customer closure.",
+        "evidence_task_ids": [
+          "21"
+        ],
+        "protected_success_task_ids": [
+          "29",
+          "54",
+          "93"
+        ],
+        "recommended_surface": "skill",
+        "recommended_mutation_types": [
+          "confirmation_state_tracking",
+          "redundant_discovery_reduction"
+        ],
+        "risk": "Task 21 reaches 37 steps, compared with successful tasks 29, 54, and 93 at 29, 34, and 26 steps. Those passing trajectories also contain clarification or repeated summaries, so reducing turns indiscriminately could remove necessary authorization, variant selection, or collection of all changes before a once-per-order action. Task 21's separate returned-state corruption prevents attributing its reward solely to exhaustion. Protocol enforcement is disabled, and mixed text/tool messages occur in both passing and failing cases; they are not demonstrated native-failure causes here."
+      },
+      {
+        "cluster_id": "returned_item_metadata_contradicts_verified_variant",
+        "root_cause": "The agent accepts a mutation response as complete even when the returned item metadata contradicts the verified replacement variant. In task 21, replacement shoe item 4107812777 is correctly identified before mutation as black running shoes priced at $155.33. The mutation response retains that item ID but assigns it the keyboard's $268.77 price and keyboard options. The final summary describes the intended shoes without acknowledging the inconsistent returned state.",
+        "evidence_task_ids": [
+          "21"
+        ],
+        "protected_success_task_ids": [
+          "93",
+          "29"
+        ],
+        "recommended_surface": "tool_boundary",
+        "recommended_mutation_types": [
+          "tool_result_consistency_validation"
+        ],
+        "risk": "The visible request uses the correct original and replacement IDs, and the gift-card charge and balance are correct. This is evidence of a boundary inconsistency, not proof that the agent caused the corrupted metadata or that it determined evaluation failure. The backend is immutable. Repeated mutation attempts would violate the once-per-order restriction; broad post-action verification would add interaction cost near the step limit. Tasks 93 and 29 show consistent single-item exchange results that should remain inexpensive."
+      },
+      {
+        "cluster_id": "failure_without_behavioral_evidence",
+        "root_cause": "Task 16 has a native failure outcome but no supplied trajectory or review explaining the failure. Its ordinary step count, zero tool errors, and user_stop termination do not identify a reusable behavioral cause.",
+        "evidence_task_ids": [
+          "16"
+        ],
+        "protected_success_task_ids": [
+          "52",
+          "4"
+        ],
+        "recommended_surface": "stochastic_or_weak",
+        "recommended_mutation_types": [],
+        "risk": "Tasks 52 and 4 also use eight tool calls and succeed, so task 16's aggregate metrics do not justify a procedural mutation. Their trajectories are unavailable, making them metric comparisons rather than verified structural matches. No previous mutation effects or failure-matrix evidence were supplied for any cluster; fixes, breaks, and interaction-cost changes remain untested."
+      }
+    ]
+  },
+  "response_sha256": "dcffff420e70e88ef04d6cf66f5724756000c4204e3a5839565f494ae8d81a8b"
+}
