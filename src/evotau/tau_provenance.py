@@ -19,7 +19,7 @@ ROLE_NAMES = ("agent", "customer", "reviewer", "evaluator")
 EVOLUTION_ROLE_NAMES = ("agent", "customer", "evaluator", "evolver")
 MODEL_ARGUMENT_NAMES = frozenset({
     "temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty",
-    "api_base", "thinking_mode", "reasoning_effort", "api_protocol", "api_key_env",
+    "api_base", "thinking_mode", "reasoning_effort", "api_protocol", "api_key_env", "stream",
 })
 DEFAULT_ROLE_MODEL_ARGS = {
     role: {"temperature": 0.0} for role in (*ROLE_NAMES, "evolver")
@@ -176,6 +176,13 @@ def freeze_role_model_args(
             )
         normalized: list[tuple[str, float | int | str]] = []
         for name, value in sorted(params.items()):
+            if name == "stream":
+                if role != "evolver" or type(value) is not bool:
+                    raise ValueError("stream must be boolean and is supported for evolver only")
+                if params.get("api_protocol") == "responses":
+                    raise ValueError("Responses streaming is not implemented; no implicit transport change")
+                normalized.append((name, value))
+                continue
             if name == "api_protocol":
                 if value != "responses" or role != "evolver":
                     raise ValueError(

@@ -156,8 +156,10 @@ def _post_responses(
 
 
 def _response_text(response: Mapping[str, Any]) -> str:
+    if response.get("status") not in (None, "completed"):
+        raise RuntimeError("InferAI Responses API did not reach completed status")
     output_text = response.get("output_text")
-    if isinstance(output_text, str):
+    if isinstance(output_text, str) and output_text.strip():
         return output_text
     pieces: list[str] = []
     output = response.get("output")

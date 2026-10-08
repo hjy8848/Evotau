@@ -93,7 +93,7 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
                             "no_benchmark_leakage",
                         ),
                         True,
-                    )
+                    ) | {"reason": "Facts and objectives preserved."}
                 )
             elif "You evolve the Customer" in system:
                 content = json.dumps(
@@ -130,6 +130,7 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
                         "reusable": True,
                         "policy_subordinate": True,
                         "no_task_entities": True,
+                        "reason": "Reusable and policy subordinate.",
                     }
                 )
             else:

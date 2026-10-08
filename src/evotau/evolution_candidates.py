@@ -186,14 +186,32 @@ class V2Providers:
         return result
 
     def validate_customer(self, context):
-        return self.call(
+        result = self.call(
             CUSTOMER_VALIDATOR_PROMPT, context, "evotau_customer_semantic_validator"
         )
+        return _validator_result(result, (
+            "preserves_facts", "preserves_objective", "interaction_only",
+            "no_benchmark_leakage",
+        ))
 
     def validate_skill(self, context):
-        return self.call(
+        result = self.call(
             SKILL_VALIDATOR_PROMPT, context, "evotau_skill_semantic_validator"
         )
+        return _validator_result(result, (
+            "reusable", "policy_subordinate", "no_task_entities",
+        ))
+
+
+def _validator_result(result, flags):
+    if (
+        not isinstance(result, dict)
+        or set(result) != {*flags, "reason"}
+        or any(type(result[k]) is not bool for k in flags)
+        or not isinstance(result["reason"], str)
+    ):
+        raise ValueError("semantic validator returned an invalid structured schema")
+    return result
 
 
 def validate_mutation(result):

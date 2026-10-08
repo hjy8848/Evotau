@@ -8,6 +8,7 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -133,6 +134,9 @@ class EvolverJSONError(ValueError):
         self.parse_error = parse_error
 
 
+_EVOLVER_VISIBLE_OUTPUT = ContextVar("evotau_evolver_visible_output", default=None)
+
+
 class LLMAlternatingEvolvers:
     """Two language-model calls propose free-form Customer and Service strategies."""
 
@@ -244,6 +248,7 @@ class LLMAlternatingEvolvers:
             nullcontext() if self.request_budget is None
             else self.request_budget.record_provider_calls(directory / "provider-calls.jsonl")
         )
+        visible_token = _EVOLVER_VISIBLE_OUTPUT.set(directory / "visible-completion.json")
         try:
             with scope:
                 result = self._dispatch_json_call(
@@ -278,6 +283,8 @@ class LLMAlternatingEvolvers:
                 .as_posix()
             )
             raise
+        finally:
+            _EVOLVER_VISIBLE_OUTPUT.reset(visible_token)
 
     def _dispatch_json_call(
         self,
@@ -323,6 +330,9 @@ class LLMAlternatingEvolvers:
         from tau2.data_model.message import SystemMessage, UserMessage
         from tau2.utils.llm_utils import generate
 
+        kwargs = dict(model_args)
+        if kwargs.get("stream") is True:
+            kwargs["stream_options"] = {"include_usage": True}
         message = generate(
             model=model,
             messages=[
@@ -334,8 +344,17 @@ class LLMAlternatingEvolvers:
             ],
             call_name=call_name,
             num_retries=0,
-            **dict(model_args),
+            **kwargs,
         )
+        raw = getattr(message, "raw_data", None)
+        if isinstance(raw, Mapping):
+            choices = raw.get("choices") or []
+            if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
+                raise EvolverJSONError(
+                    call_name=call_name,
+                    raw_response=message.content or "",
+                    parse_error="research completion did not reach finish_reason=stop",
+                )
         value = _parse_evolver_json(message.content or "", call_name=call_name)
         if not isinstance(value, dict):
             raise TypeError("evolver responses must be JSON objects")
@@ -354,6 +373,17 @@ def _strip_json_markdown_fence(content: str) -> str:
 
 
 def _parse_evolver_json(raw_content: str, *, call_name: str) -> Any:
+    output_path = _EVOLVER_VISIBLE_OUTPUT.get()
+    if output_path is not None:
+        cleaned = _strip_json_markdown_fence(raw_content)
+        _write_json_once(output_path, {
+            "call_name": call_name,
+            "visible_text": raw_content,
+            "visible_text_sha256": sha256_json(raw_content),
+            "format_normalization": "complete_markdown_fence_only"
+            if cleaned != raw_content else "none",
+            "semantic_repair": False,
+        })
     try:
         return json.loads(raw_content)
     except (TypeError, json.JSONDecodeError) as first_error:

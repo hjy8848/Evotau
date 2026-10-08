@@ -427,7 +427,12 @@ class RequestBudget:
                 )
             self._in_flight += 1
             model_usage["in_flight"] += 1
-            return self._attempts + self._in_flight
+            attempt_number = self._attempts + self._in_flight
+        # Durably charge the reserved request before it can reach the provider.
+        # A hard-killed process must not silently forget potentially billed calls;
+        # restore_usage deliberately rejects unresolved in-flight accounting.
+        self._persist_live_usage()
+        return attempt_number
 
     @staticmethod
     def _model_key(model: str | None) -> str:
@@ -824,6 +829,12 @@ class RequestBudget:
                         started = perf_counter()
                         try:
                             result = original_completion(*args, **kwargs)
+                            if kwargs.get("stream") is True:
+                                from .provider_stream import collect_completion
+
+                                result = collect_completion(
+                                    result, litellm_module.stream_chunk_builder,
+                                )
                         except BaseException as exc:
                             elapsed = perf_counter() - started
                             self._finish(succeeded=False, model=model_id)

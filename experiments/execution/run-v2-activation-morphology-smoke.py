@@ -74,6 +74,7 @@ def install_transport(output):
                 "reasoning_effort",
                 "temperature",
                 "max_tokens",
+                "stream",
             )
             if k in body
         }
@@ -93,6 +94,13 @@ def install_transport(output):
         started = perf_counter()
         try:
             response = original(client, request, *args, **kwargs)
+            if body.get("stream") is True:
+                # Let the SDK consume SSE incrementally. The budget observer
+                # records final usage/finish metadata after full collection.
+                record({"event": "response_headers", "model": body.get("model"),
+                        "http_status": response.status_code, "stream": True,
+                        "elapsed_seconds": perf_counter() - started})
+                return response
             response.read()
             try:
                 payload = response.json()

@@ -18,7 +18,7 @@ def safe_request_args(args: Mapping[str, Any]) -> dict[str, Any]:
     names = (
         "model", "temperature", "seed", "reasoning_effort", "max_tokens",
         "max_completion_tokens", "timeout", "num_retries", "tool_choice",
-        "parallel_tool_calls", "api_protocol",
+        "parallel_tool_calls", "api_protocol", "stream",
     )
     result = {name: args[name] for name in names if name in args
               and isinstance(args[name], (str, int, float, bool, type(None)))}

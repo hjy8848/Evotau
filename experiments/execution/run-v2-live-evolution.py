@@ -37,6 +37,15 @@ class WireOutput:
         return self.path / filename
 
 
+def validate_launch_authorization(manifest, approved_cap):
+    if not manifest.real_provider_enabled:
+        raise RuntimeError("real provider calls are disabled in this config")
+    if manifest.request_budget_cap is None:
+        raise ValueError("live readiness/formal runs require a finite request cap")
+    if approved_cap != manifest.request_budget_cap:
+        raise ValueError("explicit --approved-request-cap must match the frozen cap")
+
+
 def install_responses_observer(route):
     original = inferai_responses._build_opener
     lock = threading.Lock()
@@ -112,6 +121,9 @@ def main():
     parser.add_argument("--tau2-data-dir", type=Path, required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stop-before-next-episode-file", type=Path)
+    parser.add_argument("--approved-request-cap", type=int)
+    parser.add_argument("--probe-models", action="store_true",
+                        help="Optional two-call connectivity probe; never substitutes for representative readiness tests")
     args = parser.parse_args()
     os.chdir(ROOT)
     os.environ["TAU2_DATA_DIR"] = str(args.tau2_data_dir.resolve())
@@ -147,6 +159,7 @@ def main():
     print(json.dumps(summary), flush=True)
     if args.dry_run:
         return
+    validate_launch_authorization(manifest, args.approved_request_cap)
     key = subprocess.run(
         [
             "security",
@@ -185,10 +198,10 @@ def main():
     route = WireOutput(preflight)
     module.install_transport(route)
     install_responses_observer(route)
-    budget = RequestBudget(None)
+    budget = RequestBudget(2)
     budget.enable_live_usage(preflight / "api-usage-live.json")
     role_args = role_model_args_for_runtime(manifest.role_model_args)
-    for role in ("agent", "evolver"):
+    for role in (("agent", "evolver") if args.probe_models else ()):
         probe = V2Providers(
             LLMAlternatingEvolvers(
                 model=dict(manifest.role_models)[role],

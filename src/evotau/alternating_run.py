@@ -53,6 +53,12 @@ def run_from_config(
     manifest = AlternatingManifest.from_mapping(config)
     if not manifest.real_provider_enabled:
         raise RuntimeError("provider calls are disabled in this alternating-run config")
+    if (
+        manifest.service_carrier == "skill_memory_v2"
+        and (manifest.run_validation or manifest.run_heldout)
+        and manifest.request_budget_cap is None
+    ):
+        raise ValueError("V2 validation/heldout runs require an explicit finite request budget")
     data_dir = tau2_data_dir or os.environ.get("TAU2_DATA_DIR")
     if data_dir is None:
         raise ValueError(
