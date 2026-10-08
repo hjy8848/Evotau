@@ -85,3 +85,33 @@ Old Diagnoser results, failures and immutable provider outputs remain available 
 Offline tests cover legal proposals without a diagnosis, NO_OP despite failures, invalid labels/IDs/digests, hidden metadata isolation, rejected-memory separation, Screen/E/V/replay, finite budgets, conditional crossover, exact resume and incompatible cache exclusion. Deterministic E20/G2 orchestration tests exercise fresh acceptance/rejection, H finalization and interruption/resume in Gen1 and H; these use explicitly synthetic outcomes. Native integration tests execute pinned τ-bench tools/evaluator with scripted local completions. They make no live provider requests and do not establish research effectiveness.
 
 Review `evolution_candidates.py` for the contract, `evolution_context.py` for evidence preservation, and `skill_evolution.py` for bounded direct proposals and fail-fast V scheduling.
+
+## Authorized official Flash continuation (2026-10-08)
+
+`configs/v2-direct-skill-qwen37plus-official-dsflash-e20-v3-h5-g2-p1.yaml`
+uses official `openai/deepseek-flash` for every Evolver/semantic-validator request,
+with thinking enabled, high reasoning requested, max_tokens65536. InferAI Qwen runtime
+roles and activator remain unchanged. The official launcher replaces authorization
+only for `api.deepseek.com` POST requests to the configured no-tools model; it never
+puts the official key in the runtime environment or alters InferAI authentication.
+
+`import-direct-native-baseline.py` audits the recorded parent Git source digest,
+unchanged native runtime bytes against the reviewed refactor commit, pinned source
+blobs, tasks/models/args/seed/initial strategies/evaluator and activation condition.
+It imports only the complete initial native E20 records/simulations. No Customer
+proposal, Validator decision, selection stage, Diagnoser/Mutator cache or checkpoint
+is imported. All Customer/Evolver output regenerates. Binding-only transformations
+and hashes are recorded; prior cumulative usage is carried forward. The initial
+baseline is 17/20; this is cached benchmark evidence, not a new treatment effect.
+
+```bash
+PYTHONPATH=src python experiments/execution/run-v2-official-deepseek-evolver.py \
+  --config configs/v2-direct-skill-qwen37plus-official-dsflash-e20-v3-h5-g2-p1.yaml \
+  --tau2-data-dir /path/to/pinned/tau2-data --approved-request-cap 100000 \
+  --stop-before-next-episode-file /tmp/evotau-direct-official.pause
+```
+
+This is an explicitly changed-model/new-mechanism treatment with audited native
+baseline reuse, not a pure new independent replicate. Availability of both required
+model IDs was refreshed via their credential-scoped `/models` endpoints before
+launch; listing alone does not prove the new Direct Mutator will succeed.
