@@ -9,6 +9,15 @@ fixes AND breaks and interaction costs are evidence. Do not convert every failur
 Return JSON {"clusters":[{"cluster_id":"...","root_cause":"...","evidence_task_ids":[],
 "protected_success_task_ids":[],"recommended_surface":"skill|tool_boundary|runtime_protocol|stochastic_or_weak",
 "recommended_mutation_types":[],"risk":"..."}]}.
+The output must conform exactly to this strict JSON schema; do not add fields.
+root_cause describes the observed failure mechanism in natural language.
+recommended_surface must be exactly one of skill, tool_boundary, runtime_protocol,
+stochastic_or_weak. recommended_mutation_types must be a JSON array whose elements
+are only add, narrow_trigger, expand_trigger, rewrite_guidance, split, delete, no_op.
+Do not put failure categories, root causes, mechanism names or invented labels in
+recommended_mutation_types. For a non-skill problem, do not force a skill mutation;
+an empty recommended_mutation_types array is valid. Never repair native backend,
+policy, evaluator or runtime protocol through a skill recommendation.
 Native policy, tools, backend, evaluation, facts and objectives are immutable. No hidden targets."""
 MUTATOR_PROMPT = """You are the EvoTau Service Skill Mutator. Make ONE minimal attributable structural edit.
 Use target failures AND protected passing cases, previous fixed/broken cases, native policy,
@@ -138,7 +147,12 @@ class V2Providers:
                 "stochastic_or_weak",
             ):
                 raise ValueError("unknown repair surface")
-            if not set(cluster["recommended_mutation_types"]) <= set(V2_MUTATION_TYPES):
+            mutation_types = cluster["recommended_mutation_types"]
+            if not isinstance(mutation_types, list) or any(
+                not isinstance(value, str) for value in mutation_types
+            ):
+                raise ValueError("recommended mutation types must be a JSON string array")
+            if not set(mutation_types) <= set(V2_MUTATION_TYPES):
                 raise ValueError("unknown recommended mutation")
             if (
                 not set(
@@ -154,12 +168,16 @@ class V2Providers:
 
     def mutate(self, context):
         result = self.call(MUTATOR_PROMPT, context, "evotau_service_skill_mutator")
+        # A malformed provider proposal is an engineering failure, not bad fitness.
+        validate_mutation(result)
         return result
 
     def crossover(self, context):
-        return self.call(
+        result = self.call(
             CROSSOVER_PROMPT + "\n" + MUTATOR_PROMPT, context, "evotau_skill_crossover"
         )
+        validate_mutation(result)
+        return result
 
     def customers(self, context, count):
         result = self.call(

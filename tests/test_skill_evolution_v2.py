@@ -311,6 +311,49 @@ def test_unknown_outcomes_are_not_failures():
     assert result["verdict"] == "INCONCLUSIVE"
 
 
+def test_strict_provider_contract_reaches_gate_archive_and_exact_resume(tmp_path, monkeypatch):
+    from evotau.alternating import LLMAlternatingEvolvers
+    from evotau.budget import RequestBudget
+    from evotau.evolution_candidates import V2Providers
+
+    scripted, calls = FakeProviders(), []
+
+    def dispatch(model, args, prompt, context, *, call_name):
+        calls.append(call_name)
+        if call_name == "evotau_customer_evolver":
+            return scripted.customers(context, context["requested_candidates"])
+        if call_name == "evotau_customer_semantic_validator":
+            return {**scripted.validate_customer(context), "reason": "Task-faithful interaction."}
+        if call_name == "evotau_service_diagnoser":
+            return scripted.diagnose(context)
+        if call_name == "evotau_service_skill_mutator":
+            return scripted.mutate(context)
+        if call_name == "evotau_skill_semantic_validator":
+            return {**scripted.validate_skill(context), "reason": "Policy subordinate."}
+        raise AssertionError(call_name)
+
+    monkeypatch.setattr(LLMAlternatingEvolvers, "_json_call", staticmethod(dispatch))
+    policy = deepcopy(DEFAULT_V2)
+    policy["service_evolution"].update(candidates_per_cluster=1, crossover=False)
+    providers = V2Providers(LLMAlternatingEvolvers(
+        model="offline/contract", model_args={"temperature": 0},
+        request_budget=RequestBudget(10), output_directory=tmp_path,
+    ))
+    result, _, runner = run(tmp_path, provider=providers, policy=policy)
+    row = result.generations[0]["service_phase"]["candidates"][0]
+    assert row["screen"]["passed"] and row["gate"] is not None
+    assert (tmp_path / "evolution-v2/g0000-archive_update.json").is_file()
+    assert calls == ["evotau_customer_evolver", "evotau_customer_semantic_validator",
+                     "evotau_service_diagnoser", "evotau_service_skill_mutator",
+                     "evotau_skill_semantic_validator"]
+    frozen = {p: p.read_bytes() for p in (tmp_path / "evolution-v2").glob("*.json")}
+    before = list(calls), list(runner.calls)
+    resumed, _, _ = run(tmp_path, provider=providers, runner=runner, policy=policy)
+    assert resumed.generations == result.generations
+    assert (calls, runner.calls) == before
+    assert all(p.read_bytes() == content for p, content in frozen.items())
+
+
 def test_task_block_gate_accepts_clear_positive_and_corrects_looks():
     before = [record(str(t), t >= 20, s) for t in range(100) for s in (1, 2, 3, 4)]
     after = [record(str(t), True, s) for t in range(100) for s in (1, 2, 3, 4)]

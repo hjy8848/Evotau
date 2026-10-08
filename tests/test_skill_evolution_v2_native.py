@@ -8,7 +8,9 @@ import pytest
 import yaml
 
 
-def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure_kind", [None, "malformed_json", "schema_error",
+                                          "http_timeout", "budget_exhaustion", "native_exception"])
+def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeypatch, failure_kind):
     data = Path(
         os.environ.get(
             "EVOTAU_TAU2_DATA_DIR", "/Users/spring/.cache/evotau/tau2-data-b7ea9074"
@@ -21,6 +23,7 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
     from tau2.utils import llm_utils
 
     from evotau.alternating_run import run_from_config
+    from evotau.budget import ProviderBudgetExceeded
     from evotau.web.artifact_reader import ArtifactReader
 
     root = Path(__file__).resolve().parents[1]
@@ -55,11 +58,34 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
     file.write_text(yaml.safe_dump(config))
     monkeypatch.chdir(tmp_path)
     calls = []
+    injected = False
 
     def completion(*, model, messages, **kwargs):
+        nonlocal injected
         assert kwargs.get("num_retries") == 0
         calls.append(model)
         system = messages[0]["content"]
+        if not injected and failure_kind and (
+            (model == "offline-evolver" and "Failure Diagnoser" in system
+             and failure_kind != "native_exception")
+            or (model == "offline-activator" and failure_kind == "native_exception")
+        ):
+            injected = True
+            if failure_kind == "http_timeout":
+                raise TimeoutError("deterministic provider HTTP timeout")
+            if failure_kind == "budget_exhaustion":
+                raise ProviderBudgetExceeded("deterministic request budget exhausted")
+            if failure_kind == "native_exception":
+                raise RuntimeError("deterministic native episode execution exception")
+            content = "{" if failure_kind == "malformed_json" else json.dumps({"clusters": [{
+                "cluster_id": "scope", "root_cause": "Scope ambiguity.",
+                "evidence_task_ids": ["66"], "protected_success_task_ids": [],
+                "recommended_surface": "skill", "recommended_mutation_types": ["invented"],
+                "risk": "Overhead.",
+            }]})
+            return ModelResponse(model=model, choices=[{
+                "index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": content}
+            }], usage={"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14})
         if model == "offline-activator":
             context = json.loads(messages[-1]["content"])
             assert set(context) == {
@@ -200,14 +226,46 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
 
     monkeypatch.setattr(llm_utils, "completion", completion)
     monkeypatch.setattr(llm_utils, "get_response_cost", lambda _: 0)
-    output, result = run_from_config(file, tau2_data_dir=data)
+    if failure_kind:
+        expected_error = {
+            "malformed_json": ValueError, "schema_error": ValueError,
+            "http_timeout": TimeoutError, "budget_exhaustion": ProviderBudgetExceeded,
+            "native_exception": RuntimeError,
+        }[failure_kind]
+        with pytest.raises(expected_error):
+            run_from_config(file, tau2_data_dir=data)
+        output = tmp_path / exp["output_path"]
+        failure = json.loads((output / "run-execution-state.json").read_text())["failure"]
+        assert failure["failure_type"] and failure["failure_message"]
+        stage = failure["last_generation_stage"]["stage"]
+        assert ("service_screen" in stage if failure_kind == "native_exception"
+                else stage == "service_diagnosis")
+        assert not (output / "evolution-v2/g0000-generation_complete.json").exists()
+        frozen = {p: p.read_bytes() for p in output.glob("evolution-v2/*.json")}
+        frozen.update({p: p.read_bytes() for p in output.glob("episodes/*/episode-record.json")})
+        assert frozen  # Successful evidence before the error is not discarded.
+        before = len(calls)
+        if failure_kind == "schema_error":
+            # A parsed but invalid model result is not silently repaired on resume.
+            with pytest.raises(ValueError, match="unknown recommended mutation"):
+                run_from_config(file, tau2_data_dir=data)
+            assert len(calls) == before
+            assert all(p.read_bytes() == content for p, content in frozen.items())
+            return
+        # Explicit deterministic recovery attempt, not an automatic provider retry.
+        output, result = run_from_config(file, tau2_data_dir=data)
+        assert all(p.read_bytes() == content for p, content in frozen.items())
+    else:
+        output, result = run_from_config(file, tau2_data_dir=data)
     assert result["status"] == "complete" and result["schema_version"] == 3
     assert result["api_usage_by_role"]["skill_activator"]["calls"] > 0
     assert result["api_usage_by_role"]["reviewer"]["calls"] == 0
     assert result["provider_usage"]["attempts"] == len(calls)
     assert result["api_usage_by_role"]["customer_evolver"]["calls"] == 1
     assert result["api_usage_by_role"]["service_evolver"]["calls"] == 1
-    assert result["api_usage_by_role"]["service_diagnoser"]["calls"] == 1
+    assert result["api_usage_by_role"]["service_diagnoser"]["calls"] == (
+        2 if failure_kind and failure_kind != "native_exception" else 1
+    )
     assert result["api_usage_by_role"]["semantic_validator"]["calls"] == 2
     summary = result["generations"][-1]["activation_summary"]
     assert summary["available"] and summary["activated_turns"] > 0
@@ -235,7 +293,7 @@ def test_v2_native_rollout_activator_provider_chain_and_resume(tmp_path, monkeyp
     assert reader.get_run("offline-v2-native")["status"] == "complete"
     assert reader.get_run("offline-v2-native")["heldout_sealed"]
     export = os.environ.get("EVOTAU_V2_OFFLINE_EXPORT")
-    if export:
+    if export and failure_kind is None:
         import shutil
 
         destination = Path(export)
