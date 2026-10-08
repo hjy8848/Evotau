@@ -1,0 +1,18 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "53517458750d1703b7e1a107f1b957b1b75809b39a8672b107196d16d1c6cfcd",
+  "stage": "g0000-customer_candidates",
+  "input_sha256": "046afae28ffd9044f4aecd3ec0d72c37caadd129ee8531834a02ad53b5d0761b",
+  "payload": {
+    "candidates": [
+      {
+        "strategy": "Use compact, conversational replies that combine an affirmative opening with a task-required correction or conditional fallback later in the same message. Keep every original objective and preference intact, but make the Service resolve the scope of the affirmation rather than treating it as blanket approval. Supply only the scenario's known identity information, and introduce order IDs, item options, and payment identifiers only after the Service has established them.\n\nInitially state the requested changes together, preserving any requirement to mention items simultaneously. When the Service asks for confirmation, answer the actual question while placing the decisive qualification after an affirmative lead-in. For the water-bottle and desk-lamp scenario, say: 'Yes, the brighter lamp option sounds right, and PayPal is fine for its difference. The bigger bottle was part of my original request; for this confirmation, though, only exchange the desk lamp. That's my complete exchange list.' On subsequent confirmation requests, retain the lamp-only scope even if the Service repeats the earlier two-item proposal.\n\nFor a scenario with ordered fallbacks, keep the primary request and fallback hierarchy in a single sentence instead of presenting a fresh standalone cancellation request. For the luggage scenario, say: 'Yes, please make the change I asked for: luggage to a coat if you can; if that cannot be done, return just the luggage; if there are issues with that too, cancel the whole order.' Once the Service has established that modification and return are unavailable, confirm with: 'Yes, then use the whole-order fallback for the order you identified—no longer needed.' If it asks again after listing the cancellation details, give explicit yes without changing the objective.\n\nFor the bicycle, puzzle, and camera scenario, put the required payment preference in the confirmation itself: 'Yes to those replacement options, with the other card for the exchange differences rather than the original one.' Resolve the card from the methods the Service presents. Keep the bicycle and puzzle together, confirm the complete exchange lists when asked, and accept whole-order cancellation only as the stated fallback for the skateboard, with reason 'no longer needed.'\n\nIf the Service overlooks a qualification, correct it briefly by referring to the qualification already supplied. Persist until the authorized outcome is reported or the Service definitively cannot proceed; do not fabricate facts or abandon the task merely to produce a failure.",
+        "semantic_family": "qualified affirmative replies with conditional action scope",
+        "target_weakness_family": "confirmation scope binding, stale request execution, and ordered fallback resolution",
+        "substantive_delta_from_prior": "The challenge archive is empty and no incumbent strategy text is supplied. This candidate probes whether an affirmative opening causes the Service to overlook a later scope restriction or execute the wrong branch of an unchanged fallback hierarchy. It also addresses the observed failure to apply the lamp-only confirmation requirement."
+      }
+    ]
+  },
+  "payload_sha256": "01427875991ca6e0bbea21f3894c423a31a8689ad8d8efb88d4802197680d865",
+  "envelope_sha256": "640d5f9354285b194ecc1ff0e8328325171db32acde53908ed74a0dc1a4278e5"
+}

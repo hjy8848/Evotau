@@ -153,3 +153,35 @@ cost. No full E20/G2 experiment was launched.
 
 Sanitized immutable evidence and SHA index:
 `experiments/results/v2-diagnoser-contract-rehearsal-20261008/`.
+
+## Explicitly authorized serial follow-up
+
+The user then requested serial execution. Independent config
+`configs/v2-gpt61sol-contract-e3-serial.yaml` changes episode concurrency2→1;
+models, all prompts, native benchmark components, tasks and seeds remain unchanged.
+It imports no prior score or proposal. Cap524 is the remaining allocation after76
+prior requests, keeping the aggregate allowance at600. Dry validation passed;
+H/V were not loaded. No runtime/algorithm implementation changed.
+
+The serial generation completed: **62 requests, all HTTP200, zero429/errors**;
+Qwen59, GPT3. Observed peak episodes1 and HTTP requests1. All59 Qwen requests sent
+thinking disabled and reported no reasoning content/tokens. This establishes
+successful serial availability for this run, not the precise cause of the earlier
+rate limit or a guarantee of future provider reliability.
+
+Native outcomes: task98 fail, task8 fail, task66 pass (1/3). The Customer candidate
+was rejected for inventing a PayPal payment method, with fitness left null.
+Diagnoser returned only tool_boundary, stochastic_or_weak and runtime_protocol
+clusters, with empty mutation arrays. No Service proposal/update, native Skill
+Validator, Screen or Gate followed. These diagnoses are model inferences, not
+confirmed backend bugs. Native benchmark semantics were not changed.
+
+Initial execution467.95s (7min48s), reported prompt418,063 / completion17,732 tokens,
+no unavailable usage. Completed replay adds zero requests and preserves26 frozen
+episode/journal artifacts byte-for-byte. Total audit/rehearsal spending is now138
+calls, leaving462 of600. Reviewer/Customer Judge/Service Judge remain0.
+
+The earlier429 blocker did not recur under serial execution. Formal readiness
+still lacks **live native candidate Screen/Gate coverage**; no repair efficacy or
+H generalization is established. The formal E20/G2 launch remains unauthorized.
+Evidence: `experiments/results/v2-contract-serial-rehearsal-20261008/`.

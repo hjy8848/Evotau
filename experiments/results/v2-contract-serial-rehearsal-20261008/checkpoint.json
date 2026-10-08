@@ -1,0 +1,377 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "53517458750d1703b7e1a107f1b957b1b75809b39a8672b107196d16d1c6cfcd",
+  "completed_generation": 0,
+  "generations": [
+    {
+      "schema_version": 3,
+      "manifest_sha256": "53517458750d1703b7e1a107f1b957b1b75809b39a8672b107196d16d1c6cfcd",
+      "generation": 0,
+      "evolution_fitness_seed": 1,
+      "customer_before": {
+        "role": "customer",
+        "carrier": "prompt_strategy",
+        "strategy_id": "63be7e41e020bc00",
+        "strategy": ""
+      },
+      "service_before": {
+        "role": "service",
+        "carrier": "skill_memory_v2",
+        "strategy_id": "f0a9e404e39ab085",
+        "strategy": {
+          "schema_version": 2,
+          "skills": []
+        },
+        "skill_count": 0
+      },
+      "customer_after": {
+        "role": "customer",
+        "carrier": "prompt_strategy",
+        "strategy_id": "63be7e41e020bc00",
+        "strategy": ""
+      },
+      "service_after": {
+        "role": "service",
+        "carrier": "skill_memory_v2",
+        "strategy_id": "f0a9e404e39ab085",
+        "strategy": {
+          "schema_version": 2,
+          "skills": []
+        },
+        "skill_count": 0
+      },
+      "customer_phase": {
+        "incumbent_accuracy": 0.3333333333333333,
+        "candidate_accuracies": [
+          null
+        ],
+        "selected_accuracy": 0.3333333333333333,
+        "selected_customer": "incumbent",
+        "candidates": [
+          {
+            "strategy": {
+              "text": "Use compact, conversational replies that combine an affirmative opening with a task-required correction or conditional fallback later in the same message. Keep every original objective and preference intact, but make the Service resolve the scope of the affirmation rather than treating it as blanket approval. Supply only the scenario's known identity information, and introduce order IDs, item options, and payment identifiers only after the Service has established them.\n\nInitially state the requested changes together, preserving any requirement to mention items simultaneously. When the Service asks for confirmation, answer the actual question while placing the decisive qualification after an affirmative lead-in. For the water-bottle and desk-lamp scenario, say: 'Yes, the brighter lamp option sounds right, and PayPal is fine for its difference. The bigger bottle was part of my original request; for this confirmation, though, only exchange the desk lamp. That's my complete exchange list.' On subsequent confirmation requests, retain the lamp-only scope even if the Service repeats the earlier two-item proposal.\n\nFor a scenario with ordered fallbacks, keep the primary request and fallback hierarchy in a single sentence instead of presenting a fresh standalone cancellation request. For the luggage scenario, say: 'Yes, please make the change I asked for: luggage to a coat if you can; if that cannot be done, return just the luggage; if there are issues with that too, cancel the whole order.' Once the Service has established that modification and return are unavailable, confirm with: 'Yes, then use the whole-order fallback for the order you identified—no longer needed.' If it asks again after listing the cancellation details, give explicit yes without changing the objective.\n\nFor the bicycle, puzzle, and camera scenario, put the required payment preference in the confirmation itself: 'Yes to those replacement options, with the other card for the exchange differences rather than the original one.' Resolve the card from the methods the Service presents. Keep the bicycle and puzzle together, confirm the complete exchange lists when asked, and accept whole-order cancellation only as the stated fallback for the skateboard, with reason 'no longer needed.'\n\nIf the Service overlooks a qualification, correct it briefly by referring to the qualification already supplied. Persist until the authorized outcome is reported or the Service definitively cannot proceed; do not fabricate facts or abandon the task merely to produce a failure."
+            },
+            "semantic_family": "qualified affirmative replies with conditional action scope",
+            "target_weakness_family": "confirmation scope binding, stale request execution, and ordered fallback resolution",
+            "substantive_delta_from_prior": "The challenge archive is empty and no incumbent strategy text is supplied. This candidate probes whether an affirmative opening causes the Service to overlook a later scope restriction or execute the wrong branch of an unchanged fallback hierarchy. It also addresses the observed failure to apply the lamp-only confirmation requirement.",
+            "semantic_validation": {
+              "preserves_facts": false,
+              "preserves_objective": true,
+              "interaction_only": false,
+              "no_benchmark_leakage": true,
+              "reason": "The strategy preserves the stated retail objectives and fallback conditions, but it invents PayPal as a payment method in the water-bottle and desk-lamp scenario, where no payment method was supplied. That changes scenario facts and interaction content beyond the requested interaction pattern."
+            },
+            "accuracy": null,
+            "episodes": [],
+            "pre_rollout_rejection": "semantic_preservation_failed"
+          }
+        ],
+        "incumbent_episodes": [
+          {
+            "episode_id": "evotau-phase0-b99a6fd9-233b-46db-bf92-dfff3d3df911",
+            "task_id": "98",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "f0a9e404e39ab085",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "termination_reason": "user_stop",
+            "trajectory_ref": "episodes/07cd0d27d9cd4121a3434cfd0b7d2f0d/native-simulation.json",
+            "tool_calls": 12,
+            "enforce_communication_protocol": false,
+            "mixed_text_tool_call_messages": 5,
+            "raw_review": {},
+            "notes": "",
+            "total_steps": 29,
+            "prompt_tokens": 155563,
+            "completion_tokens": 11295,
+            "tool_errors": 0,
+            "hard_policy_protocol_violations": 0,
+            "activated_skill_ids": []
+          },
+          {
+            "episode_id": "evotau-phase0-0f520f00-e561-4a5c-a042-b18b8d29d753",
+            "task_id": "8",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "f0a9e404e39ab085",
+            "status": "complete",
+            "task_success": false,
+            "native_reward": 0.0,
+            "termination_reason": "user_stop",
+            "trajectory_ref": "episodes/53118999bf484ee4b20f10a1a2f5d3f8/native-simulation.json",
+            "tool_calls": 8,
+            "enforce_communication_protocol": false,
+            "mixed_text_tool_call_messages": 5,
+            "raw_review": {},
+            "notes": "",
+            "total_steps": 33,
+            "prompt_tokens": 116391,
+            "completion_tokens": 2379,
+            "tool_errors": 0,
+            "hard_policy_protocol_violations": 0,
+            "activated_skill_ids": []
+          },
+          {
+            "episode_id": "evotau-phase0-48bc27ca-646b-4ee6-b68b-21deb7cd1cfd",
+            "task_id": "66",
+            "seed": 1,
+            "customer_strategy_id": "63be7e41e020bc00",
+            "service_strategy_id": "f0a9e404e39ab085",
+            "status": "complete",
+            "task_success": true,
+            "native_reward": 1.0,
+            "termination_reason": "user_stop",
+            "trajectory_ref": "episodes/517402cdd41e49a5850869e434655b77/native-simulation.json",
+            "tool_calls": 5,
+            "enforce_communication_protocol": false,
+            "mixed_text_tool_call_messages": 3,
+            "raw_review": {},
+            "notes": "",
+            "total_steps": 25,
+            "prompt_tokens": 73182,
+            "completion_tokens": 1381,
+            "tool_errors": 0,
+            "hard_policy_protocol_violations": 0,
+            "activated_skill_ids": []
+          }
+        ]
+      },
+      "service_phase": {
+        "carrier": "skill_memory_v2",
+        "old_accuracy": 0.3333333333333333,
+        "final_accuracy": 0.3333333333333333,
+        "proposed_accuracy": null,
+        "accepted": false,
+        "acceptance_mode": "e_only_mechanism_smoke",
+        "validation_evaluated": false,
+        "selection": {
+          "reason": "no candidate passed all screen/promotion/replay gates"
+        },
+        "skill_count_before": 0,
+        "skill_count_after": 0,
+        "candidates": [],
+        "diagnosis": {
+          "clusters": [
+            {
+              "cluster_id": "exchange_pair_ordering",
+              "root_cause": "Both failed tasks submit correctly aligned original-item and replacement-item arrays, but the tool responses persist the original items in a different order without making the corresponding change to the replacement array. In task 98, the submitted bicycle/puzzle sequence becomes puzzle/bicycle while replacements remain bicycle/puzzle. In task 8, water bottle/lamp becomes lamp/water bottle while replacements remain water bottle/lamp. This creates inconsistent positional pairing in the stored exchange fields. The observable discrepancy is at the native tool boundary; the empty evaluation reviews do not establish whether it caused the zero rewards.",
+              "evidence_task_ids": [
+                "98",
+                "8"
+              ],
+              "protected_success_task_ids": [
+                "66"
+              ],
+              "recommended_surface": "tool_boundary",
+              "recommended_mutation_types": [],
+              "risk": "Task 66 passes through the same authentication, order lookup, confirmation, and cancellation workflow, but does not exercise exchange arrays. It therefore protects the shared workflow without validating exchange pairing. Recommending a skill workaround would compensate for native persistence behavior and could break correctly aligned submissions elsewhere. Backend and evaluator behavior are immutable, and no prior mutation evidence is available."
+            },
+            {
+              "cluster_id": "repetitive_generation_without_progress",
+              "root_cause": "Task 98 produces an extremely long customer-facing message that repeatedly announces the intention to present details and request confirmation without completing that transition. The needed item choices and next questions were already identified. This is an observed generation degeneration rather than evidence of a missing retail procedure; the conversation subsequently recovers and completes the requested actions.",
+              "evidence_task_ids": [
+                "98"
+              ],
+              "protected_success_task_ids": [
+                "66"
+              ],
+              "recommended_surface": "stochastic_or_weak",
+              "recommended_mutation_types": [],
+              "risk": "Task 98 uses 11,295 completion tokens versus 2,379 for task 8 and 1,381 for passing task 66, demonstrating substantial interaction cost. Only one seed is available, and the loop did not prevent eventual execution, so its contribution to native failure is uncertain. Broad brevity or confirmation-suppression guidance could remove required action details, payment selection, or confirmation of all exchange items. Task 66 handles unsupported requests and cancellation without this degeneration."
+            },
+            {
+              "cluster_id": "tool_message_protocol_noncompliance",
+              "root_cause": "The failed trajectories combine customer-facing text with tool calls and issue multiple calls in a single assistant message, despite the native policy requiring separate text and tool messages and at most one tool call at a time. Passing task 66 exhibits the same behavior during authentication and order lookup, but its final cancellation call is a standalone call with empty text. Protocol enforcement is disabled, and the reported hard-violation count is zero, so this shared noncompliance does not by itself explain the reward difference.",
+              "evidence_task_ids": [
+                "98",
+                "8"
+              ],
+              "protected_success_task_ids": [
+                "66"
+              ],
+              "recommended_surface": "runtime_protocol",
+              "recommended_mutation_types": [],
+              "risk": "The passing case rules out treating mixed text and tool calls as a sufficient explanation for native failure. Protocol handling belongs at the runtime surface under the existing immutable policy. Serial execution may increase interaction steps, especially for task 98's multiple orders; redundant narration could further increase cost. Any future protocol change must preserve task 66's successful authorization and cancellation behavior."
+            }
+          ]
+        },
+        "opponents_replayed": [
+          "current",
+          "native"
+        ],
+        "exploration": {
+          "explore": false,
+          "mode": "REFINE",
+          "no_promotion_generations": 0,
+          "repeated_family": false,
+          "unchanged_failure_cluster": false,
+          "uncertain_improvement": false,
+          "avoid_families": [],
+          "preferred_mutation_types": []
+        }
+      },
+      "evolution_health": {
+        "active_skill_count": 0,
+        "archive_size": 0,
+        "activation_mode": "activate_topk_v2",
+        "mechanism_smoke": true
+      },
+      "activation_summary": {
+        "available": true,
+        "scope": "completed E/V research rollouts including rejected candidates",
+        "interpretation": "success rate is episode-level association; per-skill tokens are joint-turn overhead",
+        "total_service_turns": 35,
+        "activated_turns": 0,
+        "activation_rate": 0.0,
+        "rendered_skill_tokens": 0,
+        "skills": {}
+      },
+      "customer_archive": [],
+      "failure_matrix": [],
+      "history_summary": [],
+      "statistical_policy": {
+        "bootstrap_samples": 2000,
+        "confidence": 0.95,
+        "enabled": true,
+        "max_harmfulness": 0.05,
+        "max_stuck_delta": 0.0,
+        "method": "finite_panel_paired",
+        "min_tasks": 8,
+        "multiple_look_correction": "bonferroni",
+        "preservation_margin": 0.0,
+        "require_positive_success_lower_bound": true
+      },
+      "timing": {
+        "validation_wall_clock_seconds": 0
+      }
+    }
+  ],
+  "state": {
+    "customer": {
+      "text": ""
+    },
+    "service": {
+      "schema_version": 2,
+      "skills": []
+    },
+    "service_provenance": [],
+    "skill_id_high_watermark": 0,
+    "mutation_effects": [],
+    "failure_matrix": [],
+    "evolution_archive": {
+      "entries": [],
+      "max_candidates": 5,
+      "runtime_deployed": false
+    },
+    "customer_archive": [],
+    "history_summary": [],
+    "activation_config": {
+      "model": "openai/qwen3.7-plus",
+      "model_args": {
+        "api_base": "https://inferaiapi.com/v1",
+        "temperature": 0.0,
+        "thinking_mode": "disabled"
+      }
+    },
+    "activation_summary": {
+      "available": true,
+      "scope": "completed E/V research rollouts including rejected candidates",
+      "interpretation": "success rate is episode-level association; per-skill tokens are joint-turn overhead",
+      "total_service_turns": 35,
+      "activated_turns": 0,
+      "activation_rate": 0.0,
+      "rendered_skill_tokens": 0,
+      "skills": {}
+    },
+    "statistical_gate_state": {
+      "policy": {
+        "bootstrap_samples": 2000,
+        "confidence": 0.95,
+        "enabled": true,
+        "max_harmfulness": 0.05,
+        "max_stuck_delta": 0.0,
+        "method": "finite_panel_paired",
+        "min_tasks": 8,
+        "multiple_look_correction": "bonferroni",
+        "preservation_margin": 0.0,
+        "require_positive_success_lower_bound": true
+      },
+      "looks": 2
+    },
+    "final_evolution_episodes": [
+      {
+        "episode_id": "evotau-phase0-b99a6fd9-233b-46db-bf92-dfff3d3df911",
+        "task_id": "98",
+        "seed": 1,
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "status": "complete",
+        "task_success": false,
+        "native_reward": 0.0,
+        "termination_reason": "user_stop",
+        "trajectory_ref": "episodes/07cd0d27d9cd4121a3434cfd0b7d2f0d/native-simulation.json",
+        "tool_calls": 12,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 5,
+        "raw_review": {},
+        "notes": "",
+        "total_steps": 29,
+        "prompt_tokens": 155563,
+        "completion_tokens": 11295,
+        "tool_errors": 0,
+        "hard_policy_protocol_violations": 0,
+        "activated_skill_ids": []
+      },
+      {
+        "episode_id": "evotau-phase0-0f520f00-e561-4a5c-a042-b18b8d29d753",
+        "task_id": "8",
+        "seed": 1,
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "status": "complete",
+        "task_success": false,
+        "native_reward": 0.0,
+        "termination_reason": "user_stop",
+        "trajectory_ref": "episodes/53118999bf484ee4b20f10a1a2f5d3f8/native-simulation.json",
+        "tool_calls": 8,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 5,
+        "raw_review": {},
+        "notes": "",
+        "total_steps": 33,
+        "prompt_tokens": 116391,
+        "completion_tokens": 2379,
+        "tool_errors": 0,
+        "hard_policy_protocol_violations": 0,
+        "activated_skill_ids": []
+      },
+      {
+        "episode_id": "evotau-phase0-48bc27ca-646b-4ee6-b68b-21deb7cd1cfd",
+        "task_id": "66",
+        "seed": 1,
+        "customer_strategy_id": "63be7e41e020bc00",
+        "service_strategy_id": "f0a9e404e39ab085",
+        "status": "complete",
+        "task_success": true,
+        "native_reward": 1.0,
+        "termination_reason": "user_stop",
+        "trajectory_ref": "episodes/517402cdd41e49a5850869e434655b77/native-simulation.json",
+        "tool_calls": 5,
+        "enforce_communication_protocol": false,
+        "mixed_text_tool_call_messages": 3,
+        "raw_review": {},
+        "notes": "",
+        "total_steps": 25,
+        "prompt_tokens": 73182,
+        "completion_tokens": 1381,
+        "tool_errors": 0,
+        "hard_policy_protocol_violations": 0,
+        "activated_skill_ids": []
+      }
+    ]
+  },
+  "checkpoint_sha256": "c3d6f170bdc7cbb808997a32e0da232fe164cc12e03c9370999aaf2b08a04679"
+}
