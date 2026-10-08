@@ -36,7 +36,12 @@ Return JSON {"analysis":"...","semantic_family":"...","target_cluster_id":"...",
 "target_skill_id":null,"skill":null,"children":[],"expected_fixes":[],"protected_cases_at_risk":[],
 "substantive_delta_from_prior":"..."}.
 A skill payload has exactly trigger, guidance, activation_signature (positive_conditions,
-negative_conditions, interaction_phase arrays). SPLIT uses exactly two child payloads. No skill IDs."""
+negative_conditions, interaction_phase arrays). SPLIT uses exactly two child payloads. No skill IDs.
+expected_fixes and protected_cases_at_risk are JSON arrays of task ID strings from
+the supplied task_interactions only (for example ["98"]), or supplied parent effect
+and root-cause-cluster case IDs for crossover. Never use descriptions,
+counts or invented IDs. Put explanations and fix/risk count estimates in analysis.
+An empty task ID array is valid when no corresponding case is supported."""
 CROSSOVER_PROMPT = """You are the EvoTau Skill Crossover Architect. Given two non-deployed mutations
 with complementary validated local fixes, synthesize the smallest coherent child. Identify each
 parent's fixes, regressions, useful mechanism and unsafe scope. Preserve only evidence-supported
@@ -170,6 +175,7 @@ class V2Providers:
         result = self.call(MUTATOR_PROMPT, context, "evotau_service_skill_mutator")
         # A malformed provider proposal is an engineering failure, not bad fitness.
         validate_mutation(result)
+        _validate_mutation_case_references(result, context)
         return result
 
     def crossover(self, context):
@@ -177,6 +183,7 @@ class V2Providers:
             CROSSOVER_PROMPT + "\n" + MUTATOR_PROMPT, context, "evotau_skill_crossover"
         )
         validate_mutation(result)
+        _validate_mutation_case_references(result, context)
         return result
 
     def customers(self, context, count):
@@ -230,6 +237,19 @@ def _validator_result(result, flags):
     ):
         raise ValueError("semantic validator returned an invalid structured schema")
     return result
+
+
+def _validate_mutation_case_references(result, context):
+    if "task_interactions" in context:
+        allowed = {row["task"]["task_id"] for row in context["task_interactions"]}
+    else:
+        cluster = context["root_cause_cluster"]
+        allowed = set(cluster["evidence_task_ids"] + cluster["protected_success_task_ids"])
+        for parent in context.get("parents", []):
+            for key in ("fail_to_pass", "pass_to_fail", "pass_to_pass", "fail_to_fail"):
+                allowed.update(parent["effect"].get(key, []))
+    if not set(result["expected_fixes"] + result["protected_cases_at_risk"]) <= allowed:
+        raise ValueError("mutation case references must name observed task IDs")
 
 
 def validate_mutation(result):

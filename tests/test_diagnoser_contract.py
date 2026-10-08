@@ -79,6 +79,32 @@ def test_provider_mutation_schema_error_is_fatal_before_stage_publication(monkey
     assert response == {"operation": "invented"}
 
 
+@pytest.mark.parametrize("cases", [["A prose repair description."], ["unseen-task"]])
+def test_mutator_task_reference_contract_rejects_prose_or_unseen_ids(monkeypatch, cases):
+    from test_skill_evolution_v2 import mutation
+
+    provider = V2Providers(None)
+    response = mutation()
+    response["expected_fixes"] = cases
+    original = deepcopy(response)
+    monkeypatch.setattr(provider, "call", lambda *args: response)
+    with pytest.raises(ValueError, match="observed task IDs"):
+        provider.mutate({"task_interactions": [{"task": {"task_id": "1"}}]})
+    assert response == original
+
+
+def test_mutator_task_reference_contract_accepts_observed_case(monkeypatch):
+    from test_skill_evolution_v2 import mutation
+
+    provider = V2Providers(None)
+    response = mutation()
+    monkeypatch.setattr(provider, "call", lambda *args: response)
+    assert provider.mutate({"task_interactions": [{"task": {"task_id": "1"}}]}) == response
+    assert provider.crossover({"parents": [], "root_cause_cluster": {
+        "evidence_task_ids": ["1"], "protected_success_task_ids": []
+    }}) == response
+
+
 def test_raw_gpt_enum_failure_remains_rejected_after_prompt_fix(monkeypatch):
     from pathlib import Path
 
