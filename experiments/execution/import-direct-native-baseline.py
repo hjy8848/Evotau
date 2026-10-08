@@ -64,7 +64,7 @@ def native_condition(doc):
     return result
 
 
-def audit_code(parent):
+def audit_code(parent, reviewed_runtime=REVIEWED_RUNTIME):
     digest, changes = hashlib.sha256(), []
     for path in sorted([*(ROOT / "src/evotau").rglob("*.py"), ROOT / "pyproject.toml"]):
         if (
@@ -80,7 +80,7 @@ def audit_code(parent):
             check=True,
         ).stdout
         reviewed = subprocess.run(
-            ["git", "show", REVIEWED_RUNTIME + ":" + relative],
+            ["git", "show", reviewed_runtime + ":" + relative],
             cwd=ROOT,
             capture_output=True,
             check=True,
@@ -131,6 +131,8 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--tau2-data-dir", type=Path, required=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--reviewed-runtime", choices=(REVIEWED_RUNTIME,
+        "c25069d"), default=REVIEWED_RUNTIME)
     args = parser.parse_args()
     os.environ["TAU2_DATA_DIR"] = str(args.tau2_data_dir.resolve())
     source = args.source.resolve()
@@ -157,7 +159,7 @@ def main():
         raise ValueError(
             "Native task/model/args/seed/strategy/evaluator condition changed"
         )
-    changes = audit_code(parent)
+    changes = audit_code(parent, args.reviewed_runtime)
     journal = EvolutionJournal(source, parent["manifest_sha256"])
     baseline_file = journal.root / "g0000-customer_incumbent.json"
     rows = journal.read(baseline_file)["payload"]["episodes"]
@@ -195,7 +197,7 @@ def main():
         "parent_run": str(source.relative_to(ROOT)),
         "parent_manifest_sha256": parent["manifest_sha256"],
         "manifest_sha256": child.sha256,
-        "reviewed_runtime_commit": REVIEWED_RUNTIME,
+        "reviewed_runtime_commit": args.reviewed_runtime,
         "native_condition_sha256": sha256_json(native_condition(parent)),
         "source_code_changes": changes,
         "imported_native_episodes": len(rows),
