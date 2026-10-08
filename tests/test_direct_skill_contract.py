@@ -312,3 +312,51 @@ def test_failure_reference_cannot_be_taken_from_passing_seed_of_same_task():
     ]
     with pytest.raises(ValueError, match="cell outcome"):
         validate_direct_evidence(value, ctx)
+
+
+def test_invalid_candidate_recorded_and_other_candidates_evaluated_resume(tmp_path):
+    class InvalidSecond(FakeProviders):
+        def propose_skill_mutation(self, ctx):
+            result = super().propose_skill_mutation(ctx)
+            if ctx["proposal_index"] == 1:
+                result["evidence_task_ids"] = ["2"]
+            return result
+
+    policy = deepcopy(DEFAULT_V2)
+    policy["service_evolution"].update(
+        candidate_error_policy="reject_candidate", crossover=False
+    )
+    provider = InvalidSecond()
+    result, _, runner = run(tmp_path, provider=provider, policy=policy, generations=2)
+    rows = result.generations[0]["service_phase"]["candidates"]
+    rejected = [r for r in rows if r.get("candidate_error")]
+    assert len(rejected) == 1
+    assert rejected[0]["decision"] == "REJECTED"
+    assert rejected[0]["gate"] is None and rejected[0]["effect"] is None
+    assert any(r["screen"] is not None for r in rows)
+    calls = list(provider.calls)
+    native_calls = list(runner.calls)
+    run(tmp_path, provider=provider, runner=runner, policy=policy, generations=2)
+    assert provider.calls == calls
+    assert runner.calls == native_calls
+
+
+def test_candidate_schema_exception_recorded_but_transport_not_swallowed():
+    from evotau.evolution_candidates import EvolverSchemaError
+    from evotau.skill_evolution import _candidate_outcome
+
+    def bad_schema():
+        error = EvolverSchemaError("wrong labels")
+        error.diagnostics_ref = "evolver-calls/test/schema-error.json"
+        raise error
+
+    outcome = _candidate_outcome(bad_schema, context())
+    assert outcome["status"] == "REJECTED"
+    assert outcome["diagnostics_ref"].endswith("schema-error.json")
+    for error in (RuntimeError("timeout"), ValueError("malformed JSON")):
+
+        def dispatch_failure(error=error):
+            raise error
+
+        with pytest.raises(type(error), match=str(error)):
+            _candidate_outcome(dispatch_failure, context())

@@ -28,6 +28,51 @@ from .strategies import PromptStrategy
 from .tau_provenance import sha256_json
 
 
+def _candidate_outcome(callback, context):
+    """Reject parsed candidate contract errors; infrastructure errors still propagate."""
+    from .evolution_candidates import EvolverSchemaError
+    from .provider_diagnostics import safe_error
+
+    try:
+        mutation = callback()
+    except EvolverSchemaError as error:
+        return {
+            "status": "REJECTED",
+            "error_type": "EvolverSchemaError",
+            "reason": safe_error(error),
+            "diagnostics_ref": getattr(error, "diagnostics_ref", None),
+        }
+    # Validate only the returned candidate here, never catch dispatch/runtime ValueErrors.
+    try:
+        validate_mutation(mutation)
+        validate_direct_evidence(mutation, context)
+    except (ValueError, TypeError, KeyError) as error:
+        return {
+            "status": "REJECTED",
+            "error_type": "CandidateContractError",
+            "reason": safe_error(error),
+            "raw_candidate": mutation,
+        }
+    return {"status": "VALID", "mutation": mutation}
+
+
+def _rejected_candidate(ident, outcome, generation, parents=()):
+    return {
+        "mutation_id": ident,
+        "generation": generation,
+        "mutation": None,
+        "hypothesis": None,
+        "parent_mutation_ids": list(parents),
+        "runtime_deployed": False,
+        "screen": None,
+        "gate": None,
+        "effect": None,
+        "decision": "REJECTED",
+        "pre_rollout_rejection": "candidate_contract_error",
+        "candidate_error": outcome,
+    }
+
+
 def _document(role, strategy):
     return {
         "role": role,
@@ -410,6 +455,7 @@ def run_skill_evolution_v2(
                 opponents.append(("native", None, 1.0))
         looks *= len(opponents) + int(not smoke)
         all_proposals = []
+        rejected_proposals = []
 
         def candidate_hypothesis(mutation):
             return {
@@ -442,14 +488,30 @@ def run_skill_evolution_v2(
                 ctx, MUTATOR_PROMPT, policy["mutation_context"]["max_proxy_tokens"]
             )
             ident = f"g{g:04d}-direct-{bias}"
-            proposal = stage(
-                g,
-                f"service_proposals-{ident}",
-                ctx,
-                lambda ctx=ctx: providers.propose_skill_mutation(ctx),
-            )
-            validate_mutation(proposal)
-            validate_direct_evidence(proposal, ctx)
+            if evo.get("candidate_error_policy", "fail_closed") == "reject_candidate":
+                outcome = stage(
+                    g,
+                    f"service_proposals-{ident}",
+                    ctx,
+                    lambda ctx=ctx: _candidate_outcome(
+                        lambda: providers.propose_skill_mutation(ctx), ctx
+                    ),
+                )
+                if outcome["status"] == "REJECTED":
+                    rejected_proposals.append(
+                        (_rejected_candidate(ident, outcome, g), ())
+                    )
+                    continue
+                proposal = outcome["mutation"]
+            else:
+                proposal = stage(
+                    g,
+                    f"service_proposals-{ident}",
+                    ctx,
+                    lambda ctx=ctx: providers.propose_skill_mutation(ctx),
+                )
+                validate_mutation(proposal)
+                validate_direct_evidence(proposal, ctx)
             all_proposals.append((ident, proposal, candidate_hypothesis(proposal), ()))
 
         seen_candidates = []
@@ -790,7 +852,7 @@ def run_skill_evolution_v2(
             )
             return row, full_runs
 
-        evaluated = []
+        evaluated = list(rejected_proposals)
         for ident, mutation, cluster, parents in all_proposals:
             row, runs = evaluate_candidate(ident, mutation, cluster, parents)
             evaluated.append((row, runs))
@@ -837,22 +899,48 @@ def run_skill_evolution_v2(
                     CROSSOVER_PROMPT + MUTATOR_PROMPT,
                     policy["mutation_context"]["max_proxy_tokens"],
                 )
-                mutation = stage(
-                    g,
-                    "service_crossover",
-                    ctx,
-                    lambda ctx=ctx: providers.crossover(ctx),
-                )
-                validate_mutation(mutation)
-                validate_direct_evidence(mutation, ctx)
-                cluster = candidate_hypothesis(mutation)
-                row, runs = evaluate_candidate(
-                    f"g{g:04d}-crossover",
-                    mutation,
-                    cluster,
-                    (a["mutation_id"], b["mutation_id"]),
-                )
-                evaluated.append((row, runs))
+                parents = (a["mutation_id"], b["mutation_id"])
+                if (
+                    evo.get("candidate_error_policy", "fail_closed")
+                    == "reject_candidate"
+                ):
+                    outcome = stage(
+                        g,
+                        "service_crossover",
+                        ctx,
+                        lambda ctx=ctx: _candidate_outcome(
+                            lambda: providers.crossover(ctx), ctx
+                        ),
+                    )
+                else:
+                    mutation = stage(
+                        g,
+                        "service_crossover",
+                        ctx,
+                        lambda ctx=ctx: providers.crossover(ctx),
+                    )
+                    validate_mutation(mutation)
+                    validate_direct_evidence(mutation, ctx)
+                    outcome = {"status": "VALID", "mutation": mutation}
+                if outcome["status"] == "REJECTED":
+                    evaluated.append(
+                        (
+                            _rejected_candidate(
+                                f"g{g:04d}-crossover", outcome, g, parents
+                            ),
+                            (),
+                        )
+                    )
+                else:
+                    mutation = outcome["mutation"]
+                    row, runs = evaluate_candidate(
+                        f"g{g:04d}-crossover",
+                        mutation,
+                        candidate_hypothesis(mutation),
+                        parents,
+                    )
+                    evaluated.append((row, runs))
+
         qualified = [
             (row, runs) for row, runs in evaluated if row["decision"] == "ACCEPTED"
         ]

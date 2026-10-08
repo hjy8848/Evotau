@@ -13,6 +13,7 @@ DEFAULT_V2 = {
     "activator": {"model": None, "model_args": {}},
     "service_evolution": {
         "candidates_per_generation": 3,
+        "candidate_error_policy": "fail_closed",
         "semantic_dedup": True,
         "crossover": True,
         "stagnation_patience": 2,
@@ -111,6 +112,11 @@ def freeze_v2_policy(raw, models, model_args):
             policy[key].update(deepcopy(value))
         else:
             policy[key] = deepcopy(value)
+    if policy["service_evolution"]["candidate_error_policy"] not in (
+        "fail_closed",
+        "reject_candidate",
+    ):
+        raise ValueError("unsupported candidate_error_policy")
     if policy["schema_version"] != 2:
         raise ValueError("unsupported V2 schema")
     if policy["service_skill_runtime"] not in ("activate_topk_v2", "render_all_v1"):

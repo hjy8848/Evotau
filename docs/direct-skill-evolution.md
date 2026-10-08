@@ -115,3 +115,20 @@ This is an explicitly changed-model/new-mechanism treatment with audited native
 baseline reuse, not a pure new independent replicate. Availability of both required
 model IDs was refreshed via their credential-scoped `/models` endpoints before
 launch; listing alone does not prove the new Direct Mutator will succeed.
+
+### Parsed candidate errors without stopping the search
+
+`service_evolution.candidate_error_policy: reject_candidate` records a parsed
+Direct Mutator or crossover schema/evidence-contract violation as a rejected
+proposal, consumes its original candidate slot, and continues the remaining
+candidates. Invalid output is never rewritten or deployed. Its diagnostic/raw
+response remains preserved; it receives no Screen/Gate score or mutation effect.
+The journal freezes the rejection, so resume does not call the model again.
+Network errors, malformed JSON, budget exhaustion, native execution errors and
+artifact-integrity failures still stop the run. Validators retain their existing
+strict behavior. Historical configurations default to `fail_closed`.
+
+The independent opt-in configuration is
+`configs/v2-direct-skill-reject-invalid-qwen37plus-official-dsflash-e20-v3-h5-g2-p1.yaml`.
+Do not resume the old frozen experiment under this changed search policy; use a
+new manifest/output directory and an explicit compatibility audit for imports.
