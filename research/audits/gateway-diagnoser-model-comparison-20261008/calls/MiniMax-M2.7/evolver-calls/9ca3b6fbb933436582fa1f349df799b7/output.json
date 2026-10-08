@@ -1,0 +1,28 @@
+{
+  "status": "parsed",
+  "response": {
+    "clusters": [
+      {
+        "cluster_id": "C1",
+        "root_cause": "Agent exhausts step budget when handling multiple sequential operations across different orders, failing to reach final summary or closing response. Multi-order requests (cancel+exchange across 2 orders, or return+modify across orders) require excessive get_order_details calls for disambiguation and sequential confirmation flows, consuming steps beyond threshold. The agent successfully executes all operations but terminates mid-calculation or mid-confirmation.",
+        "evidence_task_ids": [
+          "54",
+          "35"
+        ],
+        "protected_success_task_ids": [
+          "98",
+          "29",
+          "106",
+          "22",
+          "21"
+        ],
+        "recommended_surface": "runtime_protocol",
+        "recommended_mutation_types": [
+          "no_op"
+        ],
+        "risk": "High - Complex multi-order tasks consistently fail when operations span 2+ orders; single-order multi-item exchanges succeed. The 10% stuck_rate and p95_steps at 41 confirm structural inefficiency in multi-order traversal."
+      }
+    ]
+  },
+  "response_sha256": "f28760eb9436f8689f454310b06974cb5349f305453f45a0018ae355bd8c14df"
+}
