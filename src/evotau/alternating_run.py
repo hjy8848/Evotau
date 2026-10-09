@@ -67,6 +67,8 @@ def _run_from_config(
         raise ValueError("Legacy Diagnoser config is read-only; create a Direct Skill experiment")
     if manifest.skill_evolution_v2_json:
         frozen = json.loads(manifest.skill_evolution_v2_json)
+        from .skill_evolution_config import validate_v2_promotion_readiness
+        validate_v2_promotion_readiness(frozen, run_validation=manifest.run_validation)
         if (frozen["evaluation"].get("promotion_protocol") == "v_primary"
                 and not frozen["evaluation"]["calibration_confirmed"]
                 and not frozen["evaluation"].get("allow_uncalibrated_launch", False)):

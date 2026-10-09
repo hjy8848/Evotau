@@ -140,6 +140,8 @@ def run_skill_evolution_v2(
         raise ValueError(
             "Legacy Diagnoser configuration is read-only; create a versioned Direct Skill config"
         )
+    from .skill_evolution_config import validate_v2_promotion_readiness
+    validate_v2_promotion_readiness(policy, run_validation=run_validation)
     analyst_mode = policy["algorithm_version"] == "analyst_skill_v_validation_v3"
     v_primary = policy["evaluation"].get("promotion_protocol") == "v_primary"
     if v_primary and (not run_validation or policy["statistical_gate"]["method"] != "task_block_bootstrap"

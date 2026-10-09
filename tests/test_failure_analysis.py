@@ -521,3 +521,32 @@ def test_single_seed_config_only_changes_repetition_and_identity():
         old['skill_evolution_v2']['evaluation'].pop(k)
         new['skill_evolution_v2']['evaluation'].pop(k)
     assert old == new  # All models, tasks, thresholds, native runtime and search intensity unchanged.
+
+
+def test_single_seed_gate_cannot_promote_and_launch_fails_before_requests(tmp_path):
+    from test_skill_evolution_v2 import record
+
+    from evotau.evolution_gate import evaluate_gate
+    from evotau.skill_evolution_config import validate_v2_promotion_readiness
+
+    p = settings()
+    p['evaluation']['gate_seeds'] = [1]
+    p['statistical_gate'].update(min_tasks=20, risk_scope='observed_panel', adaptive_validation=True)
+    old = [record(str(t), False, 1) for t in range(20)]
+    new = [record(str(t), True, 1) for t in range(20)]
+    verdict = evaluate_gate(old, new, p['statistical_gate'])
+    assert verdict['verdict'] == 'INCONCLUSIVE'
+    assert not verdict['complete_paired_seed_coverage']
+    with pytest.raises(ValueError, match='at least two paired gate seeds'):
+        validate_v2_promotion_readiness(p, run_validation=True)
+    provider = AnalystProviders()
+    with pytest.raises(ValueError, match='at least two paired gate seeds'):
+        run(tmp_path, provider=provider, policy=p, validation=True)
+    assert not provider.calls
+    p['evaluation']['gate_seeds'] = [1, 2]
+    validate_v2_promotion_readiness(p, run_validation=True)
+    old = [record(str(t), False, seed) for t in range(20) for seed in (1, 2)]
+    new = [record(str(t), True, seed) for t in range(20) for seed in (1, 2)]
+    verdict = evaluate_gate(old, new, p['statistical_gate'])
+    assert verdict['complete_paired_seed_coverage']
+    assert verdict['verdict'] == 'ACCEPTED'

@@ -1,6 +1,19 @@
-# EvoTau Airline：单 seed 新版实验协议
+# EvoTau Airline：单 seed 草案（已发现晋升阻塞，不可启动）
 
-状态：2026-10-09 用户已选择单 seed；配置和协议已准备，尚未启动收费运行。
+状态：2026-10-09 修正。此草案与现有 Gate 不兼容，已禁止启动；下面原设计保留作审计。
+
+**关键纠正：** Gate 的 complete_seed_coverage 要求至少两个 seed。单 seed 即使 V20 大幅改善，
+仍不可能 ACCEPT；这不是单纯功效较弱。之前 dry validation 通过只是配置解析/数据检查，
+没有覆盖晋升可达性。此前“单 seed 可按现有阈值晋升”的表述撤回。
+
+新增启动前检查会在 dry-run / 实际 runner / 直接 orchestration 入口拒绝该配置，
+并且不读取凭证、不请求模型。历史 manifest 仍可读取，Gate 本身未改。
+
+可选修订：A）单 seed 只用于生成/初筛诊断，明确不晋升；需独立诊断协议与实现。
+B）E/Screen 用单 seed，V 使用两 seed，才具备按原 Gate 晋升的必要覆盖条件；
+H 可独立选单 seed 探索性 scorecard。B 是建议，不是本次自动生效的配置。
+既有配置把 Full-E、V、H 共用 gate_seeds，不能只改数组就声称实现了B；
+如选择B，需要显式拆分评测 seed 配置、测试和新的冻结身份。等待用户选择，未启动。
 本协议替代新版四 seed 草案的运行安排，不修改正在运行的旧版四 seed 实验。
 代码生成算法仍是 `analyst_skill_v_validation_v3`（007fed9实现）；只改变新版重复评测次数。
 
@@ -60,7 +73,7 @@ E用于生成、初筛和效果归因；V决定部署，H只做最终scorecard�
 当前Customer的V比较仍要求superiority，历史/native仍要求preservation。
 严重违规、stuck、回归约束、bootstrap、Bonferroni和原阈值均保持不变。
 
-只把seed数组由原[1,2]/[1,2,3,4]改为[1]，不降低min_tasks=20、95%置信度、
+原草案计划只把seed数组由原[1,2]/[1,2,3,4]改为[1]，不降低min_tasks=20、95%置信度、
 min_success_gain=0.02、max_harmfulness=0.15等门槛。配对仍按task×seed；bootstrap仍以task为块。
 
 注意：20个V任务在一个seed下仍是20个task块，但无法估计同task的跨seed波动。
@@ -113,7 +126,7 @@ HTTP/JSON解析/runtime异常明确失败，不伪造成task0分；保存原输�
 
 ## 命令与当前状态
 
-只做配置dry validation（不收费）：
+修正后的dry validation会在读取凭证或发请求前明确拒绝本配置（不收费）：
 
 ```sh
 cd /Users/spring/RSI/Evotau-analyst
@@ -123,6 +136,6 @@ PYTHONPATH=src /Users/spring/RSI/Evotau/.venv/bin/python \
  --tau2-data-dir /Users/spring/.cache/evotau/tau2-data-b7ea9074
 ```
 
-未来用户明确要求开跑后，在同一命令加 `--execute --approve-unbounded-requests`，
-由原有launcher读取已有凭证并记录实际manifest/commit/PID。本次没有启动。
+**禁止给本配置添加 --execute 启动晋升实验。** 修订协议并通过检查后才可提供新的启动命令。
+原草案的启动说明已撤回。本次没有启动新版收费运行。
 当前旧版四seed实验保持运行；准备单seed协议不等于修改它或把它标为新版。

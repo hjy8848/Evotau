@@ -18,6 +18,7 @@ from evotau.alternating_run import load_alternating_tasks, run_from_config
 from evotau.phase0 import load_config
 from evotau.provider_diagnostics import response_metadata, safe_error
 from evotau.release_recovery import frozen_run_lock
+from evotau.skill_evolution_config import validate_v2_promotion_readiness
 from evotau.tau_provenance import write_manifest_once
 
 
@@ -99,6 +100,9 @@ def main():
     args = parser.parse_args()
     raw = load_config(args.config)
     manifest = AlternatingManifest.from_mapping(raw)
+    if args.mode == "formal":
+        validate_v2_promotion_readiness(json.loads(manifest.skill_evolution_v2_json),
+                                       run_validation=manifest.run_validation)
     for name, expected in raw['launch_readiness']['execution_source_sha256'].items():
         if hashlib.sha256(Path(name).read_bytes()).hexdigest() != expected:
             raise ValueError(f'Frozen launcher differs: {name}')

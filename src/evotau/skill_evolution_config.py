@@ -275,3 +275,14 @@ def freeze_v2_policy(raw, models, model_args):
 
 
 MUTATION_TYPES = V2_MUTATION_TYPES
+
+
+def validate_v2_promotion_readiness(policy, *, run_validation):
+    """Check launch compatibility without reinterpreting historical manifests."""
+    if (run_validation and policy['evaluation'].get('promotion_protocol') == 'v_primary'
+            and policy['statistical_gate']['enabled']
+            and len(set(policy['evaluation']['gate_seeds'])) < 2):
+        raise ValueError(
+            'V-primary promotion requires at least two paired gate seeds; '
+            'single-seed Gate cannot ACCEPT under the frozen statistical protocol'
+        )
