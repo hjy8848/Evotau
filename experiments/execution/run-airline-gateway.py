@@ -18,6 +18,7 @@ from evotau.alternating_run import load_alternating_tasks, run_from_config
 from evotau.phase0 import load_config
 from evotau.provider_diagnostics import response_metadata, safe_error
 from evotau.release_recovery import frozen_run_lock
+from evotau.tau_provenance import write_manifest_once
 
 
 def credential(service, account):
@@ -123,6 +124,11 @@ def main():
     evolver_key = credential('api.deepseek.com/v1', 'evotau-evolver-api-key') if args.mode == 'formal' else None
     output = Path(manifest.output_path)
     output.mkdir(parents=True, exist_ok=True)
+    if args.mode == 'formal' and not (output / 'manifest.json').exists():
+        operator_files = {'operator-launch.json', 'launch.log', 'operator-failure.json'}
+        if any(path.name not in operator_files for path in output.iterdir()):
+            raise ValueError('Cannot bind nonempty output with unrecognized artifacts')
+        write_manifest_once(output / 'manifest.json', manifest)
     install_transport(output, gateway_key, evolver_key)
     try:
         if args.mode == 'aa':
