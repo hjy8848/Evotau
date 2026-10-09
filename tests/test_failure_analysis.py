@@ -497,3 +497,27 @@ def test_legacy_frozen_prompt_bytes_preserved():
         sha256_json(DIRECT_MUTATOR_PROMPT)
         == "edb6ad7c2db025882f495d1aa2b3e1a259781d04c6a420b5f050bb11630cb554"
     )
+
+
+def test_single_seed_config_only_changes_repetition_and_identity():
+    from pathlib import Path
+
+    import yaml
+
+    from evotau.alternating_manifest import AlternatingManifest
+
+    root = Path(__file__).resolve().parents[1]
+    base = yaml.safe_load((root / 'configs/airline-failure-analyst-qwen37plus-official-dsflash-p2.yaml').read_text())
+    single = yaml.safe_load((root / 'configs/airline-failure-analyst-single-seed-p2.yaml').read_text())
+    old, new = deepcopy(base['experiment']), deepcopy(single['experiment'])
+    assert new['skill_evolution_v2']['evaluation']['screen_seeds'] == [1]
+    assert new['skill_evolution_v2']['evaluation']['gate_seeds'] == [1]
+    assert new['evolution_fitness_seed'] == 1
+    a, b = AlternatingManifest.from_mapping(base), AlternatingManifest.from_mapping(single)
+    assert a.sha256 != b.sha256 and a.output_path != b.output_path
+    for k in ('id', 'output_path', 'checkpoint_path', 'provider_provenance'):
+        old.pop(k); new.pop(k)
+    for k in ('screen_seeds', 'gate_seeds'):
+        old['skill_evolution_v2']['evaluation'].pop(k)
+        new['skill_evolution_v2']['evaluation'].pop(k)
+    assert old == new  # All models, tasks, thresholds, native runtime and search intensity unchanged.
