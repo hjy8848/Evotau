@@ -1,5 +1,5 @@
 experiment:
-  id: evotau-airline-gateway-qwen37plus-aa-e10-v20-h20-g2-p2-20261009
+  id: evotau-airline-gateway-qwen37plus-direct-launch-e10-v20-h20-g2-p2-20261009
   phase: alternating-self-evolution
   upstream:
     repository: sierra-research/tau2-bench
@@ -71,7 +71,7 @@ experiment:
   clean_panel_size: 20
   max_steps: 200
   max_parallel_episodes: 2
-  request_budget_cap: 20000
+  request_budget_cap: 200000
   real_provider_enabled: true
   models:
     agent: openai/dashscope/qwen3.7-plus
@@ -98,8 +98,8 @@ experiment:
       max_tokens: 65536
   customer_strategy: ''
   service_strategy: ''
-  output_path: experiments/diagnostics/evotau-airline-gateway-qwen37plus-aa-e10-v20-h20-g2-p2-20261009
-  checkpoint_path: experiments/checkpoints/evotau-airline-gateway-qwen37plus-aa-e10-v20-h20-g2-p2-20261009.json
+  output_path: experiments/runs/evotau-airline-gateway-qwen37plus-direct-launch-e10-v20-h20-g2-p2-20261009
+  checkpoint_path: experiments/checkpoints/evotau-airline-gateway-qwen37plus-direct-launch-e10-v20-h20-g2-p2-20261009.json
   source_blob_sha1:
     data/tau2/domains/airline/db.json: c6a1e817aa9102c5822e83affb3595acbc312701
     data/tau2/domains/airline/policy.md: 8098be7db3f47de943fad39d1e057ede6cc6cd04
@@ -122,8 +122,8 @@ experiment:
     src/tau2/user/user_simulator.py: 51ef4bba88e2565532ce02da1f36ab3021028178
     src/tau2/utils/llm_utils.py: cc704825a14d1a81a791b9ca2a08aa2eb8989f8c
   evolution_fitness_seed: 1
-  run_validation: false
-  run_heldout: false
+  run_validation: true
+  run_heldout: true
   evolution:
     customer_carrier: prompt_strategy
     service_carrier: skill_memory_v2
@@ -187,6 +187,7 @@ experiment:
       screen_max_stuck_delta: 0.1
       calibration_confirmed: false
       screen_regression_allowance: 1
+      allow_uncalibrated_launch: true
     statistical_gate:
       enabled: true
       confidence: 0.95
@@ -227,9 +228,10 @@ experiment:
       case_chars: 12000
       max_proxy_tokens: 40000
 launch_readiness:
-  budget_confirmed: false
+  budget_confirmed: true
   formal_experiment_started: false
-  calibration_status: PENDING_AA; thresholds provisional, formal evolution blocked
+  calibration_status: NOT_PERFORMED; user explicitly requested direct launch after
+    disclosure; all provisional thresholds unchanged
   partition_seed: 20261009
   split_counts:
     train: 30
@@ -239,3 +241,7 @@ launch_readiness:
   algorithm_version: direct_skill_v_validation_v2
   execution_source_sha256:
     experiments/execution/run-airline-gateway.py: cca6bed495b4050b9acab66a811bae474d17f1df9a46c6d51fd1c7e1268c0294
+  direct_launch_authorization: 'User: 直接启动啊; proceeding with disclosed 200000-request
+    cap and concurrency 2'
+  interpretation: Uncalibrated predeclared V-primary experiment; not A/A calibrated
+    or population-generalization proof

@@ -45,3 +45,14 @@ it did not establish sustained throughput, native episode completion, statistica
 calibration or research effectiveness. Pricing metadata for the gateway model
 is not available in the local LiteLLM cost table; report observed request/token
 usage rather than claiming an exact monetary price.
+
+## Explicit direct launch (2026-10-09)
+
+After being told calibration is incomplete and the proposed formal cap is 200,000,
+the user explicitly requested direct launch. The independent frozen config
+`configs/airline-gateway-qwen37plus-direct-launch-p2.yaml` records that authorization
+with `allow_uncalibrated_launch: true`. `calibration_confirmed` remains false.
+No statistical, regression, policy or data-isolation threshold is relaxed.
+This is an uncalibrated, predeclared experiment; do not label it A/A calibrated.
+The default remains to require calibration for other V-primary configurations.
+Run with the gateway launcher, `--mode formal --approved-request-cap 200000 --execute`.

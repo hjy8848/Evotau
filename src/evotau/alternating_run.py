@@ -68,7 +68,8 @@ def _run_from_config(
     if manifest.skill_evolution_v2_json:
         frozen = json.loads(manifest.skill_evolution_v2_json)
         if (frozen["evaluation"].get("promotion_protocol") == "v_primary"
-                and not frozen["evaluation"]["calibration_confirmed"]):
+                and not frozen["evaluation"]["calibration_confirmed"]
+                and not frozen["evaluation"].get("allow_uncalibrated_launch", False)):
             raise ValueError("V-primary formal launch requires A/A calibration and an explicitly frozen confirmed policy")
     if not manifest.real_provider_enabled:
         raise RuntimeError("provider calls are disabled in this alternating-run config")

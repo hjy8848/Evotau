@@ -516,3 +516,19 @@ def test_aa_bounded_parallelism_and_result_order(tmp_path, monkeypatch):
                                         task_loader=lambda *a, **kw: {'1': object(), '0': object()})
     assert peak == 2
     assert [r['task_id'] for r in result['comparisons']] == ['1', '0']
+
+
+def test_explicit_uncalibrated_launch_keeps_thresholds_and_calibration_status():
+    raw = config()
+    original = AlternatingManifest.from_mapping(raw)
+    raw['experiment']['skill_evolution_v2']['evaluation']['allow_uncalibrated_launch'] = True
+    manifest = AlternatingManifest.from_mapping(raw)
+    before = json.loads(original.skill_evolution_v2_json)
+    after = json.loads(manifest.skill_evolution_v2_json)
+    assert after['evaluation']['allow_uncalibrated_launch'] is True
+    assert after['evaluation']['calibration_confirmed'] is False
+    assert after['statistical_gate'] == before['statistical_gate']
+    assert manifest.skill_evolution_v2_json != original.skill_evolution_v2_json
+    raw['experiment']['skill_evolution_v2']['evaluation']['allow_uncalibrated_launch'] = 'yes'
+    with pytest.raises(ValueError, match='boolean'):
+        AlternatingManifest.from_mapping(raw)

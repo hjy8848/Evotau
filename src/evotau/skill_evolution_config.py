@@ -31,6 +31,7 @@ DEFAULT_V2 = {
         "screen_regression_allowance": 0,
         "screen_max_stuck_delta": 0.0,
         "calibration_confirmed": False,
+        "allow_uncalibrated_launch": False,
     },
     "mutation_context": {
         "representative_cases": 4,
@@ -160,6 +161,8 @@ def freeze_v2_policy(raw, models, model_args):
         raise ValueError("V-primary promotion requires its own algorithm version")
     if type(evaluation["calibration_confirmed"]) is not bool:
         raise ValueError("calibration_confirmed must be boolean")
+    if type(evaluation["allow_uncalibrated_launch"]) is not bool:
+        raise ValueError("allow_uncalibrated_launch must be boolean")
     if type(evaluation["screen_regression_allowance"]) is not int or evaluation["screen_regression_allowance"] < 0:
         raise ValueError("screen regression allowance must be a nonnegative cell count")
     for key in ("screen_max_regression_rate", "screen_max_stuck_delta"):

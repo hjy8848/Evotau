@@ -104,7 +104,8 @@ def main():
         raise ValueError('Explicit finite approved cap must match the frozen config')
     if args.mode == 'formal':
         policy = json.loads(manifest.skill_evolution_v2_json)
-        if not policy['evaluation']['calibration_confirmed']:
+        if (not policy['evaluation']['calibration_confirmed']
+                and not policy['evaluation'].get('allow_uncalibrated_launch', False)):
             raise ValueError('Formal launch blocked: Airline A/A calibration is not confirmed')
     load_alternating_tasks(manifest, args.tau2_data_dir,
                            include_validation=args.mode == 'formal', include_heldout=False)
