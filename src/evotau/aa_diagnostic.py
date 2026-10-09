@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
 from pathlib import Path
 
@@ -153,19 +154,49 @@ def run_independent_repetitions(
         )
         rows, native = {}, {}
         try:
-            for seed in seeds:
-                for task in tasks:
-                    record = runner(
-                        task_id=task,
-                        seed=seed,
-                        customer=PromptStrategy(original.initial_customer_strategy),
-                        service=ServiceSkillMemoryV2(),
-                        panel_name=f"independent-baseline-{repetition}",
-                    )
-                    key = (task, seed)
-                    rows[key] = record
-                    file = Path(exp["output_path"]) / record.trajectory_ref
-                    native[key] = json.loads(file.read_text())
+            cells = iter((task, seed) for seed in seeds for task in tasks)
+
+            def execute(key, runner=runner, repetition=repetition, root=Path(exp["output_path"])):
+                task, seed = key
+                record = runner(
+                    task_id=task,
+                    seed=seed,
+                    customer=PromptStrategy(original.initial_customer_strategy),
+                    service=ServiceSkillMemoryV2(),
+                    panel_name=f"independent-baseline-{repetition}",
+                )
+                file = root / record.trajectory_ref
+                return record, json.loads(file.read_text())
+
+            with ThreadPoolExecutor(max_workers=original.max_parallel_episodes) as pool:
+                pending = {}
+
+                def submit_next(cells=cells, pending=pending, pool=pool, execute=execute):
+                    key = next(cells, None)
+                    if key is not None:
+                        pending[pool.submit(execute, key)] = key
+
+                for _ in range(original.max_parallel_episodes):
+                    submit_next()
+                while pending:
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    # Inspect every completed future before dispatching more work.
+                    error = None
+                    for future in done:
+                        key = pending.pop(future)
+                        failure = future.exception()
+                        if failure is None:
+                            rows[key], native[key] = future.result()
+                        else:
+                            error = error or failure
+                    if error is not None:
+                        for future in pending:
+                            future.cancel()
+                        raise error
+                    for _ in done:
+                        submit_next()
+            rows = {(task, seed): rows[(task, seed)] for seed in seeds for task in tasks}
+            native = {key: native[key] for key in rows}
         except Exception as error:
             (output / "diagnostic-failure.json").write_text(
                 json.dumps(

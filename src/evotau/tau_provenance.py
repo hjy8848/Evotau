@@ -19,7 +19,7 @@ ROLE_NAMES = ("agent", "customer", "reviewer", "evaluator")
 EVOLUTION_ROLE_NAMES = ("agent", "customer", "evaluator", "evolver")
 MODEL_ARGUMENT_NAMES = frozenset({
     "temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty",
-    "api_base", "thinking_mode", "reasoning_effort", "api_protocol", "api_key_env", "stream",
+    "api_base", "thinking_mode", "enable_thinking", "reasoning_effort", "api_protocol", "api_key_env", "stream",
 })
 DEFAULT_ROLE_MODEL_ARGS = {
     role: {"temperature": 0.0} for role in (*ROLE_NAMES, "evolver")
@@ -187,6 +187,11 @@ def freeze_role_model_args(
             )
         normalized: list[tuple[str, float | int | str]] = []
         for name, value in sorted(params.items()):
+            if name == "enable_thinking":
+                if type(value) is not bool or "thinking_mode" in params:
+                    raise ValueError("enable_thinking must be boolean and cannot coexist with thinking_mode")
+                normalized.append((name, value))
+                continue
             if name == "stream":
                 if role != "evolver" or type(value) is not bool:
                     raise ValueError("stream must be boolean and is supported for evolver only")
@@ -299,6 +304,8 @@ def role_model_args_for_runtime(
         thinking_mode = params[role].pop("thinking_mode", None)
         if thinking_mode is not None:
             params[role]["extra_body"] = {"thinking": {"type": thinking_mode}}
+        if "enable_thinking" in params[role]:
+            params[role]["extra_body"] = {"enable_thinking": params[role].pop("enable_thinking")}
     return params
 def write_manifest_once(path: str | Path, manifest: Any) -> Path:
     target = Path(path)

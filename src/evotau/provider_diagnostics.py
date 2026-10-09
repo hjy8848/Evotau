@@ -27,7 +27,7 @@ def safe_request_args(args: Mapping[str, Any]) -> dict[str, Any]:
         from urllib.parse import urlsplit, urlunsplit
         url = urlsplit(base)
         result["api_base"] = urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
-    for container, allowed in (("extra_body", ("thinking",)), ("reasoning", ("effort",))):
+    for container, allowed in (("extra_body", ("thinking", "enable_thinking")), ("reasoning", ("effort",))):
         value = args.get(container)
         if isinstance(value, Mapping):
             filtered = {}
@@ -35,7 +35,7 @@ def safe_request_args(args: Mapping[str, Any]) -> dict[str, Any]:
                 item = value.get(name)
                 if name == "thinking" and isinstance(item, Mapping):
                     item = {"type": item.get("type")}
-                if isinstance(item, (str, dict)):
+                if isinstance(item, (str, dict, bool)):
                     filtered[name] = item
             if filtered:
                 result[container] = filtered

@@ -461,3 +461,58 @@ def test_single_e_reversal_does_not_automatically_veto_v_primary_screen():
     new = [record("a", True), record("b", False)]
     assert not cheap_screen(old, new, {"a"}, {"b"})["passed"]
     assert cheap_screen(old, new, {"a"}, {"b"}, regression_allowance=1)["passed"]
+
+
+def test_gateway_thinking_flag_is_frozen_and_translated():
+    from evotau.provider_diagnostics import safe_request_args
+    from evotau.tau_provenance import (
+        freeze_role_model_args,
+        role_model_args_for_runtime,
+    )
+
+    args = freeze_role_model_args({'agent': {'enable_thinking': False}}, roles=('agent',))
+    runtime = role_model_args_for_runtime(args)['agent']
+    assert runtime == {'extra_body': {'enable_thinking': False}}
+    assert safe_request_args(runtime)['extra_body'] == {'enable_thinking': False}
+    for invalid in ('false', 0, None):
+        with pytest.raises(ValueError, match='boolean'):
+            freeze_role_model_args({'agent': {'enable_thinking': invalid}}, roles=('agent',))
+    with pytest.raises(ValueError, match='coexist'):
+        freeze_role_model_args({'agent': {'enable_thinking': False, 'thinking_mode': 'disabled'}}, roles=('agent',))
+
+
+def test_aa_bounded_parallelism_and_result_order(tmp_path, monkeypatch):
+    from threading import Barrier, Lock
+    from time import sleep
+
+    monkeypatch.chdir(tmp_path)
+    raw = config()
+    raw['experiment']['max_parallel_episodes'] = 2
+    barrier, lock = Barrier(2), Lock()
+    active, peak = 0, 0
+
+    class Runner:
+        def __init__(self, **kw):
+            self.root = Path(kw['output_directory'])
+            self.root.mkdir(parents=True, exist_ok=True)
+
+        def __call__(self, **kw):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            barrier.wait(timeout=5)
+            if kw['task_id'] == '1':
+                sleep(0.02)
+            path = f"{kw['task_id']}-{kw['seed']}.json"
+            (self.root / path).write_text(json.dumps({'messages': [], 'reward_info': {}}))
+            with lock:
+                active -= 1
+            return record(kw['task_id'], True, kw['seed'], trajectory_ref=path)
+
+    result = run_independent_repetitions(raw, data_dir='offline', output='parallel-aa',
+                                        tasks=['1', '0'], seeds=[1], repetitions=2,
+                                        approved_cap=200000, runner_factory=Runner,
+                                        task_loader=lambda *a, **kw: {'1': object(), '0': object()})
+    assert peak == 2
+    assert [r['task_id'] for r in result['comparisons']] == ['1', '0']
