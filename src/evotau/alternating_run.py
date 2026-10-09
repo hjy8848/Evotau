@@ -63,7 +63,7 @@ def _run_from_config(
     config = load_config(config_file)
     manifest = AlternatingManifest.from_mapping(config)
     if (manifest.service_carrier == "skill_memory_v2"
-            and json.loads(manifest.skill_evolution_v2_json)["algorithm_version"] not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2")):
+            and json.loads(manifest.skill_evolution_v2_json)["algorithm_version"] not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3")):
         raise ValueError("Legacy Diagnoser config is read-only; create a Direct Skill experiment")
     if manifest.skill_evolution_v2_json:
         frozen = json.loads(manifest.skill_evolution_v2_json)
@@ -502,6 +502,8 @@ def _api_usage_by_role(
         "evaluator": ("nl_assertions_eval",),
         "customer_evolver": ("evotau_customer_evolver",),
         "service_evolver": ("evotau_service_evolver", "evotau_service_skill_evolver", "evotau_service_skill_mutator"),
+        "failure_analyst": ("evotau_service_failure_analyst",),
+        "mechanism_diversity": ("evotau_failure_mechanism_dedup",),
         "skill_activator": ("evotau_skill_activator",),
         "skill_crossover": ("evotau_skill_crossover",),
         "semantic_validator": ("evotau_customer_semantic_validator", "evotau_skill_semantic_validator"),

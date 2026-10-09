@@ -46,6 +46,8 @@ def _candidate_outcome(callback, context):
     try:
         validate_mutation(mutation)
         validate_direct_evidence(mutation, context)
+        from .failure_analysis import validate_assigned_mutation
+        validate_assigned_mutation(mutation, context)
     except (ValueError, TypeError, KeyError) as error:
         return {
             "status": "REJECTED",
@@ -134,10 +136,11 @@ def run_skill_evolution_v2(
         _write_json_once,
     )
 
-    if policy.get("algorithm_version") not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2"):
+    if policy.get("algorithm_version") not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3"):
         raise ValueError(
             "Legacy Diagnoser configuration is read-only; create a versioned Direct Skill config"
         )
+    analyst_mode = policy["algorithm_version"] == "analyst_skill_v_validation_v3"
     v_primary = policy["evaluation"].get("promotion_protocol") == "v_primary"
     if v_primary and (not run_validation or policy["statistical_gate"]["method"] != "task_block_bootstrap"
                       or not policy["statistical_gate"]["enabled"]):
@@ -489,31 +492,68 @@ def run_skill_evolution_v2(
                 "cluster_id": mutation["target_cluster_id"],
                 "root_cause": mutation["root_cause_hypothesis"],
                 "root_cause_sha256": sha256_json(mutation["root_cause_hypothesis"]),
-                "source": "direct_candidate",
+                "source": "assigned_analyst_hypothesis" if analyst_mode else "direct_candidate",
                 "evidence_task_ids": mutation["evidence_task_ids"],
                 "protected_success_task_ids": mutation["protected_success_task_ids"],
             }
 
-        for bias in range(evo["candidates_per_generation"]):
-            ctx = {
-                **s_context,
-                "proposal_index": bias,
-                "proposal_bias": (
-                    "narrow_applicability",
-                    "minimal_behavior",
-                    "structural_decomposition",
-                )[bias % 3],
-                "archive_parent": (
-                    prompt_parent(archive.entries[bias % len(archive.entries)])
-                    if archive.entries and s_context["exploration"]["explore"]
-                    else None
-                ),
-            }
-            from .evolution_candidates import MUTATOR_PROMPT
-
+        analyst_outcome = None
+        hypothesis_selection = None
+        if analyst_mode:
+            from .evolution_candidates import FAILURE_ANALYST_PROMPT
+            from .failure_analysis import analysis_outcome, select_distinct_hypotheses
+            analyst_context = {**s_context, "requested_hypotheses": evo["candidates_per_generation"]}
             enforce_mutation_context_budget(
-                ctx, MUTATOR_PROMPT, policy["mutation_context"]["max_proxy_tokens"]
+                analyst_context, FAILURE_ANALYST_PROMPT, policy["mutation_context"]["max_proxy_tokens"]
             )
+            analyst_outcome = stage(
+                g, "service_failure_analysis", analyst_context,
+                lambda ctx=analyst_context: analysis_outcome(lambda: providers.analyze_service_failures(ctx), ctx),
+            )
+            hypotheses = analyst_outcome["hypotheses"]
+            review_context = {"algorithm_version": policy["algorithm_version"], "hypotheses": hypotheses}
+            if len(hypotheses) > 1:
+                from .evolution_candidates import MECHANISM_DEDUP_PROMPT
+                from .failure_analysis import diversity_outcome
+                enforce_mutation_context_budget(review_context, MECHANISM_DEDUP_PROMPT, policy["mutation_context"]["max_proxy_tokens"])
+                review_outcome = stage(
+                    g, "service_mechanism_diversity", review_context,
+                    lambda ctx=review_context, hs=hypotheses: diversity_outcome(lambda: providers.deduplicate_failure_hypotheses(ctx), hs),
+                )
+            else:
+                review_outcome = {"status": "VALID", "comparisons": []}
+            hypothesis_selection = (
+                select_distinct_hypotheses(hypotheses, {"comparisons": review_outcome["comparisons"]}, evo["candidates_per_generation"])
+                if review_outcome["status"] == "VALID"
+                else {"assigned_hypotheses": [], "excluded_hypotheses": [], "semantic_distinctness_proven": False}
+            )
+            hypothesis_selection["diversity_review"] = review_outcome
+            hypothesis_selection = stage(
+                g, "service_hypothesis_assignment",
+                {"analysis": analyst_outcome, "review": review_outcome, "candidate_budget": evo["candidates_per_generation"]},
+                lambda selection=hypothesis_selection: selection,
+            )
+            assignments = hypothesis_selection["assigned_hypotheses"]
+        else:
+            assignments = [None] * evo["candidates_per_generation"]
+
+        for bias, assigned in enumerate(assignments):
+            ctx = {**s_context, "proposal_index": bias}
+            if analyst_mode:
+                ctx["assigned_hypothesis"] = assigned
+                from .evolution_candidates import MUTATOR_PROMPT as proposal_prompt
+            else:
+                ctx.update({
+                    "proposal_bias": ("narrow_applicability", "minimal_behavior", "structural_decomposition")[bias % 3],
+                    "archive_parent": (
+                        prompt_parent(archive.entries[bias % len(archive.entries)])
+                        if archive.entries and s_context["exploration"]["explore"] else None
+                    ),
+                })
+                from .evolution_candidates import (
+                    DIRECT_MUTATOR_PROMPT as proposal_prompt,
+                )
+            enforce_mutation_context_budget(ctx, proposal_prompt, policy["mutation_context"]["max_proxy_tokens"])
             ident = f"g{g:04d}-direct-{bias}"
             if evo.get("candidate_error_policy", "fail_closed") == "reject_candidate":
                 outcome = stage(
@@ -539,6 +579,8 @@ def run_skill_evolution_v2(
                 )
                 validate_mutation(proposal)
                 validate_direct_evidence(proposal, ctx)
+                from .failure_analysis import validate_assigned_mutation
+                validate_assigned_mutation(proposal, ctx)
             all_proposals.append((ident, proposal, candidate_hypothesis(proposal), ()))
 
         seen_candidates = []
@@ -610,6 +652,8 @@ def run_skill_evolution_v2(
                 "skills": proposed.to_dict(),
                 "native_policy": domain_policy,
             }
+            if analyst_mode:
+                validation_context["algorithm_version"] = policy["algorithm_version"]
             validation = stage(
                 g,
                 f"skill-validator-{ident}",
@@ -899,7 +943,7 @@ def run_skill_evolution_v2(
                 "no_op",
             ):
                 seen_candidates.append(row)
-        if evo["crossover"]:
+        if evo["crossover"] and (not analyst_mode or assignments):
             eligible = [
                 row
                 for row, _ in evaluated
@@ -923,11 +967,14 @@ def run_skill_evolution_v2(
                     "current_memory": before_s.to_dict(),
                     "policy": domain_policy,
                 }
-                from .evolution_candidates import CROSSOVER_PROMPT
+                from .evolution_candidates import (
+                    CROSSOVER_PROMPT,
+                    DIRECT_MUTATOR_PROMPT,
+                )
 
                 enforce_mutation_context_budget(
                     ctx,
-                    CROSSOVER_PROMPT + MUTATOR_PROMPT,
+                    CROSSOVER_PROMPT + DIRECT_MUTATOR_PROMPT,
                     policy["mutation_context"]["max_proxy_tokens"],
                 )
                 parents = (a["mutation_id"], b["mutation_id"])
@@ -1081,6 +1128,7 @@ def run_skill_evolution_v2(
                 "incumbent_episodes": [r.to_dict() for r in incumbent],
             },
             "service_phase": {
+                **({"failure_analysis": analyst_outcome, "hypothesis_selection": hypothesis_selection} if analyst_mode else {}),
                 "carrier": "skill_memory_v2",
                 "validation_looks_evaluated": sum(
                     gate["verdict"] != "NOT_EVALUATED"

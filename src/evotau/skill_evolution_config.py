@@ -81,7 +81,7 @@ def freeze_v2_policy(raw, models, model_args):
         raise TypeError("V2 policy must be a mapping")
     # Old manifests can be inspected, but the runtime explicitly refuses legacy algorithms.
     version = raw.get("algorithm_version", "diagnoser_v2")
-    if version not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "diagnoser_v2"):
+    if version not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "diagnoser_v2"):
         raise ValueError("unsupported evolution algorithm version")
     raw["algorithm_version"] = version
     evolution = raw.get("service_evolution", {})
@@ -158,7 +158,7 @@ def freeze_v2_policy(raw, models, model_args):
     evaluation = policy["evaluation"]
     if evaluation["promotion_protocol"] not in ("legacy_e_superiority", "v_primary"):
         raise ValueError("unknown promotion protocol")
-    if (version == "direct_skill_v_validation_v2") != (evaluation["promotion_protocol"] == "v_primary"):
+    if (version in ("direct_skill_v_validation_v2", "analyst_skill_v_validation_v3")) != (evaluation["promotion_protocol"] == "v_primary"):
         raise ValueError("V-primary promotion requires its own algorithm version")
     if type(evaluation["calibration_confirmed"]) is not bool:
         raise ValueError("calibration_confirmed must be boolean")
@@ -221,7 +221,7 @@ def freeze_v2_policy(raw, models, model_args):
     if gate["risk_scope"] not in ("population_bound", "observed_panel"):
         raise ValueError("invalid risk scope")
     if gate["risk_scope"] == "observed_panel" and not (
-        gate["adaptive_validation"] and version == "direct_skill_v_validation_v2"
+        gate["adaptive_validation"] and version in ("direct_skill_v_validation_v2", "analyst_skill_v_validation_v3")
     ):
         raise ValueError("observed-panel risk requires versioned adaptive V protocol")
     if gate["method"] not in ("task_block_bootstrap", "finite_panel_paired"):
