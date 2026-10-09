@@ -312,12 +312,11 @@ def _run_from_config(
             endpoint_runner = run_final_endpoint_evaluation
             if manifest.service_carrier == "skill_memory_v2":
                 from .skill_evolution import run_v2_endpoint_evaluation
+                from .skill_evolution_config import evaluation_seed_schedule
 
                 def endpoint_runner(**kwargs):
                     return run_v2_endpoint_evaluation(
-                        gate_seeds=json.loads(manifest.skill_evolution_v2_json)[
-                            "evaluation"
-                        ]["gate_seeds"],
+                        gate_seeds=evaluation_seed_schedule(json.loads(manifest.skill_evolution_v2_json), "H"),
                         **kwargs,
                     )
 

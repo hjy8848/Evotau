@@ -140,7 +140,10 @@ def run_skill_evolution_v2(
         raise ValueError(
             "Legacy Diagnoser configuration is read-only; create a versioned Direct Skill config"
         )
-    from .skill_evolution_config import validate_v2_promotion_readiness
+    from .skill_evolution_config import (
+        evaluation_seed_schedule,
+        validate_v2_promotion_readiness,
+    )
     validate_v2_promotion_readiness(policy, run_validation=run_validation)
     analyst_mode = policy["algorithm_version"] == "analyst_skill_v_validation_v3"
     v_primary = policy["evaluation"].get("promotion_protocol") == "v_primary"
@@ -723,7 +726,7 @@ def run_skill_evolution_v2(
                         g,
                         f"service_repair_full-{ident}-old",
                         e,
-                        policy["evaluation"]["gate_seeds"],
+                        evaluation_seed_schedule(policy, "E"),
                         customer,
                         before_s,
                     )
@@ -731,7 +734,7 @@ def run_skill_evolution_v2(
                         g,
                         f"service_repair_full-{ident}-new",
                         e,
-                        policy["evaluation"]["gate_seeds"],
+                        evaluation_seed_schedule(policy, "E"),
                         customer,
                         proposed,
                     )

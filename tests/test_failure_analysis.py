@@ -550,3 +550,82 @@ def test_single_seed_gate_cannot_promote_and_launch_fails_before_requests(tmp_pa
     verdict = evaluate_gate(old, new, p['statistical_gate'])
     assert verdict['complete_paired_seed_coverage']
     assert verdict['verdict'] == 'ACCEPTED'
+
+
+def test_hybrid_seed_schedules_route_e_and_v_independently(tmp_path):
+    import json
+
+    p = settings()
+    p['evaluation'].update(screen_seeds=[1], repair_seeds=[1], gate_seeds=[1, 2], heldout_seeds=[1])
+    result, _, _ = run(tmp_path, provider=RepairProviders(count=1), policy=p, validation=True)
+    assert result.generations[0]['service_phase']['candidates'][0]['gate']
+    for path in (tmp_path/'evolution-v2').glob('g0000-service*old.json'):
+        payload = json.loads(path.read_text())['payload']
+        if 'episodes' not in payload:
+            continue
+        seeds = {r['seed'] for r in payload['episodes']}
+        assert seeds == ({1, 2} if 'full_gate' in path.name else {1})
+
+
+def test_hybrid_config_and_legacy_schedule_serialization():
+    import json
+    from pathlib import Path
+
+    import yaml
+
+    from evotau.alternating_manifest import AlternatingManifest
+    from evotau.skill_evolution_config import validate_v2_promotion_readiness
+
+    root = Path(__file__).resolve().parents[1]
+    def load(name):
+        return AlternatingManifest.from_mapping(yaml.safe_load((root/'configs'/name).read_text()))
+    old = load('airline-failure-analyst-qwen37plus-official-dsflash-p2.yaml')
+    assert 'repair_seeds' not in json.loads(old.skill_evolution_v2_json)['evaluation']
+    new = load('airline-failure-analyst-hybrid-seeds-p2.yaml')
+    policy = json.loads(new.skill_evolution_v2_json)
+    validate_v2_promotion_readiness(policy, run_validation=True)
+    assert policy['evaluation']['repair_seeds'] == policy['evaluation']['heldout_seeds'] == [1]
+    assert policy['evaluation']['gate_seeds'] == [1, 2]
+    assert old.sha256 != new.sha256
+    for field in ('role_models', 'role_model_args', 'evolution_task_ids', 'validation_task_ids', 'heldout_task_ids'):
+        assert getattr(old, field) == getattr(new, field)
+    assert json.loads(old.skill_evolution_v2_json)['statistical_gate'] == policy['statistical_gate']
+
+
+@pytest.mark.parametrize('seeds', [[], [1,1], [True], [-1]])
+def test_optional_seed_schedules_reject_invalid_values(seeds):
+    from pathlib import Path
+
+    import yaml
+
+    from evotau.alternating_manifest import AlternatingManifest
+
+    path=Path(__file__).resolve().parents[1]/'configs/airline-failure-analyst-hybrid-seeds-p2.yaml'
+    raw=yaml.safe_load(path.read_text())
+    raw['experiment']['skill_evolution_v2']['evaluation']['heldout_seeds']=seeds
+    with pytest.raises(ValueError, match='seed schedules'):
+        AlternatingManifest.from_mapping(raw)
+
+
+def test_hybrid_h_runs_one_seed_and_does_not_fabricate_pass4(monkeypatch):
+    from test_skill_evolution_v2 import record
+
+    from evotau.skill_evolution import run_v2_endpoint_evaluation
+    from evotau.skill_evolution_config import evaluation_seed_schedule
+
+    policy = settings()
+    policy['evaluation'].update(repair_seeds=[1], gate_seeds=[1,2], heldout_seeds=[1])
+    assert evaluation_seed_schedule(policy, 'E') == [1]
+    assert evaluation_seed_schedule(policy, 'V') == [1,2]
+    calls = []
+    def endpoint(*, seed, **kwargs):
+        calls.append(seed)
+        return {'cells': [{'customer_condition':'native', 'service_endpoint':name,
+                          'identical_to_S0': name == 'ST',
+                          'episodes':[record('H', True, seed).to_dict()]}
+                         for name in ('S0','ST')]}
+    monkeypatch.setattr('evotau.alternating.run_final_endpoint_evaluation', endpoint)
+    result = run_v2_endpoint_evaluation(gate_seeds=evaluation_seed_schedule(policy,'H'))
+    assert calls == [1]
+    assert result['seeds'] == [1]
+    assert all(c['pass_power_k']['1'] == 1 and c['pass_power_k']['4'] is None for c in result['cells'])

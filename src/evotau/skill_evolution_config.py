@@ -116,6 +116,10 @@ def freeze_v2_policy(raw, models, model_args):
         if "mutation_context" not in raw:
             raw["mutation_context"] = {"representative_cases": legacy_context_limit}
     policy = deepcopy(DEFAULT_V2)
+    # Optional schedules are only serialized when supplied; legacy policy serialization stays unchanged.
+    for schedule in ("repair_seeds", "heldout_seeds"):
+        if schedule in raw.get("evaluation", {}):
+            policy["evaluation"][schedule] = []
     if not isinstance(raw, dict) or set(raw) - set(policy):
         raise ValueError("unknown Skill Evolution V2 configuration fields")
     for key, value in raw.items():
@@ -172,7 +176,9 @@ def freeze_v2_policy(raw, models, model_args):
         value = evaluation[key]
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
             raise ValueError("screen risk limits must be finite rates")
-    for key in ("screen_seeds", "gate_seeds"):
+    for key in ("screen_seeds", "gate_seeds", "repair_seeds", "heldout_seeds"):
+        if key not in policy["evaluation"]:
+            continue
         seeds = policy["evaluation"][key]
         if (
             not isinstance(seeds, list)
@@ -286,3 +292,10 @@ def validate_v2_promotion_readiness(policy, *, run_validation):
             'V-primary promotion requires at least two paired gate seeds; '
             'single-seed Gate cannot ACCEPT under the frozen statistical protocol'
         )
+
+
+def evaluation_seed_schedule(policy, panel):
+    """Independent E/H schedules fall back to the historic shared gate schedule."""
+    field = {'E': 'repair_seeds', 'V': 'gate_seeds', 'H': 'heldout_seeds'}[panel]
+    evaluation = policy['evaluation']
+    return evaluation.get(field, evaluation['gate_seeds'])
