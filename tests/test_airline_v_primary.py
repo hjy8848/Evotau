@@ -532,3 +532,15 @@ def test_explicit_uncalibrated_launch_keeps_thresholds_and_calibration_status():
     raw['experiment']['skill_evolution_v2']['evaluation']['allow_uncalibrated_launch'] = 'yes'
     with pytest.raises(ValueError, match='boolean'):
         AlternatingManifest.from_mapping(raw)
+
+
+def test_user_authorized_unbounded_config_freezes_null_limits():
+    raw = yaml.safe_load((ROOT / 'configs/airline-gateway-qwen37plus-unbounded-resume-p2.yaml').read_text())
+    manifest = AlternatingManifest.from_mapping(raw)
+    policy = json.loads(manifest.skill_evolution_v2_json)
+    assert manifest.request_budget_cap is None
+    assert policy['evaluation']['allow_unbounded_requests'] is True
+    assert policy['mutation_context']['case_chars'] is None
+    assert policy['mutation_context']['max_proxy_tokens'] is None
+    assert 'max_tokens' not in manifest.role_model_args_dict['evolver']
+    assert manifest.max_steps == 200 and manifest.max_parallel_episodes == 2

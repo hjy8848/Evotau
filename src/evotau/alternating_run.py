@@ -77,6 +77,7 @@ def _run_from_config(
         manifest.service_carrier == "skill_memory_v2"
         and (manifest.run_validation or manifest.run_heldout)
         and manifest.request_budget_cap is None
+        and not json.loads(manifest.skill_evolution_v2_json)["evaluation"].get("allow_unbounded_requests", False)
     ):
         raise ValueError("V2 validation/heldout runs require an explicit finite request budget")
     data_dir = tau2_data_dir or os.environ.get("TAU2_DATA_DIR")
@@ -259,6 +260,7 @@ def _run_from_config(
                         result,
                         V2Providers(providers),
                         output_directory=output_directory,
+                        mutation_context=json.loads(manifest.skill_evolution_v2_json)["mutation_context"],
                         **kwargs,
                     )
 

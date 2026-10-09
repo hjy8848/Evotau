@@ -319,7 +319,9 @@ def run_skill_evolution_v2(
         c_context = {
             "generation": g,
             "task_interactions": build_customer_evidence(
-                _context_episodes(incumbent, runner, tasks)
+                _context_episodes(incumbent, runner, tasks),
+                representative_cases=policy["mutation_context"]["representative_cases"],
+                case_chars=policy["mutation_context"]["case_chars"],
             ),
             "evidence_instructions": CUSTOMER_EVIDENCE_INSTRUCTIONS,
             "current_customer_strategy": customer.text,
@@ -1223,6 +1225,7 @@ def propose_fresh_customer_v2(
     domain_policy,
     output_directory,
     manifest_sha256,
+    mutation_context=None,
 ):
     """Freeze and validate the final adaptive challenge using E-only evidence before H loads."""
     from .alternating import _context_episodes, _write_json_once
@@ -1234,7 +1237,9 @@ def propose_fresh_customer_v2(
     journal = EvolutionJournal(output_directory, manifest_sha256)
     context = {
         "task_interactions": build_customer_evidence(
-            _context_episodes(result.final_evolution_episodes, runner, tasks)
+            _context_episodes(result.final_evolution_episodes, runner, tasks),
+            representative_cases=(mutation_context or {}).get("representative_cases", 4),
+            case_chars=(mutation_context or {}).get("case_chars", 12000),
         ),
         "evidence_instructions": CUSTOMER_EVIDENCE_INSTRUCTIONS,
         "current_customer_strategy": result.customer.text,

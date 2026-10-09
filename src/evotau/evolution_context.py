@@ -60,7 +60,7 @@ def _build_evidence(rows, *, representative_cases=4, case_chars=12000, selection
     indices. Message digests permit matching back to native messages/tool submessages.
     Excerpts and omitted messages are explicit; no causal diagnosis is fabricated.
     """
-    if representative_cases < 2 or case_chars < 1000:
+    if representative_cases < 2 or (case_chars is not None and case_chars < 1000):
         raise ValueError('Reflection evidence needs contrast cases and a usable case allowance')
     rows = deepcopy(list(rows))
     failed = [i for i, row in enumerate(rows) if row['native_evaluation']['task_success'] is False]
@@ -150,7 +150,7 @@ def _build_evidence(rows, *, representative_cases=4, case_chars=12000, selection
                 item = {'message': value, 'excerpt': excerpt,
                         'evidence_ref': _ref(row, mi, message)}
                 size = _size(item)
-                if used + size > case_chars:
+                if case_chars is not None and used + size > case_chars:
                     if mi in actions or mi in users:
                         raise ValueError('Decisive tool/user evidence exceeds reflection case allowance')
                     omitted.append({'projected_message_index': mi})
@@ -233,7 +233,7 @@ def enforce_mutation_context_budget(context, prompt, max_proxy_tokens):
     encoding = tiktoken.get_encoding("cl100k_base")
     text = prompt + json.dumps(context, ensure_ascii=False, sort_keys=True)
     count = len(encoding.encode(text, disallowed_special=()))
-    if count > max_proxy_tokens:
+    if max_proxy_tokens is not None and count > max_proxy_tokens:
         raise ValueError(
             f"Direct mutation context exceeds explicit proxy-token allowance: {count} > {max_proxy_tokens}"
         )

@@ -56,3 +56,22 @@ No statistical, regression, policy or data-isolation threshold is relaxed.
 This is an uncalibrated, predeclared experiment; do not label it A/A calibrated.
 The default remains to require calibration for other V-primary configurations.
 Run with the gateway launcher, `--mode formal --approved-request-cap 200000 --execute`.
+
+## User-authorized unbounded continuation
+
+On 2026-10-09 the user requested removal of self-imposed consumption/context caps.
+`configs/airline-gateway-qwen37plus-unbounded-resume-p2.yaml` freezes a null request
+cap, null per-case character limit, null proxy-token stopping threshold and no
+Evolver max_tokens argument. Provider-imposed limits/defaults still apply. Proxy
+tokens continue to be measured; evidence stratification and explicit read-result
+excerpts remain deterministic. Customer generation and Fresh Customer now use
+the frozen mutation_context settings rather than hardcoded case defaults.
+
+The native E10 baseline may be imported using
+`experiments/execution/import-airline-context-continuation.py` only after a source
+code and native-condition compatibility audit. Scores and raw trajectories are
+unchanged; manifest bindings and their derived hashes are rebound with an audit
+trail. The request ledger retains every counter; only its cap changes to null.
+The previous 151 provider calls remain counted. No search/Evolver output is
+imported. The continuation requires `--approve-unbounded-requests` at launch.
+The user's ongoing preference is recorded in `docs/operator/user-preferences.md`.

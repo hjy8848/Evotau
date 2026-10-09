@@ -93,6 +93,7 @@ def main():
     parser.add_argument('--tau2-data-dir', required=True)
     parser.add_argument('--mode', choices=('aa', 'formal'), required=True)
     parser.add_argument('--approved-request-cap', type=int)
+    parser.add_argument('--approve-unbounded-requests', action='store_true')
     parser.add_argument('--stop-before-next-episode-file')
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
@@ -101,8 +102,14 @@ def main():
     for name, expected in raw['launch_readiness']['execution_source_sha256'].items():
         if hashlib.sha256(Path(name).read_bytes()).hexdigest() != expected:
             raise ValueError(f'Frozen launcher differs: {name}')
-    if not manifest.request_budget_cap or (args.execute and args.approved_request_cap != manifest.request_budget_cap):
-        raise ValueError('Explicit finite approved cap must match the frozen config')
+    policy = json.loads(manifest.skill_evolution_v2_json)
+    if manifest.request_budget_cap is None:
+        if not policy['evaluation'].get('allow_unbounded_requests', False) or (args.execute and not args.approve_unbounded_requests):
+            raise ValueError('Unbounded requests require frozen user authorization and explicit launch flag')
+        if args.mode != 'formal':
+            raise ValueError('A/A diagnostics still require a finite explicit budget')
+    elif args.execute and args.approved_request_cap != manifest.request_budget_cap:
+        raise ValueError('Explicit approved cap must match the frozen config')
     if args.mode == 'formal':
         policy = json.loads(manifest.skill_evolution_v2_json)
         if (not policy['evaluation']['calibration_confirmed']

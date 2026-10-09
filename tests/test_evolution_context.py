@@ -134,3 +134,16 @@ def test_service_drops_accidental_gold_evaluation_fields_and_can_expand():
     assert len(result) == 20
     assert sum(r['representative_case'] for r in result) == 8
     assert 'GOLD_SECRET' not in str(result) and 'HIDDEN_SECRET' not in str(result)
+
+
+def test_unbounded_context_keeps_long_decisive_evidence_without_stopping():
+    from evotau.evolution_context import enforce_mutation_context_budget
+
+    source = row('airline', False)
+    source['trajectory']['messages'][0]['content'] = 'confirmed scope ' * 2000
+    with pytest.raises(ValueError, match='allowance'):
+        build_customer_evidence([source], case_chars=12000)
+    result = build_customer_evidence([source], case_chars=None)
+    evidence = result[0]['trajectory']['messages']
+    assert evidence[0]['message'] == source['trajectory']['messages'][0]
+    assert enforce_mutation_context_budget(result, 'prompt', None) > 0

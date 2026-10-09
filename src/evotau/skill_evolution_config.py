@@ -32,6 +32,7 @@ DEFAULT_V2 = {
         "screen_max_stuck_delta": 0.0,
         "calibration_confirmed": False,
         "allow_uncalibrated_launch": False,
+        "allow_unbounded_requests": False,
     },
     "mutation_context": {
         "representative_cases": 4,
@@ -163,6 +164,8 @@ def freeze_v2_policy(raw, models, model_args):
         raise ValueError("calibration_confirmed must be boolean")
     if type(evaluation["allow_uncalibrated_launch"]) is not bool:
         raise ValueError("allow_uncalibrated_launch must be boolean")
+    if type(evaluation["allow_unbounded_requests"]) is not bool:
+        raise ValueError("allow_unbounded_requests must be boolean")
     if type(evaluation["screen_regression_allowance"]) is not int or evaluation["screen_regression_allowance"] < 0:
         raise ValueError("screen regression allowance must be a nonnegative cell count")
     for key in ("screen_max_regression_rate", "screen_max_stuck_delta"):
@@ -185,7 +188,9 @@ def freeze_v2_policy(raw, models, model_args):
         raise ValueError("V2 uses fixed E repair and disjoint V gate panels")
     if policy["evaluation"]["v_gate_mode"] not in ("fail_fast", "full_audit"):
         raise ValueError("v_gate_mode must be fail_fast or full_audit")
-    if any(type(v) is not int or v < 1 for v in policy["mutation_context"].values()):
+    if any((v is None and k == "representative_cases") or
+           (v is not None and (type(v) is not int or v < 1))
+           for k, v in policy["mutation_context"].items()):
         raise ValueError("mutation context limits must be positive integers")
     gate = policy["statistical_gate"]
     for value in (
