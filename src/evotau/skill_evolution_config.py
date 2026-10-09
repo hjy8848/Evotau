@@ -26,6 +26,11 @@ DEFAULT_V2 = {
         "gate_seeds": [1, 2, 3, 4],
         "screen_clean_tasks": 2,
         "v_gate_mode": "fail_fast",
+        "promotion_protocol": "legacy_e_superiority",
+        "screen_max_regression_rate": 0.0,
+        "screen_regression_allowance": 0,
+        "screen_max_stuck_delta": 0.0,
+        "calibration_confirmed": False,
     },
     "mutation_context": {
         "representative_cases": 4,
@@ -34,6 +39,8 @@ DEFAULT_V2 = {
     },
     "statistical_gate": {
         "method": "task_block_bootstrap",
+        "adaptive_validation": False,
+        "risk_scope": "population_bound",
         "preservation_margin": 0.0,
         "enabled": True,
         "confidence": 0.95,
@@ -43,6 +50,10 @@ DEFAULT_V2 = {
         "min_tasks": 8,
         "multiple_look_correction": "bonferroni",
         "max_stuck_delta": 0.0,
+        "max_stuck_rate": 1.0,
+        "require_zero_hard_violations": False,
+        "min_success_gain": 0.0,
+        "min_positive_seed_fraction": 0.0,
     },
     "archive": {"enabled": True, "max_candidates": 5},
     "opponent_replay": {
@@ -68,7 +79,7 @@ def freeze_v2_policy(raw, models, model_args):
         raise TypeError("V2 policy must be a mapping")
     # Old manifests can be inspected, but the runtime explicitly refuses legacy algorithms.
     version = raw.get("algorithm_version", "diagnoser_v2")
-    if version not in ("direct_skill_evolution_v1", "diagnoser_v2"):
+    if version not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "diagnoser_v2"):
         raise ValueError("unsupported evolution algorithm version")
     raw["algorithm_version"] = version
     evolution = raw.get("service_evolution", {})
@@ -142,6 +153,19 @@ def freeze_v2_policy(raw, models, model_args):
         or not 1 <= policy["max_active_service_skills"] <= 2
     ):
         raise ValueError("V2 activation K must be 1 or 2")
+    evaluation = policy["evaluation"]
+    if evaluation["promotion_protocol"] not in ("legacy_e_superiority", "v_primary"):
+        raise ValueError("unknown promotion protocol")
+    if (version == "direct_skill_v_validation_v2") != (evaluation["promotion_protocol"] == "v_primary"):
+        raise ValueError("V-primary promotion requires its own algorithm version")
+    if type(evaluation["calibration_confirmed"]) is not bool:
+        raise ValueError("calibration_confirmed must be boolean")
+    if type(evaluation["screen_regression_allowance"]) is not int or evaluation["screen_regression_allowance"] < 0:
+        raise ValueError("screen regression allowance must be a nonnegative cell count")
+    for key in ("screen_max_regression_rate", "screen_max_stuck_delta"):
+        value = evaluation[key]
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
+            raise ValueError("screen risk limits must be finite rates")
     for key in ("screen_seeds", "gate_seeds"):
         seeds = policy["evaluation"][key]
         if (
@@ -166,10 +190,15 @@ def freeze_v2_policy(raw, models, model_args):
         gate["max_harmfulness"],
         gate["max_stuck_delta"],
         gate["preservation_margin"],
+        gate["min_success_gain"],
+        gate["max_stuck_rate"],
+        gate["min_positive_seed_fraction"],
         policy["opponent_replay"]["current_weight"],
     ):
         if type(value) not in (int, float) or not math.isfinite(value):
             raise ValueError("V2 numeric policies must be finite numbers")
+    if not 0 <= gate["max_stuck_rate"] <= 1:
+        raise ValueError("invalid absolute stuck-rate limit")
     if not 0 <= gate["max_stuck_delta"] <= 1:
         raise ValueError("max_stuck_delta must be between zero and one")
     if (
@@ -181,8 +210,18 @@ def freeze_v2_policy(raw, models, model_args):
         raise ValueError("invalid confidence/harmfulness policy")
     if gate["multiple_look_correction"] != "bonferroni":
         raise ValueError("unsupported multiple look correction")
+    if gate["risk_scope"] not in ("population_bound", "observed_panel"):
+        raise ValueError("invalid risk scope")
+    if gate["risk_scope"] == "observed_panel" and not (
+        gate["adaptive_validation"] and version == "direct_skill_v_validation_v2"
+    ):
+        raise ValueError("observed-panel risk requires versioned adaptive V protocol")
     if gate["method"] not in ("task_block_bootstrap", "finite_panel_paired"):
         raise ValueError("unsupported gate method")
+    if not 0 <= gate["min_positive_seed_fraction"] <= 1:
+        raise ValueError("invalid seed stability threshold")
+    if not 0 <= gate["min_success_gain"] <= 1:
+        raise ValueError("invalid min_success_gain")
     if gate["preservation_margin"] != 0:
         raise ValueError(
             "opponent preservation cannot permit a native accuracy regression"

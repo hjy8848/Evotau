@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from .tau_provenance import (
-    ALTERNATING_REQUIRED_SOURCE_PATHS,
     DEFAULT_ROLE_MODEL_ARGS,
     EVOLUTION_ROLE_NAMES,
     TAU2_PACKAGE_VERSION,
@@ -16,6 +15,7 @@ from .tau_provenance import (
     _freeze_role_models,
     _relative_path,
     _role_model_args_payload,
+    alternating_source_paths,
     capture_code_provenance,
     freeze_role_model_args,
     sha256_json,
@@ -80,8 +80,8 @@ class AlternatingManifest:
             TAU_BENCH_REPOSITORY, TAU_BENCH_COMMIT, TAU2_PACKAGE_VERSION,
         ):
             raise ValueError("alternating runs require the pinned tau-bench release")
-        if not self.experiment_id.strip() or self.domain != "retail":
-            raise ValueError("alternating runs require a named Retail experiment")
+        if not self.experiment_id.strip() or self.domain not in ("retail", "airline"):
+            raise ValueError("alternating runs require a named supported native-domain experiment")
         panels = (self.evolution_task_ids, self.validation_task_ids, self.heldout_task_ids)
         if any(not panel or len(set(panel)) != len(panel) for panel in panels):
             raise ValueError("E, V, and H must each contain unique task IDs")
@@ -160,7 +160,7 @@ class AlternatingManifest:
         if self.real_provider_enabled and any(not models[name] for name in EVOLUTION_ROLE_NAMES):
             raise ValueError("provider-enabled runs require a model for every τ-bench role")
         blobs = dict(self.source_blob_sha1)
-        missing = ALTERNATING_REQUIRED_SOURCE_PATHS - set(blobs)
+        missing = alternating_source_paths(self.domain) - set(blobs)
         if missing:
             raise ValueError(f"missing pinned τ-bench source fingerprints: {sorted(missing)}")
         _relative_path(self.output_path, "output_path")
@@ -272,7 +272,7 @@ class AlternatingManifest:
                 sorted(
                     (str(path), str(digest).lower())
                     for path, digest in experiment["source_blob_sha1"].items()
-                    if str(path) in ALTERNATING_REQUIRED_SOURCE_PATHS
+                    if str(path) in alternating_source_paths(str(experiment.get("domain", "retail")))
                 )
             ),
             initial_customer_strategy=str(experiment.get("customer_strategy") or ""),

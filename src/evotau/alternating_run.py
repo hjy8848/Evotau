@@ -63,8 +63,13 @@ def _run_from_config(
     config = load_config(config_file)
     manifest = AlternatingManifest.from_mapping(config)
     if (manifest.service_carrier == "skill_memory_v2"
-            and json.loads(manifest.skill_evolution_v2_json)["algorithm_version"] != "direct_skill_evolution_v1"):
+            and json.loads(manifest.skill_evolution_v2_json)["algorithm_version"] not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2")):
         raise ValueError("Legacy Diagnoser config is read-only; create a Direct Skill experiment")
+    if manifest.skill_evolution_v2_json:
+        frozen = json.loads(manifest.skill_evolution_v2_json)
+        if (frozen["evaluation"].get("promotion_protocol") == "v_primary"
+                and not frozen["evaluation"]["calibration_confirmed"]):
+            raise ValueError("V-primary formal launch requires A/A calibration and an explicitly frozen confirmed policy")
     if not manifest.real_provider_enabled:
         raise RuntimeError("provider calls are disabled in this alternating-run config")
     if (
@@ -574,7 +579,7 @@ def load_alternating_tasks(
         )
         verify_git_blob_sha1(source, digest)
 
-    split_path = data_root / "tau2/domains/retail/split_tasks.json"
+    split_path = data_root / f"tau2/domains/{manifest.domain}/split_tasks.json"
     split_data = json.loads(split_path.read_text(encoding="utf-8"))
     train = {str(item) for item in split_data.get(manifest.split_name, ())}
     heldout = {str(item) for item in split_data.get(manifest.heldout_split_name, ())}
@@ -594,7 +599,7 @@ def load_alternating_tasks(
     )
     requested_ids = train_ids + (manifest.heldout_task_ids if include_heldout else ())
     task_records = _load_selected_retail_task_records(
-        data_root / "tau2/domains/retail/tasks.json",
+        data_root / f"tau2/domains/{manifest.domain}/tasks.json",
         set(requested_ids),
     )
     tasks = [Task.model_validate(record) for record in task_records]
@@ -609,7 +614,7 @@ def _load_selected_retail_task_records(
     path: str | Path,
     selected_task_ids: set[str],
 ) -> list[dict[str, Any]]:
-    """Stream Retail tasks and decode only selected records.
+    """Stream pinned domain tasks and decode only selected records.
 
     τ-bench's Retail loader validates every task before filtering by ID. The
     pinned data format places ``id`` first in each object, so unselected records

@@ -111,7 +111,7 @@ class TauBenchEpisodeRunner:
         if set(self.tasks) - allowed_task_ids:
             raise ValueError("loaded task objects include a task outside the active panels")
         self.service_policy_text = (
-            self.data_root / "tau2/domains/retail/policy.md"
+            self.data_root / f"tau2/domains/{manifest.domain}/policy.md"
         ).read_text(encoding="utf-8")
         self.output_directory = Path(output_directory or manifest.output_path)
         self.stop_before_next_episode_file = (
@@ -414,6 +414,7 @@ class TauBenchEpisodeRunner:
             try:
                 orchestrator = build_phase0_orchestrator(
                     task=deepcopy(task),
+                    **({"domain": self.manifest.domain} if self.manifest.domain != "retail" else {}),
                     agent_model=self.models["agent"],
                     customer_model=self.models["customer"],
                     agent_model_args=self.model_args["agent"],

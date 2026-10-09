@@ -108,6 +108,8 @@ def evaluate_gate(
     )
     result.update(
         paired_delta=paired_delta,
+        fail_to_pass_count=sum(c[0] == 1 for block in values for c in block),
+        pass_to_fail_count=sum(c[1] for block in values for c in block),
         success_ci=_interval(draws, alpha),
         harmfulness_ci=harmfulness_ci,
         stuck_delta_ci=_interval(stuck, alpha),
@@ -124,15 +126,25 @@ def evaluate_gate(
             if not is_stuck(x) and is_stuck(b[k])
         ],
     )
+    seed_deltas = {str(s): mean(int(b[k].task_success) - int(a[k].task_success)
+                               for k in a if k[1] == s) for s in sorted(expected_seeds)}
+    result["paired_delta_by_seed"] = seed_deltas
+    result["positive_seed_fraction"] = mean(v > 0 for v in seed_deltas.values())
     stuck_delta = mean(c[3] for block in values for c in block)
     finite_panel = policy.get("method") == "finite_panel_paired"
+    observed_risk = policy.get("risk_scope") == "observed_panel"
+    observed_harm = sum(c[1] for block in values for c in block) / max(1, sum(c[2] for block in values for c in block))
+    result["observed_harmfulness"] = observed_harm
+    result["risk_scope"] = policy.get("risk_scope", "population_bound")
     result.update(
         inference_scope="frozen_tasks_observed_seeds_only"
         if finite_panel or smoke or not policy["enabled"]
         else "task_block_population_inference",
         population_risk_certified=False,
     )
-    if hard_regressions or stuck_delta > policy["max_stuck_delta"]:
+    if (hard_regressions or stuck_delta > policy["max_stuck_delta"]
+        or result["new_metrics"]["stuck_rate"] > policy.get("max_stuck_rate", 1.0)
+        or (policy.get("require_zero_hard_violations", False) and result["new_metrics"]["hard_violations"])):
         verdict, reason = (
             "REJECTED",
             "hard policy/protocol regression or increased stuck rate",
@@ -175,7 +187,10 @@ def evaluate_gate(
             )
             else ("REJECTED", "native success did not satisfy opponent objective")
         )
-    elif paired_delta < 0 or harmfulness_ci[0] > policy["max_harmfulness"]:
+    elif paired_delta < 0 or (
+        observed_harm > policy["max_harmfulness"] if observed_risk
+        else risk_tasks and harmfulness_ci[0] > policy["max_harmfulness"]
+    ):
         verdict, reason = "REJECTED", "native regression or harmfulness above policy"
     elif len(values) < policy["min_tasks"] or not complete_seed_coverage:
         verdict, reason = (
@@ -192,24 +207,30 @@ def evaluate_gate(
                 objective == "superiority"
                 and (
                     not policy["require_positive_success_lower_bound"]
-                    or result["success_ci"][0] > 0
+                    or result["success_ci"][0] > policy.get("min_success_gain", 0.0)
+                    and result["positive_seed_fraction"] >= policy.get("min_positive_seed_fraction", 0.0)
                 )
             )
         )
-        and harmfulness_ci[1] <= policy["max_harmfulness"]
-        and result["stuck_delta_ci"][1] <= policy["max_stuck_delta"]
+        and (observed_harm <= policy["max_harmfulness"] if observed_risk
+             else harmfulness_ci[1] <= policy["max_harmfulness"])
+        and (stuck_delta <= policy["max_stuck_delta"] if observed_risk
+             else result["stuck_delta_ci"][1] <= policy["max_stuck_delta"])
     ):
         verdict, reason = "ACCEPTED", "task-block confidence and risk gates passed"
-        result["population_risk_certified"] = True
+        result["population_risk_certified"] = not policy.get("adaptive_validation", False)
     else:
         verdict, reason = (
             "INCONCLUSIVE",
             "improvement or risk bound insufficient after look correction",
         )
+    if policy.get("adaptive_validation", False):
+        result["inference_scope"] = "adaptive_validation_panel_task_block_evidence"
+        result["population_risk_certified"] = False
     return {**result, "verdict": verdict, "reason": reason}
 
 
-def cheap_screen(old, new, target_ids, protected_ids):
+def cheap_screen(old, new, target_ids, protected_ids, *, max_regression_rate=0.0, max_stuck_delta=0.0, regression_allowance=0):
     a = {(r.task_id, r.seed): r for r in old}
     b = {(r.task_id, r.seed): r for r in new}
     if a.keys() != b.keys() or len(a) != len(old) or len(b) != len(new):
@@ -229,10 +250,15 @@ def cheap_screen(old, new, target_ids, protected_ids):
         for k, x in a.items()
     )
     stuck = sum(is_stuck(b[k]) - is_stuck(x) for k, x in a.items())
+    passed = (fixed > 0 and broken <= max(regression_allowance, max_regression_rate * len(protected_cells))
+              and hard == 0 and stuck / max(1, len(a)) <= max_stuck_delta)
     return {
-        "passed": fixed > 0 and broken == 0 and hard == 0 and stuck <= 0,
+        "passed": passed,
+        "max_regression_rate": max_regression_rate,
+        "regression_allowance": regression_allowance,
+        "max_stuck_delta": max_stuck_delta,
         "reason": "screen_passed"
-        if fixed > 0 and broken == 0 and hard == 0 and stuck <= 0
+        if passed
         else "screen_regression_or_no_target_fix",
         "fixed_cells": fixed,
         "protected_regressions": broken,

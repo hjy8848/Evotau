@@ -134,10 +134,20 @@ def run_skill_evolution_v2(
         _write_json_once,
     )
 
-    if policy.get("algorithm_version") != "direct_skill_evolution_v1":
+    if policy.get("algorithm_version") not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2"):
         raise ValueError(
             "Legacy Diagnoser configuration is read-only; create a versioned Direct Skill config"
         )
+    v_primary = policy["evaluation"].get("promotion_protocol") == "v_primary"
+    if v_primary and (not run_validation or policy["statistical_gate"]["method"] != "task_block_bootstrap"
+                      or not policy["statistical_gate"]["enabled"]):
+        raise ValueError("V-primary promotion requires enabled V task-block statistical gates")
+    def prompt_parent(entry):
+        value = _evolution_parent(entry)
+        if v_primary and value.get("effect"):
+            value["effect"]["rejection_reason"] = "deployment outcome withheld; E effects only"
+        return value
+
     root = Path(output_directory)
     journal = EvolutionJournal(root, manifest_sha256)
     e, v = tuple(map(str, evolution_task_ids)), tuple(map(str, validation_task_ids))
@@ -299,7 +309,7 @@ def run_skill_evolution_v2(
         history = (
             summarize_effects(effects, max_families=policy["history"]["max_families"])
             if policy["history"]["summarize"]
-            else [_evolution_parent(entry) for entry in effects]
+            else [prompt_parent(entry) for entry in effects]
         )
         from .evolution_context import (
             CUSTOMER_EVIDENCE_INSTRUCTIONS,
@@ -403,13 +413,24 @@ def run_skill_evolution_v2(
             representative_cases=policy["mutation_context"]["representative_cases"],
             case_chars=policy["mutation_context"]["case_chars"],
         )
+        if v_primary:
+            for family in history:
+                if family.get("effect"):
+                    family["effect"]["rejection_reason"] = "deployment outcome withheld; E effects only"
+                for key in ("successful_mechanisms", "rejected_mechanisms"):
+                    for mechanism in family.get(key, []):
+                        mechanism["reason"] = "deployment outcome withheld; E effects only"
         s_context = {
             "algorithm_version": policy["algorithm_version"],
             "evidence_budget": policy["mutation_context"],
             "generation": g,
             "task_interactions": all_evidence,
             "evidence_instructions": SERVICE_MUTATION_EVIDENCE_INSTRUCTIONS,
-            "failure_matrix": [r for r in matrix if r["task_id"] in e][-len(e) * 8 :],
+            "failure_matrix": [
+                {k: row[k] for k in ("task_id", "seed", "candidate_id", "status", "old_success", "new_success", "termination_reason", "activated_skill_ids")}
+                if v_primary else row
+                for row in matrix if row["task_id"] in e
+            ][-len(e) * 8 :],
             "current_service_memory": before_s.to_dict(),
             "service_policy": domain_policy,
             "interaction_metrics": episode_metrics(selected),
@@ -453,7 +474,11 @@ def run_skill_evolution_v2(
             )
             if replay["include_native_customer"]:
                 opponents.append(("native", None, 1.0))
-        looks *= len(opponents) + int(not smoke)
+        looks *= len(opponents) + int(not smoke and not v_primary)
+        if v_primary:
+            # Frozen upper bound includes every candidate, generation and possible opponent.
+            looks = generations * (evo["candidates_per_generation"] + int(evo["crossover"])) * (
+                1 + (replay["archived_customers"] + int(replay["include_native_customer"]) if replay["enabled"] else 0))
         all_proposals = []
         rejected_proposals = []
 
@@ -477,7 +502,7 @@ def run_skill_evolution_v2(
                     "structural_decomposition",
                 )[bias % 3],
                 "archive_parent": (
-                    _evolution_parent(archive.entries[bias % len(archive.entries)])
+                    prompt_parent(archive.entries[bias % len(archive.entries)])
                     if archive.entries and s_context["exploration"]["explore"]
                     else None
                 ),
@@ -636,7 +661,10 @@ def run_skill_evolution_v2(
                     "target": sorted(target),
                     "protected": sorted(protected | prior_fixed),
                 },
-                lambda: cheap_screen(old, new, target, protected | prior_fixed),
+                lambda: cheap_screen(old, new, target, protected | prior_fixed,
+                    max_regression_rate=policy["evaluation"]["screen_max_regression_rate"] if v_primary else 0.0,
+                    regression_allowance=policy["evaluation"]["screen_regression_allowance"] if v_primary else 0,
+                    max_stuck_delta=policy["evaluation"]["screen_max_stuck_delta"] if v_primary else 0.0),
             )
             row["screen"] = screen
             attribution_old, attribution_new = old, new
@@ -662,7 +690,7 @@ def run_skill_evolution_v2(
                 gate_ids = e if smoke else v
                 gate_seeds = policy["evaluation"]["gate_seeds"]
                 repair_gate = None
-                if not smoke:
+                if not smoke and not v_primary:
                     repair_gate = stage(
                         g,
                         f"service_full_gate-{ident}-repair-superiority-decision",
@@ -697,7 +725,7 @@ def run_skill_evolution_v2(
                 ):
                     objective = (
                         "superiority"
-                        if smoke and label == "current"
+                        if (smoke or v_primary) and label == "current"
                         else "preservation"
                     )
                     old_gate = panel(
@@ -805,6 +833,7 @@ def run_skill_evolution_v2(
                     "opponents": gates,
                     "repair_superiority": repair_gate,
                     "gate_looks": looks,
+                    "promotion_protocol": policy["evaluation"].get("promotion_protocol", "legacy_e_superiority"),
                     "evaluation_mode": policy["evaluation"]["v_gate_mode"],
                     "risk_profile_complete": len(gates) == len(opponents)
                     and all(x["verdict"] != "NOT_EVALUATED" for x in gates),
@@ -888,7 +917,7 @@ def run_skill_evolution_v2(
                 a, b = pair
                 ctx = {
                     **s_context,
-                    "parents": [_evolution_parent(a), _evolution_parent(b)],
+                    "parents": [prompt_parent(a), prompt_parent(b)],
                     "current_memory": before_s.to_dict(),
                     "policy": domain_policy,
                 }
@@ -1051,6 +1080,11 @@ def run_skill_evolution_v2(
             },
             "service_phase": {
                 "carrier": "skill_memory_v2",
+                "validation_looks_evaluated": sum(
+                    gate["verdict"] != "NOT_EVALUATED"
+                    for row in board for gate in (row.get("gate") or {}).get("opponents", [])
+                    if gate.get("panel") == "V"
+                ),
                 "old_accuracy": selected_accuracy,
                 "final_accuracy": _accuracy(final_runs),
                 "proposed_accuracy": proposed_accuracy,
@@ -1284,11 +1318,26 @@ def run_v2_endpoint_evaluation(*, gate_seeds, **kwargs):
         records = [EpisodeRecord.from_dict(e) for e in episodes]
         cell.update(
             accuracy=episode_metrics(records)["accuracy"],
+            metrics=episode_metrics(records),
             episodes=episodes,
-            pass_power_k={str(k): pass_power_k(records, k) for k in (1, 2)},
+            pass_power_k={str(k): pass_power_k(records, k) for k in (1, 2, 4)},
         )
         cells.append(cell)
     summary["cells"] = cells
+    comparisons = []
+    for condition in sorted({c["customer_condition"] for c in cells}):
+        before = next(c for c in cells if c["customer_condition"] == condition and c["service_endpoint"] == "S0")
+        after = next(c for c in cells if c["customer_condition"] == condition and c["service_endpoint"] == "ST")
+        a = {(r["task_id"], r["seed"]): r for r in before["episodes"]}
+        b = {(r["task_id"], r["seed"]): r for r in after["episodes"]}
+        if a.keys() != b.keys():
+            raise ValueError("H scorecard requires paired endpoint cells")
+        comparisons.append({"customer_condition": condition,
+            "identical_to_S0": after["identical_to_S0"],
+            "fail_to_pass_count": sum(a[k]["task_success"] is False and b[k]["task_success"] is True for k in a),
+            "pass_to_fail_count": sum(a[k]["task_success"] is True and b[k]["task_success"] is False for k in a),
+            "causal_skill_effect_identified": False})
+    summary["endpoint_comparisons"] = comparisons
     if output_path:
         _write_json_atomic(Path(output_path), summary)
     return summary

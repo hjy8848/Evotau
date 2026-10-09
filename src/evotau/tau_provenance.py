@@ -49,6 +49,17 @@ ALTERNATING_REQUIRED_SOURCE_PATHS = REQUIRED_SOURCE_PATHS - frozenset({
     "src/tau2/evaluator/review_llm_judge.py",
     "src/tau2/evaluator/reviewer.py",
 })
+def alternating_source_paths(domain="retail"):
+    if domain not in ("retail", "airline"):
+        raise ValueError("unsupported native domain")
+    paths = frozenset(path.replace("domains/retail/", f"domains/{domain}/")
+                      for path in ALTERNATING_REQUIRED_SOURCE_PATHS)
+    if domain == "airline":
+        paths |= frozenset(f"src/tau2/domains/airline/{name}.py"
+                           for name in ("environment", "data_model", "utils"))
+    return paths
+
+
 def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 

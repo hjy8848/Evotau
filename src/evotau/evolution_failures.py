@@ -63,6 +63,10 @@ def episode_metrics(records):
         if len(known) == len(records) and records
         else None,
         "unknown_count": len(records) - len(known),
+        "termination_counts": {reason: sum((r.termination_reason or "unknown") == reason for r in records)
+                               for reason in sorted({r.termination_reason or "unknown" for r in records})},
+        "activated_episode_count": sum(bool(r.activated_skill_ids) for r in records),
+        "activation_rate": mean(bool(r.activated_skill_ids) for r in records) if records else None,
         "stuck_rate": mean(is_stuck(r) for r in records) if records else None,
         "max_steps_count": sum(is_stuck(r) for r in records),
         "mean_steps": mean(steps) if len(steps) == len(records) and steps else None,

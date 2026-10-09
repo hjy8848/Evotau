@@ -95,6 +95,7 @@ def service_agent_class(
 def build_phase0_orchestrator(
     *,
     task: Any,
+    domain: str = "retail",
     agent_model: str,
     customer_model: str,
     agent_model_args: dict[str, Any] | None = None,
@@ -106,7 +107,7 @@ def build_phase0_orchestrator(
     enforce_communication_protocol: bool = False,
     service_activation: dict[str, Any] | None = None,
 ) -> Any:
-    """Construct native Retail text components directly, without changing the runner."""
+    """Construct native domain text components directly, without changing the runner."""
 
     if type(enforce_communication_protocol) is not bool:
         raise TypeError("enforce_communication_protocol must be boolean")
@@ -116,7 +117,9 @@ def build_phase0_orchestrator(
     from tau2.runner.build import build_environment
     from tau2.user.user_simulator import UserSimulator
 
-    environment = build_environment("retail")
+    if domain not in ("retail", "airline"):
+        raise ValueError("unsupported native domain; no fallback")
+    environment = build_environment(domain)
     if service_activation is not None:
         from .skill_activation import activating_service_agent_class
         agent_type = activating_service_agent_class(LLMAgent, service_strategy, **service_activation)
@@ -145,7 +148,7 @@ def build_phase0_orchestrator(
         llm_args={**(customer_model_args or {}), "num_retries": 0},
     )
     return Orchestrator(
-        domain="retail",
+        domain=domain,
         agent=agent,
         user=customer,
         environment=environment,

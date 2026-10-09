@@ -84,21 +84,21 @@ parent's fixes, regressions, useful mechanism and unsafe scope. Preserve only ev
 mechanisms; never concatenate guidance. Return the normal structured mutation schema. The child
 must undergo independent screen and full gate. Native policy/facts/objectives remain unchanged."""
 CUSTOMER_PROMPT = """You evolve the Customer as an adversarial but task-faithful interaction policy.
-Preserve the original factual world, business objective, identity, items/orders, policy/backend.
+Preserve the original factual world, business objective, identity, items/orders/reservations/flights/fares/payment constraints, policy/backend.
 Change HOW information, corrections, persistence, timing, clarification and explanations are
-communicated, never create a new objective, product, order, identity, address or factual claim.
+communicated, never create a new objective, product, order, reservation, flight, fare, payment, identity, address or factual claim.
 Review the challenge archive and probe unsaturated weakness families. Do not repeat semantic
 strategies without a genuinely new weakness. Return JSON {"candidates":[{"strategy":"reusable text",
 "semantic_family":"...","target_weakness_family":"...","substantive_delta_from_prior":"..."}]}.
 Primary selection is native Service accuracy minimization; ties preserve incumbent."""
 CUSTOMER_VALIDATOR_PROMPT = """You check Customer interaction policy semantic preservation before rollout.
 For EVERY supplied underlying scenario, require the strategy preserve factual truth, business
-objective, original identity/items/orders and backend reality. It may only change interaction
-pattern. Reject invented products/order/person/addresses/objectives or benchmark internals.
+objective, original identity/items/orders/reservations/flights/fares/payments and backend reality. It may only change interaction
+pattern. Reject invented products/orders/reservations/flights/fares/payments/people/addresses/objectives or benchmark internals.
 Do not infer reference targets. Return JSON {"preserves_facts":true,"preserves_objective":true,
 "interaction_only":true,"no_benchmark_leakage":true,"reason":"..."}. If uncertain use false."""
 SKILL_VALIDATOR_PROMPT = """Validate only whether the proposed runtime skill is reusable/domain-general,
-subordinate to native policy, free of task IDs, named people, products, orders, addresses, hidden
+subordinate to native policy, free of task IDs, named people, products, orders, reservation IDs, flight numbers, payment IDs, addresses, hidden
 objectives and benchmark artifacts. Do not decide effectiveness. Return JSON {"reusable":true,
 "policy_subordinate":true,"no_task_entities":true,"reason":"..."}. If uncertain use false."""
 
