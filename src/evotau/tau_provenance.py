@@ -306,6 +306,13 @@ def role_model_args_for_runtime(
             params[role]["extra_body"] = {"thinking": {"type": thinking_mode}}
         if "enable_thinking" in params[role]:
             params[role]["extra_body"] = {"enable_thinking": params[role].pop("enable_thinking")}
+        if (urlsplit(str(params[role].get("api_base", ""))).hostname == "api.deepseek.com"
+                and "reasoning_effort" in params[role]):
+            # tau2 enables LiteLLM drop_params. Unknown OpenAI-compatible model
+            # aliases can lose this officially supported parameter before HTTP
+            # dispatch. extra_body preserves the declared value on the wire;
+            # keep the top-level argument for accounting/client compatibility.
+            params[role].setdefault("extra_body", {})["reasoning_effort"] = params[role]["reasoning_effort"]
     return params
 def write_manifest_once(path: str | Path, manifest: Any) -> Path:
     target = Path(path)

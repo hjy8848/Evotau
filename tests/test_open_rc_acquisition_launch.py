@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from evotau.budget import RequestBudget
+from evotau.tau_provenance import freeze_role_model_args, role_model_args_for_runtime
 
 
 @pytest.fixture
@@ -92,3 +93,42 @@ def test_wire_thinking_and_effort_must_match_frozen_config(launcher):
                        ("model", "deepseek-v4-pro"), ("tools", [{"type": "function"}])):
         with pytest.raises(ValueError, match="wire args"):
             launcher.verify_official_evolver_wire({**body, key: value})
+
+
+def test_official_reasoning_high_survives_actual_tau_litellm_wire(launcher, monkeypatch):
+    import httpx
+    from tau2.data_model.message import SystemMessage, UserMessage
+    from tau2.utils import llm_utils
+
+    seen = []
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-placeholder")
+
+    def send(client, request, *args, **kwargs):
+        body = json.loads(request.content)
+        launcher.verify_official_evolver_wire(body)
+        seen.append(body)
+        return httpx.Response(200, request=request, json={
+            "id": "offline", "object": "chat.completion", "created": 1, "model": "deepseek-flash",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {
+                "role": "assistant", "content": '{"ok":true}'}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}})
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    frozen = freeze_role_model_args({"evolver": {"api_base": "https://api.deepseek.com/v1",
+                                     "thinking_mode": "enabled", "reasoning_effort": "high"}}, roles=("evolver",))
+    llm_utils.generate(model="openai/deepseek-flash", messages=[
+        SystemMessage(role="system", content="JSON"), UserMessage(role="user", content="ok")],
+        num_retries=0, **role_model_args_for_runtime(frozen)["evolver"])
+    assert len(seen) == 1
+    assert seen[0]["thinking"] == {"type": "enabled"}
+    assert seen[0]["reasoning_effort"] == "high"
+
+
+def test_wire_bridge_does_not_change_gateway_or_other_provider_args():
+    original = {"agent": {"api_base": "http://10.130.138.46:8010/v1", "enable_thinking": False,
+                           "temperature": 0.0},
+                "evolver": {"api_base": "https://inferaiapi.com/v1", "reasoning_effort": "high"}}
+    actual = role_model_args_for_runtime(freeze_role_model_args(original, roles=("agent", "evolver")))
+    assert actual["agent"] == {"api_base": "http://10.130.138.46:8010/v1", "temperature": 0.0,
+                                "extra_body": {"enable_thinking": False}}
+    assert actual["evolver"] == original["evolver"]

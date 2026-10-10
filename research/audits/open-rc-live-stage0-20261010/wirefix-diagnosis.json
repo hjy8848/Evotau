@@ -1,0 +1,17 @@
+{
+  "parent_run": "evotau-open-rc-pair-acquisition-airline-e10-v20-g1-c1-p2-20261010",
+  "real_remote_requests": 1,
+  "recorded_attempts": 2,
+  "Qwen_actual_usage": {
+    "prompt_tokens": 31,
+    "completion_tokens": 5
+  },
+  "DS_remote_requests": 0,
+  "native_episodes": 0,
+  "cause": "tau2 enables litellm.drop_params=True, alias openai/deepseek-flash loses reasoning_effort before HTTP dispatch; offline mock payload confirms absence",
+  "fix": "Official api.deepseek.com reasoning_effort is also supplied through extra_body; requested value and research semantics unchanged",
+  "reference": "https://api-docs.deepseek.com/guides/thinking_mode/",
+  "no_failed_native_score_import": true,
+  "new_config": "configs/airline-open-rc-pair-acquisition-g1-c1-p2-wirefix1.yaml",
+  "preflight_import_policy": "Reuse only fully completed Qwen JSON response with exact unchanged model+args; audit original request/response and retain full old usage including pre-network rejected DS attempt. Original unresolved DS intent is NOT imported. New DS attempt requires current frozen source and new run identity."
+}

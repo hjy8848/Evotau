@@ -105,3 +105,33 @@ Unique run directory:
 sum, not only the main counter. Raw visible preflight output is persisted BEFORE
 schema validation; unresolved preflight intent never triggers automatic replay.
 Source provenance, native episodes and gate stages are immutable under this run.
+
+## Initial real preflight and wire correction
+
+The initial run at commit `95e2e44` sent **one real Qwen request**, HTTP200,
+31 input/5 output tokens, valid JSON and finish_reason=stop. Its DeepSeek attempt
+was blocked before HTTP by the thinking/high wire check. No native episode ran.
+The ledger conservatively has two attempts (one successful remote request, one
+local pre-network failure). Complete evidence is in `initial-real-preflight/`.
+No uncertain remote request is replayed.
+
+An offline mock of the exact τ generate/LiteLLM chain found that `thinking=enabled`
+was present but `reasoning_effort=high` was dropped. τ enables LiteLLM drop_params;
+this model alias is unrecognized as an OpenAI reasoning model. The official API
+supports high: https://api-docs.deepseek.com/guides/thinking_mode/.
+EvoTau now also passes the declared effort in extra_body ONLY for the official
+api.deepseek.com route. Top-level setting is retained, Qwen and other providers
+are unchanged. Actual wire mock asserts explicit high and enabled thinking.
+This fixes transmission of the original declared setting; it does not change a
+prompt, search rule, model, task, gate or native τ source.
+
+After this fix: **512 tests passed, 6 dependency warnings, 42.93s**; focused native
+wire/budget/launcher checks: **38 passed**; Ruff passed. See `pytest-wirefix.log`.
+
+Use the independent continuation config:
+`configs/airline-open-rc-pair-acquisition-g1-c1-p2-wirefix1.yaml`.
+It has a new run directory, manifest/source identity and checkpoints. The only
+compatible import is the already complete Qwen no-tools probe (exact model/args,
+original response/request references and full usage ledger). There are no episode
+scores to import. Parent DS intent is not imported; its pre-network failure is
+retained in costs. Stage0/Stage1 still cannot be called an Open-RC H1/H2 result.
