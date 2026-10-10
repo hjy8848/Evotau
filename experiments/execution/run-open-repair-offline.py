@@ -67,7 +67,9 @@ def main():
             "actual_E": ["1", "2", "3"],
             "actual_V": ["4"],
             "actual_seeds": [1, 2],
-            "source_sha256": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files},
+            "source_sha256": {
+                str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files
+            },
             "policy": settings(True),
             "provider": "Scripted",
             "native_runner": "FakeRunner",
@@ -84,6 +86,18 @@ def main():
             generations=2,
             manifest_sha=sha256_json(identity),
         )
+        for episode in runner.cache.values():
+            _write_json_once(
+                root / episode.trajectory_ref,
+                {**runner.load_trajectory(episode), "synthetic": True},
+            )
+            _write_json_once(
+                root
+                / episode.trajectory_ref.replace(
+                    "native-simulation.json", "episode-record.json"
+                ),
+                episode.to_dict(),
+            )
         output = {
             "kind": "SYNTHETIC_ONLY_NOT_A_RESEARCH_RESULT",
             "identity_sha256": sha256_json(identity),

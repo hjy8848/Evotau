@@ -75,6 +75,7 @@ class OpenRepairTrials(RepairConditionedTrials):
         )
         self.active = None
         self.discovery_handoff = True
+        self.include_candidate_program = True
 
     @property
     def protocol(self):
@@ -203,6 +204,7 @@ class OpenRepairTrials(RepairConditionedTrials):
             "past_attempts": [
                 {
                     "procedure_id": t["procedure_id"],
+                    "proposed_program": t.get("customer_proposal"),
                     "validity": t["candidate_validity"],
                     "rejection": t["rejection"],
                     "discovery_status": t["feedback"]["status"],
@@ -216,7 +218,15 @@ class OpenRepairTrials(RepairConditionedTrials):
         }
         if self.policy["mode"] == "free_search":
             search["past_attempts"] = [
-                {k: t[k] for k in ("procedure_id", "validity", "rejection")}
+                {
+                    k: t[k]
+                    for k in (
+                        "procedure_id",
+                        "proposed_program",
+                        "validity",
+                        "rejection",
+                    )
+                }
                 for t in search["past_attempts"]
             ]
         if pair and self.policy["mode"] == "open_rc":

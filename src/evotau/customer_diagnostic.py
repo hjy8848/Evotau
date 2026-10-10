@@ -427,6 +427,8 @@ class RepairConditionedTrials:
                     "task_success": r["task_success"], "trajectory_ref": r["trajectory_ref"],
                     "record_sha256": sha256_json(r)} for r in row.get("episodes", [])],
                  "observations": observations, "feedback": feedback, "reward": feedback["reward"]}
+        if getattr(self, "include_candidate_program", False):
+            trial["customer_proposal"] = row.get("skill")
         if getattr(self, "discovery_handoff", False):
             trial["review_context"] = context
         final = stage("trial-final", trial, lambda: {**trial, "cost": self._cost_delta(),
