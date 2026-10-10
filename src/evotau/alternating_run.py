@@ -263,6 +263,8 @@ def _run_from_config(
                         V2Providers(providers),
                         output_directory=output_directory,
                         mutation_context=json.loads(manifest.skill_evolution_v2_json)["mutation_context"],
+                        customer_policy=json.loads(manifest.skill_evolution_v2_json).get("customer_evolution"),
+                        max_parallel_episodes=manifest.max_parallel_episodes,
                         **kwargs,
                     )
 
@@ -505,13 +507,13 @@ def _api_usage_by_role(
         "customer": ("user_simulator_response",),
         "service": ("agent_response",),
         "evaluator": ("nl_assertions_eval",),
-        "customer_evolver": ("evotau_customer_evolver",),
+        "customer_evolver": ("evotau_customer_evolver", "evotau_customer_skill_evolver_v1"),
         "service_evolver": ("evotau_service_evolver", "evotau_service_skill_evolver", "evotau_service_skill_mutator"),
         "failure_analyst": ("evotau_service_failure_analyst",),
         "mechanism_diversity": ("evotau_failure_mechanism_dedup",),
         "skill_activator": ("evotau_skill_activator",),
         "skill_crossover": ("evotau_skill_crossover",),
-        "semantic_validator": ("evotau_customer_semantic_validator", "evotau_skill_semantic_validator"),
+        "semantic_validator": ("evotau_customer_semantic_validator", "evotau_skill_semantic_validator", "evotau_customer_trajectory_validator_v1"),
         "reviewer": (
             "llm_judge_review", "llm_judge_streaming_review",
             "classify_authentication", "llm_judge_hallucination_check",

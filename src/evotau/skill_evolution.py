@@ -190,6 +190,12 @@ def run_skill_evolution_v2(
     effects, matrix, documents, provenance = [], [], [], []
     archive = EvolutionArchive(max_candidates=policy["archive"]["max_candidates"])
     customers = CustomerChallengeArchive()
+    from .customer_skills import PROTOCOL
+    from .evolution_archive import CustomerAttemptHistory
+    customer_policy = policy.get("customer_evolution")
+    customer_attempts = CustomerAttemptHistory(max_history=(customer_policy or {}).get("max_history", 20))
+    if saved is not None and saved["state"].get("customer_protocol") != (PROTOCOL if customer_policy else None):
+        raise ValueError("checkpoint Customer protocol mismatch")
     watermark = service_skill_id_high_watermark(service)
     final_runs = ()
     fitness_seed = seed if evolution_fitness_seed is None else evolution_fitness_seed
@@ -314,6 +320,10 @@ def run_skill_evolution_v2(
                 max_candidates=policy["archive"]["max_candidates"],
             )
             customers = CustomerChallengeArchive(state["customer_archive"])
+            if customer_policy:
+                if state.get("customer_protocol") != PROTOCOL:
+                    raise ValueError("generation Customer protocol mismatch")
+                customer_attempts = CustomerAttemptHistory(state["customer_attempt_history"], max_history=customer_policy["max_history"])
             documents.append(commit["generation"])
             _write_json_once(root / f"generation-{g:04d}.json", commit["generation"])
             final_runs = tuple(
@@ -343,8 +353,9 @@ def run_skill_evolution_v2(
             "generation": g,
             "task_interactions": build_customer_evidence(
                 _context_episodes(incumbent, runner, tasks),
-                representative_cases=policy["mutation_context"]["representative_cases"],
-                case_chars=policy["mutation_context"]["case_chars"],
+                representative_cases=(customer_policy or policy["mutation_context"])["representative_cases"],
+                case_chars=(customer_policy or policy["mutation_context"])["case_chars"],
+                **({"customer_protocol": PROTOCOL} if customer_policy else {}),
             ),
             "evidence_instructions": CUSTOMER_EVIDENCE_INSTRUCTIONS,
             "current_customer_strategy": customer.text,
@@ -353,67 +364,116 @@ def run_skill_evolution_v2(
             "service_policy": domain_policy,
             "challenge_archive": customers.entries,
         }
-        proposals = stage(
+        if customer_policy:
+            c_context.update(customer_evolution=customer_policy, customer_attempt_history=customer_attempts.entries)
+            # Full replay strategies remain archived, not duplicated unboundedly in prompts.
+            c_context["challenge_archive"] = [{k: entry.get(k) for k in
+                ("strategy_id", "semantic_family", "accuracy", "accepted", "generation")}
+                for entry in customers.entries[-customer_policy["max_history"]:]]
+            from .customer_evolution import generate_candidates
+        generated = stage(
             g,
             "customer_candidates",
             c_context,
-            lambda c_context=c_context: providers.customers(
-                c_context, customer_candidate_count
-            ),
-        )["candidates"]
+            lambda c_context=c_context: (generate_candidates(providers, c_context, customer_candidate_count)
+                                        if customer_policy else providers.customers(c_context, customer_candidate_count)),
+        )
+        proposals = generated["candidates"]
         candidate_rows, selected, selected_accuracy = (
             [],
             incumbent,
             _accuracy(incumbent),
         )
         selected_source = "incumbent"
-        for i, proposal in enumerate(proposals):
-            context = {
-                "strategy": proposal["strategy"],
-                "scenarios": [
-                    row["task"]["user_scenario"]
-                    for row in c_context["task_interactions"]
-                ],
-            }
-            verdict = stage(
-                g,
-                f"customer-validator-{i}",
-                context,
-                lambda ctx=context: providers.validate_customer(ctx),
+        if customer_policy:
+            from .customer_evolution import (
+                evaluate_candidate as evaluate_customer_candidate,
             )
-            flags = (
-                "preserves_facts",
-                "preserves_objective",
-                "interaction_only",
-                "no_benchmark_leakage",
-            )
-            valid = all(verdict.get(k) is True for k in flags)
-            row = {
-                **proposal,
-                "strategy": {"text": proposal["strategy"]},
-                "semantic_validation": verdict,
-                "accuracy": None,
-                "episodes": [],
-                "pre_rollout_rejection": None
-                if valid
-                else "semantic_preservation_failed",
-            }
-            if valid:
-                challenge = PromptStrategy(proposal["strategy"])
-                runs = panel(
-                    g, f"customer-candidate-{i}", e, [fitness_seed], challenge, before_s
+            from .customer_evolution import prepare_candidate
+            if generated.get("generation_rejection"):
+                failure = generated["generation_rejection"]
+                candidate_rows.append(failure)
+            tested_texts = {entry["strategy"] for entry in customers.entries}
+            tested_procedures = {entry.get("procedure_id") for entry in customer_attempts.entries}
+            for i, proposal in enumerate(proposals):
+                row, skill = prepare_candidate(proposal, c_context, customer_policy)
+                if skill is not None and (skill.compile().text == customer.text or
+                        skill.compile().text in tested_texts or skill.procedure_id in tested_procedures):
+                    row.update(candidate_validity="invalid", pre_rollout_rejection="duplicate compiled Customer strategy")
+                    skill = None
+                row, runs = evaluate_customer_candidate(
+                    row, skill, context=c_context, incumbent=incumbent, current_service=before_s,
+                    tasks={k: tasks[k] for k in e}, runner=runner, providers=providers,
+                    domain_policy=domain_policy,
+                    panel=lambda c, s, i=i, g=g: panel(g, f"customer-candidate-{i}", e, [fitness_seed], c, s),
+                    stage=lambda name, inputs, cb, i=i, g=g: stage(g, f"customer-{i}-{name}", inputs, cb),
                 )
-                accuracy = _accuracy(runs)
-                row.update(accuracy=accuracy, episodes=[r.to_dict() for r in runs])
-                if accuracy < selected_accuracy:
-                    customer, selected, selected_accuracy, selected_source = (
-                        challenge,
-                        runs,
-                        accuracy,
-                        i,
+                if row["eligible_for_selection"]:
+                    accuracy = row["accuracy"]
+                    if accuracy < selected_accuracy:
+                        customer, selected, selected_accuracy, selected_source = skill.compile(), runs, accuracy, i
+                    customers.add({"strategy": row["strategy"]["text"], "semantic_family": row["failure_mechanism"],
+                                   "target_weakness_family": skill.to_dict()["hypothesis"],
+                                   "substantive_delta_from_prior": "structured task-faithful procedure"}, accuracy, g, False, True)
+                    tested_texts.add(row["strategy"]["text"])
+                candidate_rows.append(row)
+                if skill is not None:
+                    tested_procedures.add(skill.procedure_id)
+            for row in candidate_rows:
+                row["selected"] = bool(row.get("eligible_for_selection") and row.get("strategy", {}).get("text") == customer.text)
+                if row.get("eligible_for_selection"):
+                    row["selection_reason"] = ("selected: strict native E accuracy decrease" if row["selected"] else
+                        "no strict native E accuracy decrease" if row["accuracy"] >= _accuracy(incumbent) else
+                        "another eligible candidate has lower native E accuracy")
+                customer_attempts.add(row, g)
+        else:
+            for i, proposal in enumerate(proposals):
+                context = {
+                    "strategy": proposal["strategy"],
+                    "scenarios": [
+                        row["task"]["user_scenario"]
+                        for row in c_context["task_interactions"]
+                    ],
+                }
+                verdict = stage(
+                    g,
+                    f"customer-validator-{i}",
+                    context,
+                    lambda ctx=context: providers.validate_customer(ctx),
+                )
+                flags = (
+                    "preserves_facts",
+                    "preserves_objective",
+                    "interaction_only",
+                    "no_benchmark_leakage",
+                )
+                valid = all(verdict.get(k) is True for k in flags)
+                row = {
+                    **proposal,
+                    "strategy": {"text": proposal["strategy"]},
+                    "semantic_validation": verdict,
+                    "accuracy": None,
+                    "episodes": [],
+                    "pre_rollout_rejection": None
+                    if valid
+                    else "semantic_preservation_failed",
+                }
+                if valid:
+                    challenge = PromptStrategy(proposal["strategy"])
+                    runs = panel(
+                        g, f"customer-candidate-{i}", e, [fitness_seed], challenge, before_s
                     )
-                customers.add(proposal, accuracy, g, False, True)
-            candidate_rows.append(row)
+                    accuracy = _accuracy(runs)
+                    row.update(accuracy=accuracy, episodes=[r.to_dict() for r in runs])
+                    if accuracy < selected_accuracy:
+                        customer, selected, selected_accuracy, selected_source = (
+                            challenge,
+                            runs,
+                            accuracy,
+                            i,
+                        )
+                    customers.add(proposal, accuracy, g, False, True)
+                candidate_rows.append(row)
         for entry in customers.entries:
             entry["accepted"] = entry["strategy"] == customer.text
         stage(
@@ -1147,7 +1207,7 @@ def run_skill_evolution_v2(
             "service_after": _document("service", service),
             "customer_phase": {
                 "incumbent_accuracy": _accuracy(incumbent),
-                "candidate_accuracies": [r["accuracy"] for r in candidate_rows],
+                "candidate_accuracies": [r.get("accuracy") for r in candidate_rows],
                 "selected_accuracy": selected_accuracy,
                 "selected_customer": selected_source,
                 "candidates": candidate_rows,
@@ -1205,6 +1265,7 @@ def run_skill_evolution_v2(
             },
             "activation_summary": activation_summary,
             "customer_archive": customers.entries,
+            **({"customer_protocol": PROTOCOL, "customer_attempt_history": customer_attempts.entries} if customer_policy else {}),
             "failure_matrix": [
                 r for row in board for r in row.get("failure_matrix", [])
             ],
@@ -1230,6 +1291,7 @@ def run_skill_evolution_v2(
             "failure_matrix": matrix,
             "evolution_archive": archive.to_dict(),
             "customer_archive": customers.entries,
+            **({"customer_protocol": PROTOCOL, "customer_attempt_history": customer_attempts.entries} if customer_policy else {}),
             "history_summary": summarize_effects(effects),
             "activation_config": policy["activator"],
             "activation_summary": activation_summary,
@@ -1300,6 +1362,8 @@ def propose_fresh_customer_v2(
     output_directory,
     manifest_sha256,
     mutation_context=None,
+    customer_policy=None,
+    max_parallel_episodes=1,
 ):
     """Freeze and validate the final adaptive challenge using E-only evidence before H loads."""
     from .alternating import _context_episodes, _write_json_once
@@ -1308,6 +1372,12 @@ def propose_fresh_customer_v2(
         build_customer_evidence,
     )
 
+    if customer_policy:
+        from .customer_evolution import propose_fresh_customer_skill
+        return propose_fresh_customer_skill(result, providers, tasks=tasks, runner=runner,
+            domain_policy=domain_policy, output_directory=output_directory,
+            manifest_sha256=manifest_sha256, policy=customer_policy,
+            max_parallel_episodes=max_parallel_episodes)
     journal = EvolutionJournal(output_directory, manifest_sha256)
     context = {
         "task_interactions": build_customer_evidence(

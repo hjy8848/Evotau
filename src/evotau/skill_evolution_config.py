@@ -116,6 +116,11 @@ def freeze_v2_policy(raw, models, model_args):
         if "mutation_context" not in raw:
             raw["mutation_context"] = {"representative_cases": legacy_context_limit}
     policy = deepcopy(DEFAULT_V2)
+    # Opt-in Customer identity: absent in every historical frozen policy.
+    if "customer_evolution" in raw:
+        from .customer_skills import validate_customer_policy
+        policy["customer_evolution"] = validate_customer_policy(raw["customer_evolution"])
+        raw["customer_evolution"] = policy["customer_evolution"]
     # Optional schedules are only serialized when supplied; legacy policy serialization stays unchanged.
     for schedule in ("repair_seeds", "heldout_seeds"):
         if schedule in raw.get("evaluation", {}):

@@ -365,8 +365,15 @@ class V2Providers:
         self.recovery = None
         self.recovery_attempt = 0
         self.last_recovery = None
+        self.customer_policy = None
+
+    def configure_customer(self, policy):
+        from .customer_skills import validate_customer_policy
+        self.customer_policy = (validate_customer_policy(policy["customer_evolution"])
+                                if "customer_evolution" in policy else None)
 
     def configure_recovery(self, policy, root, manifest_sha):
+        self.configure_customer(policy)
         from .evolver_recovery import EvolverRecovery
         if policy.get("evolver_recovery") is not None:
             if policy["algorithm_version"] != "analyst_skill_recovery_v4":
@@ -389,7 +396,7 @@ class V2Providers:
                        "or change the assigned root cause. This is a format recovery, not extra search.")
         directory = self.provider.output_directory
         if directory is not None:
-            if self.recovery is not None and (directory / "evolver-calls").is_symlink():
+            if (self.recovery is not None or self.customer_policy is not None) and (directory / "evolver-calls").is_symlink():
                 from .evolver_recovery import RecoveryIntegrityError
                 raise RecoveryIntegrityError("unsafe evolver call root")
             for input_path in sorted(
@@ -427,7 +434,7 @@ class V2Providers:
                         continue
                     self.last_call_directory = input_path.parent
                     return saved["response"]
-                if self.recovery is not None:
+                if self.recovery is not None or self.customer_policy is not None:
                     from .evolver_recovery import replay_failed_or_unknown
                     self.last_call_directory = input_path.parent
                     replay_failed_or_unknown(input_path.parent, name)
@@ -492,6 +499,18 @@ class V2Providers:
 
     @_schema_checked
     def customers(self, context, count):
+        if self.customer_policy is not None:
+            from .customer_evolution import CUSTOMER_SKILL_PROMPT
+            from .evolution_context import enforce_mutation_context_budget
+            inputs = {**context, "requested_candidates": count,
+                      "customer_evolution": self.customer_policy}
+            enforce_mutation_context_budget(inputs, CUSTOMER_SKILL_PROMPT,
+                                            self.customer_policy["max_context_tokens"])
+            result = self.call(CUSTOMER_SKILL_PROMPT, inputs, "evotau_customer_skill_evolver_v1")
+            if (set(result) != {"candidates"} or not isinstance(result["candidates"], list)
+                    or len(result["candidates"]) != count):
+                raise ValueError("wrong structured Customer candidate count")
+            return result
         result = self.call(
             CUSTOMER_PROMPT,
             {**context, "requested_candidates": count},
@@ -534,6 +553,15 @@ class V2Providers:
                 "no_benchmark_leakage",
             ),
         )
+
+    @_schema_checked
+    def validate_customer_trajectory(self, context):
+        from .customer_trajectory_validity import (
+            TRAJECTORY_VALIDATOR_PROMPT,
+            validate_trajectory_report,
+        )
+        return validate_trajectory_report(
+            self.call(TRAJECTORY_VALIDATOR_PROMPT, context, "evotau_customer_trajectory_validator_v1"), context)
 
     @_schema_checked
     def validate_skill(self, context):

@@ -174,8 +174,38 @@ CUSTOMER_EVIDENCE_INSTRUCTIONS = (
 )
 
 
-def build_customer_evidence(rows, *, representative_cases=4, case_chars=12000):
-    return _build_evidence(rows, representative_cases=representative_cases, case_chars=case_chars)
+def build_customer_evidence(rows, *, representative_cases=4, case_chars=12000,
+                            customer_protocol=None):
+    if customer_protocol is None:
+        return _build_evidence(rows, representative_cases=representative_cases, case_chars=case_chars)
+    from .customer_skills import PROTOCOL
+    if customer_protocol != PROTOCOL:
+        raise ValueError('unknown Customer evidence protocol')
+    rows = list(rows)
+
+    def complexity(i):
+        messages = rows[i]['trajectory']['messages']
+        names = [c.get('name', '') for m in messages for c in _calls(m)]
+        errors = 0
+        for message in messages:
+            if message.get('role') != 'tool':
+                continue
+            try:
+                value = json.loads(message.get('content') or '')
+            except (ValueError, TypeError):
+                continue
+            errors += isinstance(value, dict) and (bool(value.get('error')) or value.get('success') is False)
+        # Observable ranking only, no inferred weakness/fixed task IDs or gold fields.
+        return (-errors, -len(set(names)), -sum(not _read_only(n) for n in names),
+                -len(names), str(rows[i]['task']['task_id']), rows[i]['seed'])
+
+    passing = sorted([i for i, r in enumerate(rows) if r['native_evaluation']['task_success'] is True], key=complexity)
+    failing = sorted([i for i, r in enumerate(rows) if r['native_evaluation']['task_success'] is False], key=complexity)
+    chosen = passing[:max(1, representative_cases - bool(failing))]
+    chosen += failing[:representative_cases - len(chosen)]
+    chosen += [i for i in passing + failing if i not in chosen][:representative_cases - len(chosen)]
+    return _build_evidence(rows, representative_cases=representative_cases,
+                           case_chars=case_chars, selection=chosen)
 
 
 def build_service_mutation_evidence(rows, *, representative_cases=4, case_chars=12000):

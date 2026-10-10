@@ -172,3 +172,32 @@ class CustomerChallengeArchive:
                 e["strategy_id"],
             ),
         )[:count]
+
+
+class CustomerAttemptHistory:
+    """Bounded E-only summaries, including rejected and legally ineffective attempts."""
+
+    def __init__(self, entries=(), *, max_history=20):
+        self.entries = list(entries)
+        self.max_history = max_history
+
+    def add(self, row, generation):
+        from .customer_skills import PROTOCOL
+        entry = {"protocol_version": PROTOCOL, "generation": generation,
+                 "candidate_id": row.get("candidate_id"), "procedure_id": row.get("procedure_id"),
+                 "mechanism": row.get("failure_mechanism", "unparsed proposal")[:1200],
+                 "candidate_validity": row["candidate_validity"],
+                 "accuracy": row.get("accuracy"), "selected": row.get("selected", False),
+                 "reason": str(row.get("pre_rollout_rejection") or row.get("selection_reason") or "")[:1200],
+                 "semantic_reason": str(row.get("semantic_validation", {}).get("reason", ""))[:1200],
+                 "trajectory_reasons": [{"task_id": c["task_id"], "seed": c["seed"],
+                                         "status": c["status"], "reason": c["reason"][:1200],
+                                         "evidence_message_indices": c["evidence_message_indices"]}
+                                        for c in row.get("trajectory_validity", {}).get("cells", [])
+                                        if c["status"] != "valid"],
+                 "new_failures": row.get("new_failures", []),
+                 "recovered_cells": row.get("recovered_cells", []),
+                 "paired_accuracy_delta": row.get("paired_accuracy_delta"),
+                 "causal_service_failure_confirmed": False}
+        self.entries.append(entry)
+        self.entries = self.entries[-self.max_history:]
