@@ -4,6 +4,7 @@ from copy import deepcopy
 from itertools import combinations
 
 from .evolution_candidates import EvolverSchemaError, validate_direct_evidence
+from .evolver_recovery import RecoveryExhausted
 from .provider_diagnostics import safe_error
 
 ANALYST_VERSION = "analyst_skill_v_validation_v3"
@@ -84,6 +85,9 @@ def validate_analysis(result, context):
 def analysis_outcome(callback, context):
     try:
         result = callback()
+    except RecoveryExhausted as error:
+        return {"status": "REJECTED", "error_type": "RECOVERY_EXHAUSTED",
+                "reason": str(error), "recovery": error.outcome, "hypotheses": []}
     except EvolverSchemaError as error:
         return {
             "status": "REJECTED",
@@ -223,6 +227,11 @@ def select_distinct_hypotheses(hypotheses, review, count):
 def diversity_outcome(callback, hypotheses):
     try:
         review = callback()
+    except RecoveryExhausted as error:
+        return {"stage": "service_mechanism_diversity", "status": "DEGRADED",
+                "reason": "dedup_json_or_schema_recovery_exhausted",
+                "fallback": "single_validated_hypothesis", "recovery": error.outcome,
+                "recovery_attempts": error.outcome["recovery_attempts"]}
     except EvolverSchemaError as error:
         return {
             "status": "REJECTED",
@@ -240,3 +249,19 @@ def diversity_outcome(callback, hypotheses):
             "raw_review": review,
         }
     return {"status": "VALID", **review}
+
+
+def conservative_dedup_fallback(hypotheses, outcome):
+    """Only previously evidence-validated skill hypotheses; stable one-candidate fallback."""
+    eligible = [h for h in hypotheses if h["repairability"] == "skill"]
+    eligible.sort(key=lambda h: -len(h["evidence_refs"]))  # Stable source order ties.
+    assigned = deepcopy(eligible[:1])
+    ids = {h["mechanism_id"] for h in assigned}
+    return {"status": "DEGRADED", "reason": outcome["reason"],
+            "fallback": "single_validated_hypothesis" if assigned else "NO_OP",
+            "assigned_count": len(assigned), "assigned_hypotheses": assigned,
+            "excluded_hypotheses": [{"mechanism_id": h["mechanism_id"],
+                "status": "DEFERRED_DUE_TO_DEDUP_FAILURE"} for h in hypotheses
+                if h["mechanism_id"] not in ids],
+            "semantic_distinctness_proven": False,
+            "selection_order": "skill only, retained evidence count, stable input order"}

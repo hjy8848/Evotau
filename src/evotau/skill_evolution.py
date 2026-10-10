@@ -31,10 +31,15 @@ from .tau_provenance import sha256_json
 def _candidate_outcome(callback, context):
     """Reject parsed candidate contract errors; infrastructure errors still propagate."""
     from .evolution_candidates import EvolverSchemaError
+    from .evolver_recovery import RecoveryExhausted
     from .provider_diagnostics import safe_error
 
     try:
         mutation = callback()
+    except RecoveryExhausted as error:
+        return {"status": "REJECTED", "error_type": "RECOVERY_EXHAUSTED",
+                "reason": str(error), "recovery": error.outcome,
+                "diagnostics_ref": error.diagnostics_ref}
     except EvolverSchemaError as error:
         return {
             "status": "REJECTED",
@@ -136,7 +141,7 @@ def run_skill_evolution_v2(
         _write_json_once,
     )
 
-    if policy.get("algorithm_version") not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3"):
+    if policy.get("algorithm_version") not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "analyst_skill_recovery_v4"):
         raise ValueError(
             "Legacy Diagnoser configuration is read-only; create a versioned Direct Skill config"
         )
@@ -145,7 +150,7 @@ def run_skill_evolution_v2(
         validate_v2_promotion_readiness,
     )
     validate_v2_promotion_readiness(policy, run_validation=run_validation)
-    analyst_mode = policy["algorithm_version"] == "analyst_skill_v_validation_v3"
+    analyst_mode = policy["algorithm_version"] in ("analyst_skill_v_validation_v3", "analyst_skill_recovery_v4")
     v_primary = policy["evaluation"].get("promotion_protocol") == "v_primary"
     if v_primary and (not run_validation or policy["statistical_gate"]["method"] != "task_block_bootstrap"
                       or not policy["statistical_gate"]["enabled"]):
@@ -157,6 +162,8 @@ def run_skill_evolution_v2(
         return value
 
     root = Path(output_directory)
+    if hasattr(providers, "configure_recovery"):
+        providers.configure_recovery(policy, root, manifest_sha256)
     journal = EvolutionJournal(root, manifest_sha256)
     e, v = tuple(map(str, evolution_task_ids)), tuple(map(str, validation_task_ids))
     if set(tasks) - (set(e) | (set(v) if run_validation else set())) or not set(
@@ -217,7 +224,15 @@ def run_skill_evolution_v2(
         def measured_callback():
             started = perf_counter()
             try:
-                return callback()
+                if hasattr(providers, "last_recovery"):
+                    providers.last_recovery = None
+                value = callback()
+                recovery = getattr(providers, "last_recovery", None)
+                if recovery is not None and isinstance(value, dict):
+                    value = {**value, "recovery": recovery}
+                    if value.get("status") == "VALID" and recovery["status"] == "RECOVERED":
+                        value["status"] = "RECOVERED"
+                return value
             finally:
                 key = f"g{g:04d}-{name}"
                 timing["stages"][key] = (
@@ -506,7 +521,11 @@ def run_skill_evolution_v2(
         hypothesis_selection = None
         if analyst_mode:
             from .evolution_candidates import FAILURE_ANALYST_PROMPT
-            from .failure_analysis import analysis_outcome, select_distinct_hypotheses
+            from .failure_analysis import (
+                analysis_outcome,
+                conservative_dedup_fallback,
+                select_distinct_hypotheses,
+            )
             analyst_context = {**s_context, "requested_hypotheses": evo["candidates_per_generation"]}
             enforce_mutation_context_budget(
                 analyst_context, FAILURE_ANALYST_PROMPT, policy["mutation_context"]["max_proxy_tokens"]
@@ -529,7 +548,9 @@ def run_skill_evolution_v2(
                 review_outcome = {"status": "VALID", "comparisons": []}
             hypothesis_selection = (
                 select_distinct_hypotheses(hypotheses, {"comparisons": review_outcome["comparisons"]}, evo["candidates_per_generation"])
-                if review_outcome["status"] == "VALID"
+                if review_outcome["status"] in ("VALID", "RECOVERED")
+                else conservative_dedup_fallback(hypotheses, review_outcome)
+                if review_outcome["status"] == "DEGRADED"
                 else {"assigned_hypotheses": [], "excluded_hypotheses": [], "semantic_distinctness_proven": False}
             )
             hypothesis_selection["diversity_review"] = review_outcome

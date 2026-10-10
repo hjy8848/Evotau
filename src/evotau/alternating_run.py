@@ -63,7 +63,7 @@ def _run_from_config(
     config = load_config(config_file)
     manifest = AlternatingManifest.from_mapping(config)
     if (manifest.service_carrier == "skill_memory_v2"
-            and json.loads(manifest.skill_evolution_v2_json)["algorithm_version"] not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3")):
+            and json.loads(manifest.skill_evolution_v2_json)["algorithm_version"] not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "analyst_skill_recovery_v4")):
         raise ValueError("Legacy Diagnoser config is read-only; create a Direct Skill experiment")
     if manifest.skill_evolution_v2_json:
         frozen = json.loads(manifest.skill_evolution_v2_json)
@@ -397,6 +397,10 @@ def _run_from_config(
                 **episode_job_telemetry.snapshot(),
             },
         }
+        if (json.loads(manifest.skill_evolution_v2_json).get("evolver_recovery")
+                if manifest.service_carrier == "skill_memory_v2" else False):
+            from .evolver_recovery import summarize_recovery
+            final_result["evolver_recovery"] = summarize_recovery(output_directory, manifest.sha256)
         _write_json_atomic(output_directory / "alternating-result.json", final_result)
         return output_directory, final_result
     except BaseException as exc:

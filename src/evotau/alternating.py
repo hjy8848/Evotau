@@ -316,7 +316,7 @@ class LLMAlternatingEvolvers:
         )
         value = _parse_evolver_json(content, call_name=call_name)
         if not isinstance(value, dict):
-            raise TypeError("evolver responses must be JSON objects")
+            raise EvolverJSONError(call_name=call_name, raw_response=content, parse_error="top-level JSON must be an object")
         return value
 
     @staticmethod
@@ -348,6 +348,17 @@ class LLMAlternatingEvolvers:
             **kwargs,
         )
         raw = getattr(message, "raw_data", None)
+        evidence_path = _EVOLVER_VISIBLE_OUTPUT.get()
+        if evidence_path is not None:
+            from .provider_diagnostics import response_metadata
+            _write_json_once(evidence_path.parent / "response-metadata.json", response_metadata(raw))
+            _write_json_once(evidence_path, {
+                "call_name": call_name, "visible_text": message.content or "",
+                "visible_text_sha256": sha256_json(message.content or ""),
+                "format_normalization": "complete_markdown_fence_only"
+                if _strip_json_markdown_fence(message.content or "") != (message.content or "") else "none",
+                "semantic_repair": False,
+            })
         if isinstance(raw, Mapping):
             choices = raw.get("choices") or []
             if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
@@ -358,7 +369,7 @@ class LLMAlternatingEvolvers:
                 )
         value = _parse_evolver_json(message.content or "", call_name=call_name)
         if not isinstance(value, dict):
-            raise TypeError("evolver responses must be JSON objects")
+            raise EvolverJSONError(call_name=call_name, raw_response=message.content or "", parse_error="top-level JSON must be an object")
         return value
 
 

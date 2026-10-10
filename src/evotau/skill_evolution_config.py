@@ -81,7 +81,7 @@ def freeze_v2_policy(raw, models, model_args):
         raise TypeError("V2 policy must be a mapping")
     # Old manifests can be inspected, but the runtime explicitly refuses legacy algorithms.
     version = raw.get("algorithm_version", "diagnoser_v2")
-    if version not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "diagnoser_v2"):
+    if version not in ("direct_skill_evolution_v1", "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "analyst_skill_recovery_v4", "diagnoser_v2"):
         raise ValueError("unsupported evolution algorithm version")
     raw["algorithm_version"] = version
     evolution = raw.get("service_evolution", {})
@@ -120,6 +120,12 @@ def freeze_v2_policy(raw, models, model_args):
     for schedule in ("repair_seeds", "heldout_seeds"):
         if schedule in raw.get("evaluation", {}):
             policy["evaluation"][schedule] = []
+    if version == "analyst_skill_recovery_v4":
+        from .evolver_recovery import DEFAULT_RECOVERY, validate_recovery_policy
+        policy["evolver_recovery"] = deepcopy(DEFAULT_RECOVERY)
+        validate_recovery_policy(raw.get("evolver_recovery", DEFAULT_RECOVERY))
+    elif "evolver_recovery" in raw:
+        raise ValueError("automatic recovery requires a new analyst_skill_recovery_v4 identity")
     if not isinstance(raw, dict) or set(raw) - set(policy):
         raise ValueError("unknown Skill Evolution V2 configuration fields")
     for key, value in raw.items():
@@ -134,6 +140,8 @@ def freeze_v2_policy(raw, models, model_args):
         "reject_candidate",
     ):
         raise ValueError("unsupported candidate_error_policy")
+    if version == "analyst_skill_recovery_v4" and policy["service_evolution"]["candidate_error_policy"] != "reject_candidate":
+        raise ValueError("recovery v4 requires explicit reject_candidate exhaustion policy")
     if policy["schema_version"] != 2:
         raise ValueError("unsupported V2 schema")
     if policy["service_skill_runtime"] not in ("activate_topk_v2", "render_all_v1"):
@@ -162,7 +170,7 @@ def freeze_v2_policy(raw, models, model_args):
     evaluation = policy["evaluation"]
     if evaluation["promotion_protocol"] not in ("legacy_e_superiority", "v_primary"):
         raise ValueError("unknown promotion protocol")
-    if (version in ("direct_skill_v_validation_v2", "analyst_skill_v_validation_v3")) != (evaluation["promotion_protocol"] == "v_primary"):
+    if (version in ("direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "analyst_skill_recovery_v4")) != (evaluation["promotion_protocol"] == "v_primary"):
         raise ValueError("V-primary promotion requires its own algorithm version")
     if type(evaluation["calibration_confirmed"]) is not bool:
         raise ValueError("calibration_confirmed must be boolean")
@@ -227,7 +235,7 @@ def freeze_v2_policy(raw, models, model_args):
     if gate["risk_scope"] not in ("population_bound", "observed_panel"):
         raise ValueError("invalid risk scope")
     if gate["risk_scope"] == "observed_panel" and not (
-        gate["adaptive_validation"] and version in ("direct_skill_v_validation_v2", "analyst_skill_v_validation_v3")
+        gate["adaptive_validation"] and version in ("direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "analyst_skill_recovery_v4")
     ):
         raise ValueError("observed-panel risk requires versioned adaptive V protocol")
     if gate["method"] not in ("task_block_bootstrap", "finite_panel_paired"):

@@ -9,7 +9,7 @@ class EvolverSchemaError(ValueError):
     """A parsed response violated its stage contract; never a scored rejection."""
 
 
-def _schema_checked(method):
+def _legacy_schema_checked(method):
     @wraps(method)
     def checked(self, *args, **kwargs):
         self.last_call_directory = None
@@ -46,6 +46,18 @@ def _schema_checked(method):
             ).as_posix()
             raise raised from error
 
+    return checked
+
+
+def _schema_checked(method):
+    legacy = _legacy_schema_checked(method)
+
+    @wraps(method)
+    def checked(self, *args, **kwargs):
+        if self.recovery is None or method.__name__ not in self.recovery.methods:
+            return legacy(self, *args, **kwargs)
+        return self.recovery.execute(self, method.__name__, args, kwargs,
+                                     lambda: legacy(self, *args, **kwargs))
     return checked
 
 
@@ -327,12 +339,41 @@ Operations: add, narrow_trigger, expand_trigger, rewrite_guidance, split, delete
 
 SKILL_VALIDATOR_PROMPT = """A Skill is reusable if its rule applies across multiple possible instances of the same observable operational condition. Domain-specific Airline policies and public tool names are allowed. Reuse does not require domain independence. Validate structure, reuse, policy subordination and leakage only, never effectiveness. Reject hardcoded fixture identities, booking/flight/payment record identifiers, task IDs, gold answers, hidden goals and unsupported authorization/state assumptions. Public tool names and public business rules are permitted. Return exactly JSON {"reusable":true,"policy_subordinate":true,"no_task_entities":true,"reason":"..."}. If uncertain use false."""
 
-MECHANISM_DEDUP_PROMPT = """Compare the supplied failure hypotheses by operational correction, not wording, identifiers or task names. For EVERY unordered pair return JSON {"comparisons":[{"left":"mechanism_id","right":"mechanism_id","same_mechanism":true,"reason":"..."}]}. Use false for distinct mechanisms, null when uncertain. Equivalent rephrasings of the same correction are duplicates. Do not generate skills or invent evidence. This is a semantic judgment, not deterministic proof. Only supplied E evidence is available."""
+LEGACY_MECHANISM_DEDUP_PROMPT = """Compare the supplied failure hypotheses by operational correction, not wording, identifiers or task names. For EVERY unordered pair return JSON {"comparisons":[{"left":"mechanism_id","right":"mechanism_id","same_mechanism":true,"reason":"..."}]}. Use false for distinct mechanisms, null when uncertain. Equivalent rephrasings of the same correction are duplicates. Do not generate skills or invent evidence. This is a semantic judgment, not deterministic proof. Only supplied E evidence is available."""
+
+
+MECHANISM_DEDUP_PROMPT = """You are the EvoTau Failure Mechanism Deduplication Reviewer.
+Compare supplied failure hypotheses according to their proposed operational corrections.
+Determine whether they cause essentially the same behavioral change.
+IMPORTANT OUTPUT CONTRACT: Return EXACTLY ONE valid top-level JSON object with
+EXACTLY ONE field named "comparisons". Its value is ONE array containing ALL pairs.
+Do not return a separate object for each pair. Do not concatenate objects, output JSONL,
+Markdown, explanations or text outside the object. For EVERY unordered pair of supplied
+mechanism IDs include exactly one item with left, right, same_mechanism and reason.
+Use true for equivalent operational corrections, false for meaningfully different corrections,
+and null when evidence is insufficient. Do not invent evidence or generate Skills.
+Example (illustrative IDs only; always use actual supplied IDs):
+{"comparisons":[{"left":"h1","right":"h2","same_mechanism":false,"reason":"Different corrections"},
+{"left":"h1","right":"h3","same_mechanism":true,"reason":"Equivalent intervention"},
+{"left":"h2","right":"h3","same_mechanism":null,"reason":"Insufficient evidence"}]}
+If no pairs exist return {"comparisons":[]}."""
 
 
 class V2Providers:
     def __init__(self, provider):
         self.provider = provider
+        self.recovery = None
+        self.recovery_attempt = 0
+        self.last_recovery = None
+
+    def configure_recovery(self, policy, root, manifest_sha):
+        from .evolver_recovery import EvolverRecovery
+        if policy.get("evolver_recovery") is not None:
+            if policy["algorithm_version"] != "analyst_skill_recovery_v4":
+                raise ValueError("automatic recovery cannot change a legacy frozen identity")
+            self.recovery = EvolverRecovery(root, manifest_sha, policy["evolver_recovery"])
+        else:
+            self.recovery = None
 
     def call(self, prompt, context, name):
         # Recover a completed recorded call if the process died before stage publication.
@@ -341,8 +382,16 @@ class V2Providers:
         from .provider_diagnostics import safe_request_args
         from .tau_provenance import sha256_json
 
+        if self.recovery_attempt:
+            prompt += ("\nFORMAT RECOVERY ATTEMPT " + str(self.recovery_attempt)
+                       + ": Return exactly ONE complete JSON object conforming to the ORIGINAL contract. "
+                       "Use the same frozen input and scope. Do not add hypotheses, targets, evidence "
+                       "or change the assigned root cause. This is a format recovery, not extra search.")
         directory = self.provider.output_directory
         if directory is not None:
+            if self.recovery is not None and (directory / "evolver-calls").is_symlink():
+                from .evolver_recovery import RecoveryIntegrityError
+                raise RecoveryIntegrityError("unsafe evolver call root")
             for input_path in sorted(
                 (directory / "evolver-calls").glob("*/input.json")
             ):
@@ -378,6 +427,10 @@ class V2Providers:
                         continue
                     self.last_call_directory = input_path.parent
                     return saved["response"]
+                if self.recovery is not None:
+                    from .evolver_recovery import replay_failed_or_unknown
+                    self.last_call_directory = input_path.parent
+                    replay_failed_or_unknown(input_path.parent, name)
         from .alternating import _provider_call
 
         signal = getattr(self.provider, "stop_before_next_episode_file", None)
@@ -391,17 +444,19 @@ class V2Providers:
             if Path(signal).exists():
                 raise StopBeforeEpisodeDispatch("paused before next Evolver request")
 
-        result = _provider_call(
-            self.provider.request_budget,
-            lambda: self.provider._provider_json_call(
-                self.provider.model,
-                self.provider.model_args,
-                prompt,
-                context,
-                call_name=name,
-            ),
-        )
-        self.last_call_directory = getattr(self.provider, "last_call_directory", None)
+        try:
+            result = _provider_call(
+                self.provider.request_budget,
+                lambda: self.provider._provider_json_call(
+                    self.provider.model,
+                    self.provider.model_args,
+                    prompt,
+                    context,
+                    call_name=name,
+                ),
+            )
+        finally:
+            self.last_call_directory = getattr(self.provider, "last_call_directory", None)
         return result
 
     @_schema_checked
@@ -423,7 +478,7 @@ class V2Providers:
     @_schema_checked
     def deduplicate_failure_hypotheses(self, context):
         from .failure_analysis import validate_dedup_review
-        result = self.call(MECHANISM_DEDUP_PROMPT, context, "evotau_failure_mechanism_dedup")
+        result = self.call(MECHANISM_DEDUP_PROMPT if self.recovery is not None else LEGACY_MECHANISM_DEDUP_PROMPT, context, "evotau_failure_mechanism_dedup")
         return validate_dedup_review(result, context["hypotheses"])
 
     @_schema_checked
@@ -483,7 +538,7 @@ class V2Providers:
     @_schema_checked
     def validate_skill(self, context):
         result = self.call(
-            SKILL_VALIDATOR_PROMPT if context.get("algorithm_version") == "analyst_skill_v_validation_v3" else LEGACY_SKILL_VALIDATOR_PROMPT,
+            SKILL_VALIDATOR_PROMPT if context.get("algorithm_version") in ("analyst_skill_v_validation_v3", "analyst_skill_recovery_v4") else LEGACY_SKILL_VALIDATOR_PROMPT,
             context, "evotau_skill_semantic_validator"
         )
         return _validator_result(
