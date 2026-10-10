@@ -132,3 +132,16 @@ def test_wire_bridge_does_not_change_gateway_or_other_provider_args():
     assert actual["agent"] == {"api_base": "http://10.130.138.46:8010/v1", "temperature": 0.0,
                                 "extra_body": {"enable_thinking": False}}
     assert actual["evolver"] == original["evolver"]
+
+
+def test_acquisition_consumes_native_result_tuple_without_reading_directory():
+    import ast
+    source = (Path(__file__).parents[1] /
+              "experiments/execution/run-open-rc-acquisition.py").read_text()
+    tree = ast.parse(source)
+    assignment = next(node for node in ast.walk(tree)
+                      if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                      and isinstance(node.value.func, ast.Name)
+                      and node.value.func.id == "run_from_config")
+    assert [elt.id for elt in assignment.targets[0].elts] == ["output_directory", "result"]
+    assert "result_path.read_text()" not in source

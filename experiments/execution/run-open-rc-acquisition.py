@@ -137,8 +137,8 @@ def main():
                                    budget, llm_utils.generate, messages)
             print(json.dumps({"stage": "minimal_preflight_complete", "calls": budget.snapshot().attempts,
                               "long_context_verified": False}), flush=True)
-            result_path, _ = run_from_config(options.config, tau2_data_dir=options.tau2_data_dir)
-            result = json.loads(result_path.read_text())
+            output_directory, result = run_from_config(options.config, tau2_data_dir=options.tau2_data_dir)
+            result_path = output_directory / "alternating-result.json"
             before, after = result["initial_service"], result["final_service"]
             changed = before != after
             _write_json_once(root / "pair-acquisition-status.json", {
