@@ -157,7 +157,7 @@ def run_skill_evolution_v2(
         raise ValueError("V-primary promotion requires enabled V task-block statistical gates")
     def prompt_parent(entry):
         value = _evolution_parent(entry)
-        if v_primary and value.get("effect"):
+        if (v_primary or policy.get("targeted_repair")) and value.get("effect"):
             value["effect"]["rejection_reason"] = "deployment outcome withheld; E effects only"
         return value
 
@@ -196,7 +196,7 @@ def run_skill_evolution_v2(
     customer_attempts = CustomerAttemptHistory(max_history=(customer_policy or {}).get("max_history", 20))
     if saved is not None and saved["state"].get("customer_protocol") != (PROTOCOL if customer_policy else None):
         raise ValueError("checkpoint Customer protocol mismatch")
-    rc_policy = policy.get("repair_conditioned_bandit")
+    rc_policy = policy.get("repair_conditioned_bandit") or policy.get("open_repair_search")
     rc, repair_pair = None, None
     if rc_policy:
         from .customer_diagnostic import RepairConditionedTrials
@@ -205,9 +205,22 @@ def run_skill_evolution_v2(
             raise ValueError("RC-Bandit requires Customer Skill v1")
         if customer_candidate_count > rc_policy["max_trials_per_generation"]:
             raise ValueError("Customer candidate count exceeds frozen RC trial budget")
+        if policy.get("open_repair_search"):
+            from .open_repair_search import PROTOCOL as RC_PROTOCOL
+            from .open_repair_search import OpenRepairTrials as RepairConditionedTrials
         rc = RepairConditionedTrials(policy=rc_policy, customer_policy=customer_policy,
             tasks={k: tasks[k] for k in e}, runner=runner, providers=providers,
             domain_policy=domain_policy, root=root, manifest_sha=manifest_sha256, budget=request_budget)
+    discovery_archive = None
+    targeted_policy = policy.get("targeted_repair")
+    if policy.get("discovery_handoff"):
+        if not rc:
+            raise ValueError("discovery handoff requires repair search")
+        from .repair_discovery_archive import RepairDiscoveryArchive
+        discovery_archive = RepairDiscoveryArchive(root, manifest_sha256, e)
+        rc.discovery_handoff = True
+    if targeted_policy and not run_validation:
+        raise ValueError("targeted promotion requires independent V; E-only discovery runs cannot deploy")
     if saved is not None and saved["state"].get("bandit_protocol") != (RC_PROTOCOL if rc else None):
         raise ValueError("checkpoint Bandit protocol mismatch")
 
@@ -348,11 +361,12 @@ def run_skill_evolution_v2(
                     raise ValueError("generation Customer protocol mismatch")
                 customer_attempts = CustomerAttemptHistory(state["customer_attempt_history"], max_history=customer_policy["max_history"])
             if rc:
-                from .repair_conditioned_bandit import restore
                 if state.get("bandit_protocol") != RC_PROTOCOL:
                     raise ValueError("generation Bandit protocol mismatch")
-                rc.state = restore(state["bandit_state"], rc_policy)
+                rc.state = rc.restore_state(state["bandit_state"])
                 repair_pair = state["repair_service_pair"]
+                if policy.get("open_repair_search"):
+                    rc.repair_evidence = state["open_repair_evidence"]
             documents.append(commit["generation"])
             _write_json_once(root / f"generation-{g:04d}.json", commit["generation"])
             final_runs = tuple(
@@ -532,6 +546,22 @@ def run_skill_evolution_v2(
                         )
                     customers.add(proposal, accuracy, g, False, True)
                 candidate_rows.append(row)
+        generation_discoveries = []
+        if discovery_archive:
+            for row in candidate_rows:
+                trial = row.get("bandit_trial")
+                if trial and trial["reward"]:
+                    generation_discoveries.extend(discovery_archive.publish(
+                        trial, row["skill"], repair_pair, trial["review_context"],
+                        selected=row["selected"], trial_ref=rc.ledger.root / f"{trial['trial_id']}-final.json",
+                        customer_policy=customer_policy, evidence_rows=c_context["task_interactions"],
+                        min_replications=rc.policy["min_replications"]))
+        generation_discoveries.sort(key=lambda d: (d["trial_id"], d["discovery_id"]))
+        frozen_targets = generation_discoveries[:targeted_policy["max_targets_per_generation"]] if targeted_policy else []
+        if discovery_archive:
+            stage(g, "discovery_handoff_selection", {"discovery_ids": [d["discovery_id"] for d in generation_discoveries],
+                  "targeted_policy": targeted_policy},
+                  lambda frozen_targets=frozen_targets: {"frozen_target_ids": [d["discovery_id"] for d in frozen_targets]})
         for entry in customers.entries:
             entry["accepted"] = entry["strategy"] == customer.text
         stage(
@@ -556,7 +586,7 @@ def run_skill_evolution_v2(
             representative_cases=policy["mutation_context"]["representative_cases"],
             case_chars=policy["mutation_context"]["case_chars"],
         )
-        if v_primary:
+        if v_primary or targeted_policy:
             for family in history:
                 if family.get("effect"):
                     family["effect"]["rejection_reason"] = "deployment outcome withheld; E effects only"
@@ -571,7 +601,7 @@ def run_skill_evolution_v2(
             "evidence_instructions": SERVICE_MUTATION_EVIDENCE_INSTRUCTIONS,
             "failure_matrix": [
                 {k: row[k] for k in ("task_id", "seed", "candidate_id", "status", "old_success", "new_success", "termination_reason", "activated_skill_ids")}
-                if v_primary else row
+                if v_primary or targeted_policy else row
                 for row in matrix if row["task_id"] in e
             ][-len(e) * 8 :],
             "current_service_memory": before_s.to_dict(),
@@ -604,6 +634,19 @@ def run_skill_evolution_v2(
                 documents, effects, evo["stagnation_patience"]
             ),
         }
+        if generation_discoveries:
+            from .repair_discovery_archive import service_handoff
+            handoff = service_handoff(generation_discoveries, rc.state["trials"], runner,
+                                      {k: tasks[k] for k in e}, policy["mutation_context"])
+            s_context["discovery_repair_targets"] = handoff
+            s_context["frozen_target_ids"] = [d["discovery_id"] for d in frozen_targets]
+            for d in generation_discoveries:
+                discovery_archive.event(d["discovery_id"], g, "handoff",
+                    {"used_for_service_prompt": True, "frozen_evaluation_target": d in frozen_targets,
+                     "training_panel": "E", "projection_sha256": sha256_json(handoff),
+                     "source_ref": f"generation-{g:04d}.json", "repair_outcome": "not_yet_evaluated"})
+            # Original validator registry includes every supplied target trajectory.
+            s_context["task_interactions"] = all_evidence + [r for d in handoff for r in d["task_interactions"]]
         board = []
         looks = evo["candidates_per_generation"] + int(evo["crossover"])
         replay = policy["opponent_replay"]
@@ -743,6 +786,7 @@ def run_skill_evolution_v2(
             looks=looks,
             matrix=matrix,
             seen_candidates=seen_candidates,
+            frozen_targets=frozen_targets,
         ):
             nonlocal watermark
             target, protected = (
@@ -856,6 +900,31 @@ def run_skill_evolution_v2(
                     regression_allowance=policy["evaluation"]["screen_regression_allowance"] if v_primary else 0,
                     max_stuck_delta=policy["evaluation"]["screen_max_stuck_delta"] if v_primary else 0.0),
             )
+            target_decisions = []
+            if frozen_targets:
+                from .targeted_repair_gate import evaluate_target
+                for d in frozen_targets:
+                    challenge = PromptStrategy(d["compiled_customer"]["text"])
+                    tids, tseeds = [d["discovery"]["task_id"]], d["discovery"]["seeds"]
+                    target_cost_before = stage(g, f"target-{ident}-{d['discovery_id']}-cost-start",
+                        {"discovery_id": d["discovery_id"], "policy": targeted_policy}, rc.costs)
+                    base = panel(g, f"target-{ident}-{d['discovery_id']}-old", tids, tseeds, challenge, before_s)
+                    candidate = panel(g, f"target-{ident}-{d['discovery_id']}-new", tids, tseeds, challenge, proposed)
+                    decision = stage(g, f"target-{ident}-{d['discovery_id']}-decision",
+                        {"old": [r.to_dict() for r in base], "new": [r.to_dict() for r in candidate],
+                         "discovery": d, "policy": targeted_policy},
+                        lambda base=base, candidate=candidate, d=d, target_cost_before=target_cost_before: {
+                            **evaluate_target(base, candidate, d, before_s, proposed, targeted_policy),
+                            "execution_cost": {key: None if value is None or target_cost_before.get(key) is None
+                                               else value - target_cost_before[key] for key, value in rc.costs().items()}})
+                    target_decisions.append(decision)
+            if targeted_policy:
+                row["targeted_repair"] = target_decisions
+            if frozen_targets:
+                # Initial E screen protects incumbent successes; target gate owns improvement.
+                protection = evaluate_gate(old, new, policy["statistical_gate"], objective="preservation", smoke=True, seed=seed)
+                screen = {**screen, "passed": protection["verdict"] == "ACCEPTED" and all(t["verdict"] == "ACCEPTED" for t in target_decisions),
+                          "reason": "target improvement and observed incumbent protection", "incumbent_protection": protection}
             row["screen"] = screen
             attribution_old, attribution_new = old, new
             gates, full_runs = [], ()
@@ -877,10 +946,24 @@ def run_skill_evolution_v2(
                         customer,
                         proposed,
                     )
+                if frozen_targets:
+                    # All incumbent/native/replay E successes are protected, not just target tasks.
+                    for label, opponent, _ in opponents:
+                        protected_old = panel(g, f"target-protection-{ident}-{label}-old", e,
+                                              evaluation_seed_schedule(policy, "E"), opponent, before_s)
+                        protected_new = panel(g, f"target-protection-{ident}-{label}-new", e,
+                                              evaluation_seed_schedule(policy, "E"), opponent, proposed)
+                        protection = stage(g, f"target-protection-{ident}-{label}-decision",
+                            {"old": [r.to_dict() for r in protected_old], "new": [r.to_dict() for r in protected_new],
+                             "policy": policy["statistical_gate"]},
+                            lambda protected_old=protected_old, protected_new=protected_new: evaluate_gate(
+                                protected_old, protected_new, policy["statistical_gate"], objective="preservation", smoke=True, seed=seed))
+                        protection["opponent"] = label + "-protected-E"
+                        target_decisions.append(protection)
                 gate_ids = e if smoke else v
                 gate_seeds = policy["evaluation"]["gate_seeds"]
                 repair_gate = None
-                if not smoke and not v_primary:
+                if not smoke and not v_primary and not frozen_targets:
                     repair_gate = stage(
                         g,
                         f"service_full_gate-{ident}-repair-superiority-decision",
@@ -915,7 +998,7 @@ def run_skill_evolution_v2(
                 ):
                     objective = (
                         "superiority"
-                        if (smoke or v_primary) and label == "current"
+                        if (smoke or v_primary) and label == "current" and not frozen_targets
                         else "preservation"
                     )
                     old_gate = panel(
@@ -1008,7 +1091,7 @@ def run_skill_evolution_v2(
                         )
                         gates.extend(skipped["opponents"])
                         break
-                required_gates = gates + (
+                required_gates = gates + target_decisions + (
                     [repair_gate] if repair_gate is not None else []
                 )
                 verdict = (
@@ -1023,16 +1106,17 @@ def run_skill_evolution_v2(
                     "opponents": gates,
                     "repair_superiority": repair_gate,
                     "gate_looks": looks,
-                    "promotion_protocol": policy["evaluation"].get("promotion_protocol", "legacy_e_superiority"),
+                    "promotion_protocol": targeted_policy["protocol_version"] if frozen_targets else policy["evaluation"].get("promotion_protocol", "legacy_e_superiority"),
                     "evaluation_mode": policy["evaluation"]["v_gate_mode"],
                     "risk_profile_complete": len(gates) == len(opponents)
                     and all(x["verdict"] != "NOT_EVALUATED" for x in gates),
                     "reason": "; ".join(
-                        x["opponent"] + ": " + x["reason"] for x in required_gates
+                        x.get("opponent", "discovery-target-E") + ": " + x["reason"] for x in required_gates
                     ),
                 }
             else:
-                verdict = "REJECTED"
+                verdict = ("INCONCLUSIVE" if frozen_targets and any(t["verdict"] == "INCONCLUSIVE" for t in target_decisions)
+                           and not any(t["verdict"] == "REJECTED" for t in target_decisions) else "REJECTED")
             reason = row["gate"]["reason"] if row["gate"] else screen["reason"]
             effect = paired_effect(
                 attribution_old,
@@ -1198,6 +1282,14 @@ def run_skill_evolution_v2(
                 if policy["archive"]["enabled"]:
                     archive.add(row)
             board.append(row)
+        if discovery_archive:
+            for candidate_row in board:
+                for d in frozen_targets:
+                    discovery_archive.event(d["discovery_id"], g, candidate_row["mutation_id"],
+                        {"decision": candidate_row["decision"], "deployed": candidate_row["runtime_deployed"],
+                         "target_evidence": candidate_row.get("targeted_repair"),
+                         "gate_artifact_sha256": sha256_json(candidate_row.get("gate")),
+                         "evaluation_ref": f"generation-{g:04d}.json"})
         if winner:
             row, _ = winner
             service = ServiceSkillMemoryV2.from_mapping(row["proposed_memory"])
@@ -1245,8 +1337,20 @@ def run_skill_evolution_v2(
             from .repair_feedback import service_pair
             # Only the completed previous generation may inform the next Customer.
             # No promotion resets the frontier rather than fabricating a repair.
+            repair_before, repair_after = tuple(selected), tuple(final_runs)
+            if discovery_archive and winner:
+                # Keep the actual promoted target's training repair, not only incumbent E.
+                for decision in winner[0].get("targeted_repair", []) or []:
+                    if decision.get("discovery_id"):
+                        repair_before += tuple(EpisodeRecord.from_dict(r) for r in decision["old"])
+                        repair_after += tuple(EpisodeRecord.from_dict(r) for r in decision["new"])
             repair_pair = service_pair(before_s, service, generation=g, promoted=winner is not None,
-                                       before_records=selected, after_records=final_runs)
+                                       before_records=repair_before, after_records=repair_after)
+        if policy.get("open_repair_search"):
+            rc.repair_evidence = None if repair_pair is None else {
+                endpoint_name: build_service_mutation_evidence(service_evidence(records),
+                    representative_cases=customer_policy["representative_cases"], case_chars=customer_policy["case_chars"])
+                for endpoint_name, records in (("before", repair_before), ("after", repair_after))}
         # Console backward-compatible common phase fields plus explicit V2 board.
         proposed_accuracy = (
             winner[0]["effect"]["candidate_accuracy"]
@@ -1330,6 +1434,7 @@ def run_skill_evolution_v2(
             "activation_summary": activation_summary,
             "customer_archive": customers.entries,
             **({"customer_protocol": PROTOCOL, "customer_attempt_history": customer_attempts.entries} if customer_policy else {}),
+            **({"open_repair_evidence": rc.repair_evidence} if policy.get("open_repair_search") else {}),
             **({"bandit_protocol": RC_PROTOCOL, "bandit_state": rc.state,
                 "repair_service_pair": repair_pair} if rc else {}),
             "failure_matrix": [
@@ -1358,6 +1463,7 @@ def run_skill_evolution_v2(
             "evolution_archive": archive.to_dict(),
             "customer_archive": customers.entries,
             **({"customer_protocol": PROTOCOL, "customer_attempt_history": customer_attempts.entries} if customer_policy else {}),
+            **({"open_repair_evidence": rc.repair_evidence} if policy.get("open_repair_search") else {}),
             **({"bandit_protocol": RC_PROTOCOL, "bandit_state": rc.state,
                 "repair_service_pair": repair_pair} if rc else {}),
             "history_summary": summarize_effects(effects),

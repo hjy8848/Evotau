@@ -127,6 +127,24 @@ def freeze_v2_policy(raw, models, model_args):
             raise ValueError("RC-Bandit requires opt-in Customer Skill v1")
         policy["repair_conditioned_bandit"] = validate_policy(raw["repair_conditioned_bandit"])
         raw["repair_conditioned_bandit"] = policy["repair_conditioned_bandit"]
+    if "open_repair_search" in raw:
+        from .open_repair_search import validate_policy as validate_open
+        if "customer_evolution" not in policy or "repair_conditioned_bandit" in raw:
+            raise ValueError("Open-RC requires Customer Skill v1 and exclusive search identity")
+        policy["open_repair_search"] = validate_open(raw["open_repair_search"])
+        raw["open_repair_search"] = policy["open_repair_search"]
+    if "discovery_handoff" in raw:
+        if raw["discovery_handoff"] != {"protocol_version": "repair_discovery_handoff_v1"}:
+            raise ValueError("invalid discovery handoff protocol")
+        if not any(k in policy for k in ("repair_conditioned_bandit", "open_repair_search")):
+            raise ValueError("discovery handoff requires repair feedback search")
+        policy["discovery_handoff"] = raw["discovery_handoff"]
+    if "targeted_repair" in raw:
+        from .targeted_repair_gate import validate_policy as validate_target
+        if "discovery_handoff" not in policy:
+            raise ValueError("targeted repair requires discovery handoff")
+        policy["targeted_repair"] = validate_target(raw["targeted_repair"])
+        raw["targeted_repair"] = policy["targeted_repair"]
     # Optional schedules are only serialized when supplied; legacy policy serialization stays unchanged.
     for schedule in ("repair_seeds", "heldout_seeds"):
         if schedule in raw.get("evaluation", {}):

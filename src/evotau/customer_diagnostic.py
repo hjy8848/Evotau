@@ -261,6 +261,19 @@ class RepairConditionedTrials:
         self.ledger = BanditTrialLedger(root, manifest_sha, tasks)
         self.active = None
 
+    def restore_state(self, value):
+        from .repair_conditioned_bandit import restore
+        return restore(value, self.policy)
+
+    def finalize_trial(self, trial):
+        from .repair_conditioned_bandit import record_trial
+        self.state = record_trial(self.state, trial)
+
+    @property
+    def protocol(self):
+        from .repair_conditioned_bandit import PROTOCOL
+        return PROTOCOL
+
     def costs(self):
         """Cumulative actual run accounting, never a request-count estimate.
 
@@ -344,7 +357,6 @@ class RepairConditionedTrials:
         from .evolution_candidates import EvolverSchemaError
         from .evolution_context import build_repair_pair_evidence
         from .records import customer_strategy_id
-        from .repair_conditioned_bandit import PROTOCOL, record_trial
         from .repair_feedback import (
             REPAIR_REVIEW_PROMPT,
             discovery_feedback,
@@ -356,6 +368,7 @@ class RepairConditionedTrials:
         feedback = {"status": "no_repair_pair" if pair is None else "invalid_or_uncertain_candidate",
                     "reward": 0, "discovery_keys": [], "causal_service_failure_confirmed": False}
         observations = None
+        context = None
         if pair and skill and row["eligible_for_selection"]:
             endpoints, validity, evidence = {}, {}, {}
             for name in ("before", "after"):
@@ -376,6 +389,13 @@ class RepairConditionedTrials:
             descriptions = [{"service_pair_id": t["service_pair_id"], "mechanism": d["mechanism"],
                 "task_id": d["task_id"], "discovery_type": d["discovery_type"]}
                 for t in self.state["trials"] for d in t["feedback"].get("review", {}).get("discoveries", [])]
+            if getattr(self, "discovery_handoff", False):
+                # New identity only: unwrap existing exact-message evidence explicitly.
+                for rows in evidence.values():
+                    for evidence_row in rows:
+                        evidence_row["trajectory"]["messages"] = [
+                            {**m["message"], "excerpt": m.get("excerpt"), "evidence_ref": m["evidence_ref"]}
+                            if "message" in m else m for m in evidence_row["trajectory"]["messages"]]
             context = review_context(observations, pair, evidence, prior_discoveries=descriptions)
             def review():
                 if (proxy_tokens(REPAIR_REVIEW_PROMPT + __import__("json").dumps(context)) > self.policy["max_context_tokens"]
@@ -396,7 +416,7 @@ class RepairConditionedTrials:
                 reviewer_provenance=reviewed["provenance"], prior_keys=prior,
                 min_replications=self.policy["min_replications"])
             feedback["review_stage"] = reviewed
-        trial = {"protocol_version": PROTOCOL, "trial_id": self.active["trial_id"],
+        trial = {"protocol_version": self.protocol, "trial_id": self.active["trial_id"],
                  "generation": self.active["generation"], "arm": self.active["choice"]["arm"],
                  "choice": self.active["choice"], "service_pair_id": pair["pair_id"] if pair else None,
                  "procedure_id": row.get("procedure_id"), "candidate_id": row.get("candidate_id"),
@@ -407,10 +427,12 @@ class RepairConditionedTrials:
                     "task_success": r["task_success"], "trajectory_ref": r["trajectory_ref"],
                     "record_sha256": sha256_json(r)} for r in row.get("episodes", [])],
                  "observations": observations, "feedback": feedback, "reward": feedback["reward"]}
+        if getattr(self, "discovery_handoff", False):
+            trial["review_context"] = context
         final = stage("trial-final", trial, lambda: {**trial, "cost": self._cost_delta(),
             "api_usage_before": self.active.get("api_usage_before"),
             "api_usage_after": self.budget.api_usage_by_call_name() if self.budget else None})
         self.ledger.publish(self.active["trial_id"], "final", final)
-        self.state = record_trial(self.state, final)
+        self.finalize_trial(final)
         self.active = None
         return final
