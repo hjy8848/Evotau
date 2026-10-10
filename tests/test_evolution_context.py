@@ -72,6 +72,28 @@ def test_required_evidence_never_silently_dropped_to_meet_allowance():
         build_customer_evidence(source)
 
 
+@pytest.mark.parametrize('name', ['search_direct_flight', 'search_onestop_flight', 'list_all_airports'])
+def test_native_airline_read_catalogs_do_not_consume_write_evidence_allowance(name):
+    source = [row('a', False), row('b', True)]
+    source[0]['trajectory']['messages'][1]['tool_calls'][0]['name'] = name
+    before = deepcopy(source)
+    evidence = build_customer_evidence(source)[0]
+    by_index = {v['evidence_ref']['projected_message_index']: v for v in evidence['trajectory']['messages']}
+    assert source == before
+    assert 2 not in evidence['trajectory_overview']['decisive_tool_message_indices']
+    assert by_index[2]['excerpt']['content_original_chars'] == 40000
+    assert by_index[2]['evidence_ref']['message_sha256'] == sha256_json(source[0]['trajectory']['messages'][2])
+    assert by_index[4]['message'] == source[0]['trajectory']['messages'][4]
+    assert by_index[5]['message'] == source[0]['trajectory']['messages'][5]
+
+
+def test_unknown_search_tool_remains_conservatively_exact():
+    source = [row('a', False)]
+    source[0]['trajectory']['messages'][1]['tool_calls'][0]['name'] = 'search_unknown_external_action'
+    with pytest.raises(ValueError, match='allowance'):
+        build_customer_evidence(source)
+
+
 def test_legacy_missing_tool_ids_protects_adjacent_result_block_and_exact_fields():
     import json
     source = [row('a', False)]

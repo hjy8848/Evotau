@@ -149,11 +149,10 @@ def main():
         raise ValueError("Parent must be terminal failed")
     raw = yaml.safe_load(args.config.read_text())
     child = AlternatingManifest.from_mapping(raw)
-    if (
-        json.loads(child.skill_evolution_v2_json)["algorithm_version"]
-        != "direct_skill_v_validation_v2"
+    if json.loads(child.skill_evolution_v2_json)["algorithm_version"] not in (
+        "direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "analyst_skill_recovery_v4"
     ):
-        raise ValueError("Import is exclusively for a new Direct Skill experiment")
+        raise ValueError("Import requires a supported native-baseline-only V2 continuation")
     if native_condition(parent) != native_condition(child.to_document()):
         raise ValueError(
             "Native task/model/args/seed/strategy/evaluator condition changed"

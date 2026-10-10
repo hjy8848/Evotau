@@ -15,7 +15,11 @@ def _calls(message):
 
 def _read_only(name):
     # Evidence prioritization only. Unknown tools are conservatively kept in full.
-    return isinstance(name, str) and (name.startswith(('get_', 'find_')) or name == 'calculate')
+    # The pinned native Airline tools explicitly annotate these as ToolType.READ.
+    # Their large search catalogs are observations, not state-changing results.
+    airline_reads = {'search_direct_flight', 'search_onestop_flight', 'list_all_airports'}
+    return isinstance(name, str) and (
+        name.startswith(('get_', 'find_')) or name == 'calculate' or name in airline_reads)
 
 
 def _ref(row, index, message):

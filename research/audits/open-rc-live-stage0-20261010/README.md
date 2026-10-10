@@ -135,3 +135,41 @@ compatible import is the already complete Qwen no-tools probe (exact model/args,
 original response/request references and full usage ledger). There are no episode
 scores to import. Parent DS intent is not imported; its pre-network failure is
 retained in costs. Stage0/Stage1 still cannot be called an Open-RC H1/H2 result.
+
+## Real E10 baseline and Airline READ evidence correction
+
+The wirefix run completed **10 actual native E episodes, 6 successes**, using
+**153 successful runtime provider requests**, 811,384 input / 24,799 output tokens.
+It then stopped before sending any Customer Evolver request with:
+`ValueError: Decisive tool/user evidence exceeds reflection case allowance`.
+This was a local representation defect, not a provider failure or Skill result.
+
+Pinned native Airline tools annotate `search_direct_flight`,
+`search_onestop_flight`, `list_all_airports` as ToolType.READ. The evidence builder
+recognized only get/find/calculate, treating complete flight-search catalogs as
+mandatory write results. These three exact READ names are now correctly classified;
+unknown tools remain conservatively exact, errors remain exact, User words and real
+write parameters/results remain protected. No context/legality/gate threshold was
+relaxed and no original trajectory was edited.
+
+Offline on the **same saved real E10** and the actual normalized Customer policy
+(3 cases, 24,000 case chars): 10 task outcomes remain visible; evidence **28,054**
+proxy tokens, whole Customer request approximately **30,462** proxy tokens, below
+the unchanged 40,000 Customer request limit. The earlier four-case measurement
+(34,750 proxy tokens) is a sensitivity check, not the actual normalized config.
+See `airline-read-evidence-offline-actual-policy.json`.
+
+All **516 tests passed**, 6 dependency warnings, 42.43s; Ruff passed. New tests
+cover all three Airline READ catalogs, exact write evidence and conservative
+unknown-search behavior. The native-baseline importer now also admits the existing
+Analyst V2 versions, still requiring identical algorithm/search/gate policy,
+exact native condition, terminal parent, complete baseline-only E stage, no
+unresolved requests, inspected source diff and validated imported cache.
+
+Independent recovery config:
+`configs/airline-open-rc-pair-acquisition-g1-c1-p2-readfix2.yaml`.
+Only the 10 completed, compatibility-audited native E episodes and billed usage
+are imported; all future Customer/Service generations are fresh. Source changes
+are limited to the external evidence builder. No V/H scores or Evolver outputs
+are imported. Previous failure/manifest remain immutable. Successful identical
+Qwen/DS no-tools probes are reused with explicit source/argument/hash audit.
