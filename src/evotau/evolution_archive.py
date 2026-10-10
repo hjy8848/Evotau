@@ -201,3 +201,39 @@ class CustomerAttemptHistory:
                  "causal_service_failure_confirmed": False}
         self.entries.append(entry)
         self.entries = self.entries[-self.max_history:]
+
+
+class BanditTrialLedger:
+    """Separate immutable E-only trial events, including unresolved failed paid attempts.
+
+    A failed execution is not erased by resume. A later final event settles the same
+    reserved pull; its cumulative cost supersedes (never adds to) failure snapshots.
+    """
+
+    def __init__(self, root, manifest_sha, task_ids):
+        from pathlib import Path
+        self.root = Path(root) / "rc-bandit-trials"
+        self.root.mkdir(parents=True, exist_ok=True)
+        if self.root.is_symlink():
+            raise ValueError("unsafe RC trial ledger")
+        self.manifest_sha, self.task_ids = manifest_sha, sorted(map(str, task_ids))
+        for path in self.root.glob("*.json"):
+            if path.is_symlink():
+                raise ValueError("unsafe RC ledger event")
+            doc = json.loads(path.read_text())
+            if (path.is_symlink() or doc.get("manifest_sha256") != manifest_sha
+                    or doc.get("task_ids") != self.task_ids
+                    or doc.get("sha256") != sha256_json({k: v for k, v in doc.items() if k != "sha256"})):
+                raise ValueError("RC ledger identity/digest mismatch")
+
+    def publish(self, trial_id, kind, payload):
+        from .alternating import _write_json_once
+        from .repair_conditioned_bandit import PROTOCOL
+        if kind not in ("start", "failure", "final") or not trial_id or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in trial_id):
+            raise ValueError("unsafe RC trial event")
+        doc = {"protocol_version": PROTOCOL, "manifest_sha256": self.manifest_sha,
+               "task_ids": self.task_ids, "trial_id": trial_id, "kind": kind, "payload": payload}
+        doc["sha256"] = sha256_json(doc)
+        suffix = "-" + doc["sha256"][:16] if kind == "failure" else ""
+        _write_json_once(self.root / f"{trial_id}-{kind}{suffix}.json", doc)
+        return doc

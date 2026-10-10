@@ -35,6 +35,10 @@ def generate_candidates(providers, context, count):
     """Parsed contract errors are logged rejections; transport/JSON errors stay fail-closed."""
     from .evolution_candidates import EvolverSchemaError
 
+    if "operator_family_hint" in context:
+        from .repair_conditioned_bandit import ARMS
+        if context["operator_family_hint"] not in ARMS or context.get("repair_context", {}).get("frontier_status") not in ("repair_pair", "no_repair_pair"):
+            raise ValueError("invalid frozen RC operator context")
     try:
         return providers.customers(context, count)
     except EvolverSchemaError as error:
@@ -99,14 +103,8 @@ def evaluate_candidate(
     providers,
     domain_policy,
 ):
-    from .alternating import _accuracy, _context_episodes
-    from .customer_skills import proxy_tokens
-    from .customer_trajectory_validity import (
-        TRAJECTORY_VALIDATOR_PROMPT,
-        assess_trajectories,
-        paired_customer_feedback,
-        trajectory_context,
-    )
+    from .alternating import _accuracy
+    from .customer_trajectory_validity import paired_customer_feedback
     from .evolution_candidates import EvolverSchemaError
 
     if skill is None:
@@ -152,8 +150,33 @@ def evaluate_candidate(
         return row, ()
     runs = panel(skill.compile(), current_service)
     row.update(accuracy=_accuracy(runs), episodes=[r.to_dict() for r in runs])
+    validity = review_customer_runs(runs, skill=skill.to_dict(), tasks=tasks,
+                                    runner=runner, providers=providers, domain_policy=domain_policy,
+                                    policy=context["customer_evolution"], stage=stage)
+    row.update(
+        paired_customer_feedback(incumbent, runs, validity=validity),
+        trajectory_validity=validity,
+    )
+    row["selection_reason"] = (
+        "awaiting strict native-accuracy comparison"
+        if validity["status"] == "valid"
+        else "whole candidate ineligible: invalid or uncertain E cell"
+    )
+    return row, runs
+
+
+def review_customer_runs(runs, *, skill, tasks, runner, providers, domain_policy, policy, stage):
+    """Existing complete-cell validity chain, reused at both RC Service endpoints."""
+    from .alternating import _context_episodes
+    from .customer_skills import proxy_tokens
+    from .customer_trajectory_validity import (
+        TRAJECTORY_VALIDATOR_PROMPT,
+        assess_trajectories,
+        trajectory_context,
+    )
+    from .evolution_candidates import EvolverSchemaError
     review_context = trajectory_context(
-        _context_episodes(runs, runner, tasks), skill.to_dict(), domain_policy
+        _context_episodes(runs, runner, tasks), skill, domain_policy
     )
     import json
 
@@ -166,7 +189,7 @@ def evaluate_candidate(
             count = proxy_tokens(
                 TRAJECTORY_VALIDATOR_PROMPT + json.dumps(subcontext, ensure_ascii=False)
             )
-            if count > context["customer_evolution"]["max_context_tokens"]:
+            if count > policy["max_context_tokens"]:
                 return {
                     "status": "uncertain",
                     "cells": [
@@ -212,16 +235,7 @@ def evaluate_candidate(
         else "valid",
         "cells": cells,
     }
-    row.update(
-        paired_customer_feedback(incumbent, runs, validity=validity),
-        trajectory_validity=validity,
-    )
-    row["selection_reason"] = (
-        "awaiting strict native-accuracy comparison"
-        if validity["status"] == "valid"
-        else "whole candidate ineligible: invalid or uncertain E cell"
-    )
-    return row, runs
+    return validity
 
 
 def propose_fresh_customer_skill(

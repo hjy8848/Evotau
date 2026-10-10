@@ -504,9 +504,16 @@ class V2Providers:
             from .evolution_context import enforce_mutation_context_budget
             inputs = {**context, "requested_candidates": count,
                       "customer_evolution": self.customer_policy}
-            enforce_mutation_context_budget(inputs, CUSTOMER_SKILL_PROMPT,
-                                            self.customer_policy["max_context_tokens"])
-            result = self.call(CUSTOMER_SKILL_PROMPT, inputs, "evotau_customer_skill_evolver_v1")
+            prompt = CUSTOMER_SKILL_PROMPT
+            name = "evotau_customer_skill_evolver_v1"
+            if "operator_family_hint" in inputs:
+                prompt += ("\nUse operator_family_hint as a search direction, never a closed mechanism schema. "
+                           "open_exploration permits novel lawful procedures beyond known arm families. "
+                           "repair_context is E-only observational evidence from an earlier promoted Service. "
+                           "No repair pair means ordinary exploration; do not invent repair discoveries.")
+                name = "evotau_customer_skill_evolver_rc_bandit_v1"
+            enforce_mutation_context_budget(inputs, prompt, self.customer_policy["max_context_tokens"])
+            result = self.call(prompt, inputs, name)
             if (set(result) != {"candidates"} or not isinstance(result["candidates"], list)
                     or len(result["candidates"]) != count):
                 raise ValueError("wrong structured Customer candidate count")
@@ -562,6 +569,12 @@ class V2Providers:
         )
         return validate_trajectory_report(
             self.call(TRAJECTORY_VALIDATOR_PROMPT, context, "evotau_customer_trajectory_validator_v1"), context)
+
+    @_schema_checked
+    def review_repair_discoveries(self, context):
+        from .repair_feedback import REPAIR_REVIEW_PROMPT, validate_review
+        return validate_review(self.call(REPAIR_REVIEW_PROMPT, context,
+                                        "evotau_repair_discovery_review_v1"), context)
 
     @_schema_checked
     def validate_skill(self, context):

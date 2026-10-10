@@ -121,6 +121,12 @@ def freeze_v2_policy(raw, models, model_args):
         from .customer_skills import validate_customer_policy
         policy["customer_evolution"] = validate_customer_policy(raw["customer_evolution"])
         raw["customer_evolution"] = policy["customer_evolution"]
+    if "repair_conditioned_bandit" in raw:
+        from .repair_conditioned_bandit import validate_policy
+        if "customer_evolution" not in policy:
+            raise ValueError("RC-Bandit requires opt-in Customer Skill v1")
+        policy["repair_conditioned_bandit"] = validate_policy(raw["repair_conditioned_bandit"])
+        raw["repair_conditioned_bandit"] = policy["repair_conditioned_bandit"]
     # Optional schedules are only serialized when supplied; legacy policy serialization stays unchanged.
     for schedule in ("repair_seeds", "heldout_seeds"):
         if schedule in raw.get("evaluation", {}):

@@ -268,3 +268,35 @@ def enforce_mutation_context_budget(context, prompt, max_proxy_tokens):
             f"Direct mutation context exceeds explicit proxy-token allowance: {count} > {max_proxy_tokens}"
         )
     return count
+
+
+def build_repair_pair_evidence(rows, observations, *, representative_tasks, case_chars):
+    """Same representative E tasks at both endpoints, retaining ALL replication seeds.
+
+    All results/structural overviews remain visible. No LLM summary, V/H, scenario,
+    or gold information is used to choose cases; observed reversals get priority.
+    """
+    classes = {name: sorted({c['task_id'] for c in observations['cells'] if c['classification'] == name})
+               for name in ('regression', 'residual', 'repaired', 'stable')}
+    chosen = []
+    # A success/repair control remains available, not only failing evidence.
+    controls = classes['stable'] + classes['repaired']
+    limit = max(0, representative_tasks - bool(controls))
+    for task in classes['regression'] + classes['residual']:
+        if task not in chosen and len(chosen) < limit:
+            chosen.append(task)
+    for task in controls + classes['regression'] + classes['residual']:
+        if task not in chosen and len(chosen) < representative_tasks:
+            chosen.append(task)
+    result = {}
+    for endpoint in ('before', 'after'):
+        safe = [{'task': {'task_id': row['task']['task_id']},
+                 'native_evaluation': {k: deepcopy(row['native_evaluation'][k])
+                                       for k in ('task_success', 'reward', 'termination_reason')
+                                       if k in row['native_evaluation']},
+                 **{k: deepcopy(row[k]) for k in ('seed', 'trajectory_ref', 'trajectory')}}
+                for row in rows[endpoint]]
+        selected = [i for i, r in enumerate(safe) if r['task']['task_id'] in chosen]
+        result[endpoint] = _build_evidence(safe, representative_cases=max(1, len(selected)),
+                                          case_chars=case_chars, selection=selected)
+    return result

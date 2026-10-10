@@ -196,6 +196,29 @@ def run_skill_evolution_v2(
     customer_attempts = CustomerAttemptHistory(max_history=(customer_policy or {}).get("max_history", 20))
     if saved is not None and saved["state"].get("customer_protocol") != (PROTOCOL if customer_policy else None):
         raise ValueError("checkpoint Customer protocol mismatch")
+    rc_policy = policy.get("repair_conditioned_bandit")
+    rc, repair_pair = None, None
+    if rc_policy:
+        from .customer_diagnostic import RepairConditionedTrials
+        from .repair_conditioned_bandit import PROTOCOL as RC_PROTOCOL
+        if not customer_policy:
+            raise ValueError("RC-Bandit requires Customer Skill v1")
+        if customer_candidate_count > rc_policy["max_trials_per_generation"]:
+            raise ValueError("Customer candidate count exceeds frozen RC trial budget")
+        rc = RepairConditionedTrials(policy=rc_policy, customer_policy=customer_policy,
+            tasks={k: tasks[k] for k in e}, runner=runner, providers=providers,
+            domain_policy=domain_policy, root=root, manifest_sha=manifest_sha256, budget=request_budget)
+    if saved is not None and saved["state"].get("bandit_protocol") != (RC_PROTOCOL if rc else None):
+        raise ValueError("checkpoint Bandit protocol mismatch")
+
+    def rc_guard(callback):
+        try:
+            return callback()
+        except Exception as error:
+            if rc:
+                rc.failure(error)
+            raise
+
     watermark = service_skill_id_high_watermark(service)
     final_runs = ()
     fitness_seed = seed if evolution_fitness_seed is None else evolution_fitness_seed
@@ -324,6 +347,12 @@ def run_skill_evolution_v2(
                 if state.get("customer_protocol") != PROTOCOL:
                     raise ValueError("generation Customer protocol mismatch")
                 customer_attempts = CustomerAttemptHistory(state["customer_attempt_history"], max_history=customer_policy["max_history"])
+            if rc:
+                from .repair_conditioned_bandit import restore
+                if state.get("bandit_protocol") != RC_PROTOCOL:
+                    raise ValueError("generation Bandit protocol mismatch")
+                rc.state = restore(state["bandit_state"], rc_policy)
+                repair_pair = state["repair_service_pair"]
             documents.append(commit["generation"])
             _write_json_once(root / f"generation-{g:04d}.json", commit["generation"])
             final_runs = tuple(
@@ -371,14 +400,34 @@ def run_skill_evolution_v2(
                 ("strategy_id", "semantic_family", "accuracy", "accepted", "generation")}
                 for entry in customers.entries[-customer_policy["max_history"]:]]
             from .customer_evolution import generate_candidates
-        generated = stage(
-            g,
-            "customer_candidates",
-            c_context,
-            lambda c_context=c_context: (generate_candidates(providers, c_context, customer_candidate_count)
-                                        if customer_policy else providers.customers(c_context, customer_candidate_count)),
-        )
-        proposals = generated["candidates"]
+        if rc:
+            if repair_pair and repair_pair["after_id"] != service_strategy_id(before_s):
+                raise ValueError("repair frontier does not match current deployed Service")
+            # One immutable pull per independent proposal, with sequential updates.
+            generated = {"candidates": []}
+            def rc_proposals(g=g, c_context=c_context, repair_pair=repair_pair):
+                for index in range(customer_candidate_count):
+                    context = rc_guard(lambda index=index, g=g, c_context=c_context, repair_pair=repair_pair: rc.begin(g, index, c_context, repair_pair,
+                        lambda name, inputs, cb, g=g: stage(g, name, inputs, cb)))
+                    proposal_result = rc_guard(lambda index=index, context=context, g=g: stage(g,
+                        f"rc-{index}-proposal", context,
+                        lambda context=context: generate_candidates(providers, context, 1)))
+                    if proposal_result.get("generation_rejection"):
+                        yield {"rc_generation_rejection": proposal_result["generation_rejection"]}
+                    elif len(proposal_result["candidates"]) != 1:
+                        rc_guard(lambda: (_ for _ in ()).throw(ValueError("RC pull requires exactly one candidate")))
+                    else:
+                        yield proposal_result["candidates"][0]
+            proposals = rc_proposals()
+        else:
+            generated = stage(
+                g,
+                "customer_candidates",
+                c_context,
+                lambda c_context=c_context: (generate_candidates(providers, c_context, customer_candidate_count)
+                                            if customer_policy else providers.customers(c_context, customer_candidate_count)),
+            )
+            proposals = generated["candidates"]
         candidate_rows, selected, selected_accuracy = (
             [],
             incumbent,
@@ -396,18 +445,27 @@ def run_skill_evolution_v2(
             tested_texts = {entry["strategy"] for entry in customers.entries}
             tested_procedures = {entry.get("procedure_id") for entry in customer_attempts.entries}
             for i, proposal in enumerate(proposals):
-                row, skill = prepare_candidate(proposal, c_context, customer_policy)
+                if "rc_generation_rejection" in proposal and rc:
+                    row = {**proposal["rc_generation_rejection"], "eligible_for_selection": False,
+                           "strategy": {"text": ""}, "accuracy": None, "episodes": []}
+                    skill = None
+                else:
+                    row, skill = prepare_candidate(proposal, c_context, customer_policy)
                 if skill is not None and (skill.compile().text == customer.text or
                         skill.compile().text in tested_texts or skill.procedure_id in tested_procedures):
                     row.update(candidate_validity="invalid", pre_rollout_rejection="duplicate compiled Customer strategy")
                     skill = None
-                row, runs = evaluate_customer_candidate(
+                row, runs = rc_guard(lambda row=row, skill=skill, i=i, g=g, c_context=c_context, incumbent=incumbent, before_s=before_s: evaluate_customer_candidate(
                     row, skill, context=c_context, incumbent=incumbent, current_service=before_s,
                     tasks={k: tasks[k] for k in e}, runner=runner, providers=providers,
                     domain_policy=domain_policy,
-                    panel=lambda c, s, i=i, g=g: panel(g, f"customer-candidate-{i}", e, [fitness_seed], c, s),
+                    panel=lambda c, svc, i=i, g=g: panel(g, f"customer-candidate-{i}", e, [fitness_seed], c, svc),
                     stage=lambda name, inputs, cb, i=i, g=g: stage(g, f"customer-{i}-{name}", inputs, cb),
-                )
+                ))
+                if rc:
+                    row["bandit_trial"] = rc_guard(lambda row=row, skill=skill, repair_pair=repair_pair, i=i, g=g: rc.finish(row, skill, pair=repair_pair,
+                        stage=lambda name, inputs, cb, i=i, g=g: stage(g, f"rc-{i}-{name}", inputs, cb),
+                        panel=lambda name, seeds, c, svc, i=i, g=g: panel(g, f"rc-{i}-{name}-E", e, seeds, c, svc)))
                 if row["eligible_for_selection"]:
                     accuracy = row["accuracy"]
                     if accuracy < selected_accuracy:
@@ -1183,6 +1241,12 @@ def run_skill_evolution_v2(
                 "history": summarize_effects(effects),
             },
         )
+        if rc:
+            from .repair_feedback import service_pair
+            # Only the completed previous generation may inform the next Customer.
+            # No promotion resets the frontier rather than fabricating a repair.
+            repair_pair = service_pair(before_s, service, generation=g, promoted=winner is not None,
+                                       before_records=selected, after_records=final_runs)
         # Console backward-compatible common phase fields plus explicit V2 board.
         proposed_accuracy = (
             winner[0]["effect"]["candidate_accuracy"]
@@ -1266,6 +1330,8 @@ def run_skill_evolution_v2(
             "activation_summary": activation_summary,
             "customer_archive": customers.entries,
             **({"customer_protocol": PROTOCOL, "customer_attempt_history": customer_attempts.entries} if customer_policy else {}),
+            **({"bandit_protocol": RC_PROTOCOL, "bandit_state": rc.state,
+                "repair_service_pair": repair_pair} if rc else {}),
             "failure_matrix": [
                 r for row in board for r in row.get("failure_matrix", [])
             ],
@@ -1292,6 +1358,8 @@ def run_skill_evolution_v2(
             "evolution_archive": archive.to_dict(),
             "customer_archive": customers.entries,
             **({"customer_protocol": PROTOCOL, "customer_attempt_history": customer_attempts.entries} if customer_policy else {}),
+            **({"bandit_protocol": RC_PROTOCOL, "bandit_state": rc.state,
+                "repair_service_pair": repair_pair} if rc else {}),
             "history_summary": summarize_effects(effects),
             "activation_config": policy["activator"],
             "activation_summary": activation_summary,
