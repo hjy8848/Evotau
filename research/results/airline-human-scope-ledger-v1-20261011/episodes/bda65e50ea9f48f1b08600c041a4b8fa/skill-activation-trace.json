@@ -1,0 +1,342 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+  "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+  "episode_id": "evotau-phase0-e55b9af4-706c-45c1-ae0b-60a2930d1790",
+  "activation_mode": "activate_topk_v2",
+  "activator": {
+    "model": "openai/dashscope/qwen3.7-plus",
+    "model_args": {
+      "api_base": "http://10.130.138.46:8010/v1",
+      "enable_thinking": false,
+      "temperature": 0.0
+    }
+  },
+  "decisions": [
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+      "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+      "turn": 0,
+      "decision": {
+        "active_skill_ids": [],
+        "reason": "The user is initiating a request with multiple operations (upgrade and add bags), but there is no evidence of a 'pending write' state, conditional consent confusion, or an interrupted approval process. The interaction is in the initial inquiry phase, not the authorization/write phase where skill-0001 applies. No other skills are provided in the catalog.",
+        "confidence": 1.0
+      },
+      "observable_context_sha256": "71ec40809ed2d92625193ffc626437d723c1b39591ccf6aa02ded75a0e8e52ea",
+      "catalog": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+          "activation_signature": {
+            "positive_conditions": [
+              "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+            ],
+            "negative_conditions": [
+              "There is no pending state-changing operation."
+            ],
+            "interaction_phase": [
+              "option_quote",
+              "authorization",
+              "before_write"
+            ]
+          }
+        }
+      ],
+      "not_selected_skill_ids": [
+        "skill-0001"
+      ],
+      "activation_catalog_tokens": 114,
+      "activated_guidance_tokens": 0,
+      "native_prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "visible_message_count": 2,
+      "artifact_sha256": "6a180f9dc5a462aac43e60867dfc9ca4087fd181cdce68c73be3cf8e3b64ca8f"
+    },
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+      "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+      "turn": 1,
+      "decision": {
+        "active_skill_ids": [],
+        "reason": "The interaction is in the initial authentication phase. The assistant has requested a user ID to access reservation details, and the user has provided it. No write operation has been initiated, quoted, or pending approval yet. Therefore, the positive conditions for skill-0001 (pending write with complex consent scope) are not met.",
+        "confidence": 1.0
+      },
+      "observable_context_sha256": "07a406a3bafd8b2ea4056644cf1be4eba04f70c7d2133f9d4c39e9c6143d0068",
+      "catalog": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+          "activation_signature": {
+            "positive_conditions": [
+              "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+            ],
+            "negative_conditions": [
+              "There is no pending state-changing operation."
+            ],
+            "interaction_phase": [
+              "option_quote",
+              "authorization",
+              "before_write"
+            ]
+          }
+        }
+      ],
+      "not_selected_skill_ids": [
+        "skill-0001"
+      ],
+      "activation_catalog_tokens": 114,
+      "activated_guidance_tokens": 0,
+      "native_prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "visible_message_count": 4,
+      "artifact_sha256": "c18330473913ba6f55e34f41cdaf34aa716fe9f47a8ccf2dd3666cfe74118d27"
+    },
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+      "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+      "turn": 2,
+      "decision": {
+        "active_skill_ids": [],
+        "reason": "The user has requested two modifications (upgrade and add bags), but no write operation has been initiated or pending yet. The assistant is currently in the information-gathering phase (having just retrieved reservation details) and has not presented options, costs, or sought consent for any specific change. Therefore, the condition 'A write operation is pending' is not met.",
+        "confidence": 1.0
+      },
+      "observable_context_sha256": "1a09a85fa9c8bdc79a56fb2db620eb1170747df3851ae50d941da3c43b8e9e6f",
+      "catalog": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+          "activation_signature": {
+            "positive_conditions": [
+              "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+            ],
+            "negative_conditions": [
+              "There is no pending state-changing operation."
+            ],
+            "interaction_phase": [
+              "option_quote",
+              "authorization",
+              "before_write"
+            ]
+          }
+        }
+      ],
+      "not_selected_skill_ids": [
+        "skill-0001"
+      ],
+      "activation_catalog_tokens": 114,
+      "activated_guidance_tokens": 0,
+      "native_prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "visible_message_count": 6,
+      "artifact_sha256": "bc7f16bd4194faa9b87d21e0142f5912ce1e507592ddb7c73e1ae2b6d917e8c0"
+    },
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+      "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+      "turn": 3,
+      "decision": {
+        "active_skill_ids": [],
+        "reason": "The user has requested two modifications (upgrade and add bags), but the agent has not yet initiated any write operation or reached the authorization phase. The agent is currently gathering information (user details) to assess feasibility and cost. Since there is no pending state-changing operation awaiting consent, the negative condition for skill-0001 applies.",
+        "confidence": 1.0
+      },
+      "observable_context_sha256": "f0deac65de9f02235495f013baf73852165eb774387706743de90f870b53a7e6",
+      "catalog": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+          "activation_signature": {
+            "positive_conditions": [
+              "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+            ],
+            "negative_conditions": [
+              "There is no pending state-changing operation."
+            ],
+            "interaction_phase": [
+              "option_quote",
+              "authorization",
+              "before_write"
+            ]
+          }
+        }
+      ],
+      "not_selected_skill_ids": [
+        "skill-0001"
+      ],
+      "activation_catalog_tokens": 114,
+      "activated_guidance_tokens": 0,
+      "native_prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "visible_message_count": 8,
+      "artifact_sha256": "f141fa038901dead311b22145105c0a5a6d5f511c8879d52622b31b53baab3a6"
+    },
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+      "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+      "turn": 4,
+      "decision": {
+        "active_skill_ids": [
+          "skill-0001"
+        ],
+        "reason": "The user has explicitly confirmed ('Yes, I confirm') a pending state-changing operation (cabin upgrade) that involves multiple requested operations (upgrade + bags) and potential cost implications. The interaction is at the 'authorization' phase immediately before the write operation, matching the trigger conditions for skill-0001 which handles pending writes with conditional consent or stated cost constraints.",
+        "confidence": 0.95
+      },
+      "observable_context_sha256": "aebdccb4f0f04fd528379f6077766a72e80e6b6e8cf78a04aa85c57f841456a7",
+      "catalog": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+          "activation_signature": {
+            "positive_conditions": [
+              "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+            ],
+            "negative_conditions": [
+              "There is no pending state-changing operation."
+            ],
+            "interaction_phase": [
+              "option_quote",
+              "authorization",
+              "before_write"
+            ]
+          }
+        }
+      ],
+      "not_selected_skill_ids": [],
+      "activation_catalog_tokens": 114,
+      "activated_guidance_tokens": 408,
+      "native_prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "prompt_sha256": "766bf62ba3ac2f299d7810755e992760fe52860a485b2791f9e7623cc905b7af",
+      "visible_message_count": 10,
+      "artifact_sha256": "1583b5b43f86236c86ebdd4ead9d08d0d148e69b02d0475c729ad487e2a406d9"
+    },
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+      "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+      "turn": 5,
+      "decision": {
+        "active_skill_ids": [],
+        "reason": "The user's request involved two distinct operations: a cabin upgrade and adding checked bags. The assistant correctly identified that the bag addition was covered by the Gold membership free allowance and did not require a write operation or payment. The assistant then isolated the cabin upgrade, obtained explicit confirmation ('Yes, I confirm'), and executed it as a single, unconditional write operation. There were no multiple pending writes, conditional consents, stated cost constraints that interrupted approval, or information detours during the final authorization phase. The interaction followed a standard linear path for a single state-changing operation.",
+        "confidence": 0.95
+      },
+      "observable_context_sha256": "dfd2359c09b17fae880d501fb71d3916764e4f9894cd3a2cb48aaee6e1890211",
+      "catalog": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+          "activation_signature": {
+            "positive_conditions": [
+              "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+            ],
+            "negative_conditions": [
+              "There is no pending state-changing operation."
+            ],
+            "interaction_phase": [
+              "option_quote",
+              "authorization",
+              "before_write"
+            ]
+          }
+        }
+      ],
+      "not_selected_skill_ids": [
+        "skill-0001"
+      ],
+      "activation_catalog_tokens": 114,
+      "activated_guidance_tokens": 0,
+      "native_prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "visible_message_count": 12,
+      "artifact_sha256": "21c0205919e6ec592ee0ffd3421650d4fb6b4d01386e6831358abb4578406065"
+    },
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+      "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+      "turn": 6,
+      "decision": {
+        "active_skill_ids": [],
+        "reason": "The user has explicitly confirmed the second operation (adding bags) with a simple 'Yes'. There are no multiple pending operations competing for consent, no conditional options presented at this specific moment, no stated cost constraints causing confusion, and no information detour interrupting the approval. The interaction is a straightforward confirmation of a single, clear action. Therefore, the conditions for skill-0001 (confusion due to multiple requests/conditions) are not met.",
+        "confidence": 0.95
+      },
+      "observable_context_sha256": "b1956e86eb1ed6a23e861aeee83354350c613d051f0ec0a3662f843c74a1b167",
+      "catalog": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+          "activation_signature": {
+            "positive_conditions": [
+              "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+            ],
+            "negative_conditions": [
+              "There is no pending state-changing operation."
+            ],
+            "interaction_phase": [
+              "option_quote",
+              "authorization",
+              "before_write"
+            ]
+          }
+        }
+      ],
+      "not_selected_skill_ids": [
+        "skill-0001"
+      ],
+      "activation_catalog_tokens": 114,
+      "activated_guidance_tokens": 0,
+      "native_prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "visible_message_count": 14,
+      "artifact_sha256": "a48670e836933d4096e03830e8668e5ab7a077999205100152e3bff806204ac7"
+    },
+    {
+      "schema_version": 3,
+      "manifest_sha256": "2e355b8095427a7590b6a709b4aac18389e00ffd7ba51d9a5eee8cb4cb72c254",
+      "episode_key_sha256": "9afda9142354c376614a7929da900dabb24c9e704b12714e2fd48380c2f70377",
+      "turn": 7,
+      "decision": {
+        "active_skill_ids": [],
+        "reason": "The interaction involves two distinct, sequential write operations (cabin upgrade and baggage addition). Each operation was handled individually with explicit user confirmation before execution. There is no single pending write operation that encompasses multiple requested operations simultaneously, nor is there a conditional consent or spending limit constraint that creates ambiguity about the scope of a single approval. The 'multiple requests' condition in the signature refers to a state where consent for a combined or complex operation is confused, which is not the case here as the agent decomposed the requests and obtained separate consents.",
+        "confidence": 0.95
+      },
+      "observable_context_sha256": "74b908558f3df602671f83572320c83885c96e5a653390c2c9ff53c33cf11e35",
+      "catalog": [
+        {
+          "skill_id": "skill-0001",
+          "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+          "activation_signature": {
+            "positive_conditions": [
+              "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+            ],
+            "negative_conditions": [
+              "There is no pending state-changing operation."
+            ],
+            "interaction_phase": [
+              "option_quote",
+              "authorization",
+              "before_write"
+            ]
+          }
+        }
+      ],
+      "not_selected_skill_ids": [
+        "skill-0001"
+      ],
+      "activation_catalog_tokens": 114,
+      "activated_guidance_tokens": 0,
+      "native_prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "prompt_sha256": "66d0903cc83e0a5485f389a941a6c8e22fbd080355ce47530ad26aa97fad64f3",
+      "visible_message_count": 16,
+      "artifact_sha256": "3e07f9a84fe6470009f81db57de270738d429b75e50f70c3ee3bbfe5aeaf0043"
+    }
+  ],
+  "activation_catalog_tokens": 912,
+  "activated_guidance_tokens": 408,
+  "rendered_skill_tokens": 408,
+  "full_memory_tokens": 408,
+  "artifact_sha256": "544c265c9372cd3b635b9c235bcbe36e8e21e0ae568e8d492fc12377e1c8a665"
+}
