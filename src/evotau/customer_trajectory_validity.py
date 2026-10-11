@@ -15,19 +15,57 @@ Return exactly one cell per supplied task×seed; cite supplied USER message indi
 your conclusion (at least one). These are observations, not proven causal Skill effects."""
 
 
-def trajectory_context(rows, skill, policy):
+TRAJECTORY_VALIDATOR_PROMPT_V2 = TRAJECTORY_VALIDATOR_PROMPT + """
+INDEX CONTRACT: The trajectory is an indexed view of the ORIGINAL saved native messages,
+not a flattened transcript. original_message_index is zero-based in native-simulation.json.
+Copy indices only from allowed_customer_message_indices and the displayed USER messages.
+Do not count messages yourself, use one-based positions, cite assistant/tool messages, or
+convert projected-message positions. Original message hashes identify the exact source.
+Never guess an index. If there is no supporting Customer evidence, report uncertain rather
+than inventing a citation; output still follows the strict existing report schema.
+"""
+
+
+def indexed_native_trajectory(native):
+    """Number source messages without flattening, dropping, or remapping positions."""
+    from collections.abc import Mapping
+
+    if not isinstance(native, Mapping) or not isinstance(native.get("messages"), (list, tuple)):
+        raise TypeError("original native trajectory is missing")
+    messages = []
+    for index, source in enumerate(native["messages"]):
+        data = source.model_dump(mode="json") if hasattr(source, "model_dump") else source
+        if not isinstance(data, Mapping):
+            raise TypeError("original native message is not a mapping")
+        message = {k: data[k] for k in ("role", "content", "name", "tool_calls",
+                                      "tool_call_id", "tool_messages") if k in data}
+        message.update(original_message_index=index, original_message_sha256=sha256_json(data))
+        messages.append(message)
+    return {"messages": messages, "termination_reason": native.get("termination_reason")}
+
+
+def trajectory_context(rows, skill, policy, *, validator_version="v1", original_trajectories=None):
+    if validator_version not in ("v1", "v2"):
+        raise ValueError("unknown trajectory validator version")
     cells = []
     for row in rows:
+        trajectory = row["trajectory"]
+        if validator_version == "v2":
+            trajectory = indexed_native_trajectory((original_trajectories or {}).get(row["trajectory_ref"]))
         cells.append(
             {
                 "task_id": row["task"]["task_id"],
                 "seed": row["seed"],
                 "user_scenario": row["task"]["user_scenario"],
                 "trajectory_ref": row["trajectory_ref"],
-                "trajectory": row["trajectory"],
+                "trajectory": trajectory,
             }
         )
+        if validator_version == "v2":
+            cells[-1]["allowed_customer_message_indices"] = [
+                m["original_message_index"] for m in trajectory["messages"] if m.get("role") == "user"]
     return {
+        **({"trajectory_validator_version": "v2"} if validator_version == "v2" else {}),
         "customer_protocol": "task_faithful_customer_skill_v1",
         "skill": skill,
         "service_policy": policy,
@@ -69,6 +107,15 @@ def validate_trajectory_report(report, context):
             raise ValueError("trajectory review requires a reason")
         indices = cell["evidence_message_indices"]
         messages = sources[key]["trajectory"]["messages"]
+        if context.get("trajectory_validator_version", "v1") == "v2":
+            allowed = sources[key].get("allowed_customer_message_indices")
+            expected = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+            if (allowed != expected or any(m.get("original_message_index") != i
+                                          for i, m in enumerate(messages))
+                    or any(not isinstance(m.get("original_message_sha256"), str)
+                           or len(m["original_message_sha256"]) != 64 for m in messages)):
+                raise ValueError("original trajectory index contract is inconsistent")
+
         if (
             not isinstance(indices, list)
             or not indices

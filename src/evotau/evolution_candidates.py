@@ -558,10 +558,15 @@ class V2Providers:
     def validate_customer_trajectory(self, context):
         from .customer_trajectory_validity import (
             TRAJECTORY_VALIDATOR_PROMPT,
+            TRAJECTORY_VALIDATOR_PROMPT_V2,
             validate_trajectory_report,
         )
+        version = context.get("trajectory_validator_version", "v1")
+        if version not in ("v1", "v2"):
+            raise ValueError("unknown trajectory validator version")
+        prompt = TRAJECTORY_VALIDATOR_PROMPT_V2 if version == "v2" else TRAJECTORY_VALIDATOR_PROMPT
         return validate_trajectory_report(
-            self.call(TRAJECTORY_VALIDATOR_PROMPT, context, "evotau_customer_trajectory_validator_v1"), context)
+            self.call(prompt, context, "evotau_customer_trajectory_validator_" + version), context)
 
     @_schema_checked
     def review_repair_discoveries(self, context):

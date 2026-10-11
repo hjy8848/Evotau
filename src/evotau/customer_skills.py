@@ -40,14 +40,16 @@ stop the procedure and follow the original scenario and guidelines. Intensity af
 
 
 def validate_customer_policy(value):
-    if not isinstance(value, dict) or set(value) - (set(DEFAULT_CUSTOMER_POLICY) | {"evolver_prompt_version"}):
+    if not isinstance(value, dict) or set(value) - (set(DEFAULT_CUSTOMER_POLICY) | {"evolver_prompt_version", "trajectory_validator_version"}):
         raise ValueError("unknown Customer protocol fields")
     policy = {**DEFAULT_CUSTOMER_POLICY, **value}
     if policy["protocol_version"] != PROTOCOL:
         raise ValueError("unsupported Customer protocol")
     if policy.get("evolver_prompt_version", "v1") not in ("v1", "v2"):
         raise ValueError("unsupported Customer evolver prompt version")
-    for key in set(policy) - {"protocol_version", "evolver_prompt_version"}:
+    if policy.get("trajectory_validator_version", "v1") not in ("v1", "v2"):
+        raise ValueError("unsupported Customer trajectory validator version")
+    for key in set(policy) - {"protocol_version", "evolver_prompt_version", "trajectory_validator_version"}:
         if type(policy[key]) is not int or policy[key] <= 0:
             raise ValueError(f"Customer {key} must be a positive integer")
     if policy["representative_cases"] < 2:

@@ -257,13 +257,24 @@ def review_customer_runs(runs, *, skill, tasks, runner, providers, domain_policy
     from .customer_skills import proxy_tokens
     from .customer_trajectory_validity import (
         TRAJECTORY_VALIDATOR_PROMPT,
+        TRAJECTORY_VALIDATOR_PROMPT_V2,
         assess_trajectories,
         trajectory_context,
     )
     from .evolution_candidates import EvolverSchemaError
+    validator_version = policy.get("trajectory_validator_version", "v1")
+    original = None
+    if validator_version == "v2":
+        loader = getattr(runner, "load_trajectory", None)
+        if not callable(loader):
+            raise ValueError("indexed review requires saved original trajectories")
+        original = {run.trajectory_ref: loader(run) for run in runs}
     review_context = trajectory_context(
-        _context_episodes(runs, runner, tasks), skill, domain_policy
+        _context_episodes(runs, runner, tasks), skill, domain_policy,
+        validator_version=validator_version, original_trajectories=original,
     )
+    review_prompt = (TRAJECTORY_VALIDATOR_PROMPT_V2 if validator_version == "v2"
+                     else TRAJECTORY_VALIDATOR_PROMPT)
     import json
 
     cells = []
@@ -273,7 +284,7 @@ def review_customer_runs(runs, *, skill, tasks, runner, providers, domain_policy
 
         def review(subcontext=subcontext, cell=cell):
             count = proxy_tokens(
-                TRAJECTORY_VALIDATOR_PROMPT + json.dumps(subcontext, ensure_ascii=False)
+                review_prompt + json.dumps(subcontext, ensure_ascii=False)
             )
             if count > policy["max_context_tokens"]:
                 return {
