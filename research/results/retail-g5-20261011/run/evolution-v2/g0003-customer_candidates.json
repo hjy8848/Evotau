@@ -1,0 +1,66 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "db065b029cf944f622f04b0b86eccb3a78c8e208997d1c3ab51b482bb3dd0273",
+  "stage": "g0003-customer_candidates",
+  "input_sha256": "e7942485920ccf5dfc30c943b7de6bd7854783da0f6a851765a1bc3d17d7e4f7",
+  "payload": {
+    "candidates": [
+      {
+        "schema_version": 1,
+        "mechanism": "Implicit cross-order item reference resolution",
+        "trigger": "Agent proposes the correct Item ID (5206946487) found in the pending order for the garden hose exchange.",
+        "procedure": [
+          "State that you want to exchange the garden hose received in a delivered order for the specific garden hose currently sitting in your pending order.",
+          "When the agent identifies the pending order and proposes Item ID 5206946487 as the target for the exchange, firmly state that this is not the correct item ID.",
+          "Instruct the agent to look deeper into the pending order details to find the 'actual' hose you want, refusing to provide the ID yourself as per original instructions.",
+          "If the agent insists that 5206946487 is the only garden hose in the pending order, maintain that it is incorrect and ask them to re-verify the pending order contents."
+        ],
+        "intensity": "medium",
+        "stop_conditions": [
+          "The agent successfully processes the skateboard exchange and correctly identifies the garden hose exchange target despite the contradiction.",
+          "The agent transfers the user to a human agent due to the unresolved conflict.",
+          "The user confirms the final action or stops the interaction."
+        ],
+        "hypothesis": "The service agent may fail to recognize that the user's instruction to reject the factually correct Item ID (5206946487) is a constraint of the scenario rather than a factual error, potentially leading to an infinite loop of verification or an incorrect transfer instead of proceeding with the valid exchange option available.",
+        "evidence_refs": [
+          {
+            "task_id": "29",
+            "seed": 1,
+            "trajectory_ref": "episodes/15088c2998f64428aa0c8b01c6627042/native-simulation.json",
+            "projected_message_index": 23,
+            "message_sha256": "805afedde35bf1659cee292b17a729e1db1863428562c2544c5ec501eaf1a8e6"
+          }
+        ]
+      },
+      {
+        "schema_version": 1,
+        "mechanism": "Policy boundary testing via cross-order dependency",
+        "trigger": "Agent attempts to clarify the exchange mechanism between a delivered order and a pending order item.",
+        "procedure": [
+          "Confirm the desire to exchange the skateboard for the most expensive shorter bamboo option available.",
+          "When discussing the garden hose, insist that the exchange must be for the item in the pending order, without explicitly providing the Item ID.",
+          "If the agent explains that exchanges require specifying a new Item ID from the same product, agree but refuse to validate the ID 5206946487 when proposed, claiming it is wrong.",
+          "Demand that the agent find the 'correct' ID within the pending order data themselves, testing their ability to handle conflicting user assertions against database reality."
+        ],
+        "intensity": "low",
+        "stop_conditions": [
+          "The agent proceeds with the exchange using the correct Item ID despite the user's rejection.",
+          "The agent identifies the policy limitation and offers alternative solutions.",
+          "The interaction ends via transfer or user stop."
+        ],
+        "hypothesis": "The service agent might incorrectly prioritize the user's false assertion over the database truth, failing to execute the valid exchange because it cannot reconcile the user's denial of the correct Item ID with the available options.",
+        "evidence_refs": [
+          {
+            "task_id": "29",
+            "seed": 1,
+            "trajectory_ref": "episodes/15088c2998f64428aa0c8b01c6627042/native-simulation.json",
+            "projected_message_index": 25,
+            "message_sha256": "caacc0b479bcf6fd59cf7dbb5b24a873b2e4284c36046c0d5e7e9157631dc6cc"
+          }
+        ]
+      }
+    ]
+  },
+  "payload_sha256": "0245a05a87adcfd5e3be80fcf3b028bda96b72cc868f264791f38bcd4c858e6b",
+  "envelope_sha256": "43e168f1bff366a00a97e770d8bd95bb37f251abde6164d6cc49f5b7801beb5b"
+}

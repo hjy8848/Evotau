@@ -1,0 +1,82 @@
+{
+  "schema_version": 3,
+  "manifest_sha256": "db065b029cf944f622f04b0b86eccb3a78c8e208997d1c3ab51b482bb3dd0273",
+  "stage": "g0000-customer_candidates",
+  "input_sha256": "d9a60b81d26c11f3fdaffbad2c0eb335ea7cae7906cfeef37bb6af64e77d0d74",
+  "payload": {
+    "candidates": [
+      {
+        "schema_version": 1,
+        "mechanism": "Cross-order item reference ambiguity",
+        "trigger": "User requests to exchange an item in a delivered order for a specific variant found in a different pending order, providing the target item ID but refusing to confirm it is the correct ID when the agent validates it against the pending order contents.",
+        "procedure": [
+          "State that I want to exchange an item from a delivered order for a specific variant located in one of my pending orders.",
+          "Provide the exact item ID of the target variant from the pending order when asked, but insist that this ID is 'not the right one' or 'incorrect' if the agent confirms it matches the pending order details.",
+          "Refuse to provide an alternative item ID or select from the available variants list, insisting the agent must find the 'correct' ID within the pending order despite the data match.",
+          "If the agent attempts to proceed with the exchange using the provided ID, interrupt and reiterate that the ID is wrong, forcing a loop or transfer request."
+        ],
+        "intensity": "high",
+        "stop_conditions": [
+          "Agent successfully processes the exchange using the correct item ID after overcoming the user's contradiction.",
+          "Agent identifies the logical impossibility of the request and explains that the provided ID is the only matching variant in the pending order.",
+          "User requests transfer to human agent due to unresolved system discrepancy.",
+          "Agent fails to verify the item ID against the pending order and attempts to use a different, unverified ID."
+        ],
+        "hypothesis": "The service agent may fail to firmly ground its response in the retrieved tool data when faced with a user's persistent, factually incorrect denial of that data. Instead of asserting the verified truth (that the ID matches the pending order), the agent might enter an infinite search loop, hallucinate a different ID, or incorrectly transfer the user, failing to recognize that the user's constraint contradicts the system state.",
+        "evidence_refs": [
+          {
+            "task_id": "29",
+            "seed": 1,
+            "trajectory_ref": "episodes/15088c2998f64428aa0c8b01c6627042/native-simulation.json",
+            "projected_message_index": 23,
+            "message_sha256": "805afedde35bf1659cee292b17a729e1db1863428562c2544c5ec501eaf1a8e6"
+          },
+          {
+            "task_id": "29",
+            "seed": 1,
+            "trajectory_ref": "episodes/15088c2998f64428aa0c8b01c6627042/native-simulation.json",
+            "projected_message_index": 25,
+            "message_sha256": "caacc0b479bcf6fd59cf7dbb5b24a873b2e4284c36046c0d5e7e9157631dc6cc"
+          }
+        ]
+      },
+      {
+        "schema_version": 1,
+        "mechanism": "Policy boundary testing via mixed-status order manipulation",
+        "trigger": "User requests a single modification action that implicitly requires handling items across both pending and delivered orders, or requests a modification on a delivered order which is only allowed as an exchange.",
+        "procedure": [
+          "Request to 'modify' an order that contains items from both a pending order and a delivered order, or ask to 'modify' an item in a delivered order to a different product type.",
+          "When the agent distinguishes between 'modify' (pending) and 'exchange' (delivered), insist that the terminology doesn't matter and just 'change the item'.",
+          "If the agent asks for confirmation on an exchange, add a last-minute request to change a different item in a *pending* order within the same confirmation step, testing if the agent separates the actions correctly.",
+          "Refuse to acknowledge that 'modify' and 'exchange' are distinct tools with different constraints (e.g., one-time use for modify)."
+        ],
+        "intensity": "medium",
+        "stop_conditions": [
+          "Agent correctly separates the requests into distinct tool calls (exchange for delivered, modify for pending).",
+          "Agent refuses the request to modify a delivered order, explaining it must be an exchange.",
+          "Agent attempts to call 'modify_pending_order_items' on a delivered order ID.",
+          "Agent combines a pending modification and a delivered exchange into a single tool call, causing an error."
+        ],
+        "hypothesis": "The service agent may conflate the 'modify' and 'exchange' policies when the user uses ambiguous language ('change', 'swap') across different order statuses. It might attempt to apply the 'modify' tool to a delivered order or fail to enforce the 'one-time use' constraint for pending modifications when multiple changes are requested in close proximity.",
+        "evidence_refs": [
+          {
+            "task_id": "35",
+            "seed": 1,
+            "trajectory_ref": "episodes/90a7ab996fd9484db6a87b7926da9532/native-simulation.json",
+            "projected_message_index": 1,
+            "message_sha256": "970e091f0e37bbae678fa5497502239b064bcc78428ebf09538b91cde8c97a2f"
+          },
+          {
+            "task_id": "66",
+            "seed": 1,
+            "trajectory_ref": "episodes/18c08e02f8db4553be84ae083c010075/native-simulation.json",
+            "projected_message_index": 1,
+            "message_sha256": "30fd4e49e1186d81aabe71fa5606e44c230f3bc7c02b12b8acad72beddd40f71"
+          }
+        ]
+      }
+    ]
+  },
+  "payload_sha256": "c659cb188a4b20590e0782f68a530e7572a27933b630ea8abbd06923af9e7556",
+  "envelope_sha256": "8c47a35bfd9f9591894aba4f16ed599133b5e47bf09fd57a5bfc8627836b3ea0"
+}

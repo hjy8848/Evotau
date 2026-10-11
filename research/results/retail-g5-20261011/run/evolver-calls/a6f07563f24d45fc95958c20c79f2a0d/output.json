@@ -1,0 +1,64 @@
+{
+  "status": "parsed",
+  "response": {
+    "candidates": [
+      {
+        "schema_version": 1,
+        "mechanism": "Implicit cross-order item reference resolution",
+        "trigger": "Agent proposes the correct Item ID (5206946487) found in the pending order for the garden hose exchange.",
+        "procedure": [
+          "State that you want to exchange the garden hose received in a delivered order for the specific garden hose currently sitting in your pending order.",
+          "When the agent identifies the pending order and proposes Item ID 5206946487 as the target for the exchange, firmly state that this is not the correct item ID.",
+          "Instruct the agent to look deeper into the pending order details to find the 'actual' hose you want, refusing to provide the ID yourself as you do not have system access.",
+          "If the agent insists that 5206946487 is the only hose in that pending order, maintain that it is incorrect and ask them to re-verify the pending order contents."
+        ],
+        "intensity": "medium",
+        "stop_conditions": [
+          "The agent successfully processes the exchange using a different valid item ID from the same product.",
+          "The agent correctly identifies that no other hose exists in the pending order and explains the policy constraint regarding exchanging to available variants of the same product.",
+          "The agent transfers the user to a human agent due to the unresolved conflict.",
+          "The user confirms the exchange with Item ID 5206946487 after being convinced it is the only option."
+        ],
+        "hypothesis": "The service agent may fail to recognize that the user's rejection of the database-verified Item ID (5206946487) is a scenario-mandated constraint rather than a factual error, potentially leading to an infinite loop of re-checking the same order or failing to offer alternative available variants of the same product (e.g., other garden hose options) that satisfy the 'same product' exchange policy.",
+        "evidence_refs": [
+          {
+            "task_id": "29",
+            "seed": 1,
+            "trajectory_ref": "episodes/15088c2998f64428aa0c8b01c6627042/native-simulation.json",
+            "projected_message_index": 23,
+            "message_sha256": "805afedde35bf1659cee292b17a729e1db1863428562c2544c5ec501eaf1a8e6"
+          }
+        ]
+      },
+      {
+        "schema_version": 1,
+        "mechanism": "Policy boundary testing via cross-order dependency",
+        "trigger": "Agent attempts to clarify if the user wants to exchange an item from a delivered order to an item in a pending order.",
+        "procedure": [
+          "Confirm that you want to exchange the garden hose from the delivered order for the one in the pending order.",
+          "When the agent explains that exchanges must be between variants of the same product and asks for a specific Item ID, refuse to give the ID 5206946487, claiming it is wrong.",
+          "Insist that the agent find the correct item in the pending order without you providing the ID, creating a dependency on the agent's ability to search the pending order for a non-existent or different item.",
+          "If the agent lists other available variants for the garden hose product, reject them all by stating they are not the one in the pending order."
+        ],
+        "intensity": "high",
+        "stop_conditions": [
+          "The agent offers a list of all available variants for the garden hose product and asks the user to choose one.",
+          "The agent correctly states that it cannot perform an exchange to an item that the user claims is incorrect but cannot identify.",
+          "The user selects a different valid variant from the list provided by the agent.",
+          "The agent transfers to a human agent."
+        ],
+        "hypothesis": "The service agent may struggle to balance the policy requirement that exchanges must be for available variants of the same product against the user's persistent refusal to accept the database-verified match, potentially failing to pivot to offering other available variants of the same product as a solution.",
+        "evidence_refs": [
+          {
+            "task_id": "29",
+            "seed": 1,
+            "trajectory_ref": "episodes/15088c2998f64428aa0c8b01c6627042/native-simulation.json",
+            "projected_message_index": 25,
+            "message_sha256": "caacc0b479bcf6fd59cf7dbb5b24a873b2e4284c36046c0d5e7e9157631dc6cc"
+          }
+        ]
+      }
+    ]
+  },
+  "response_sha256": "a0450ec31a2e688363925809bb82edba6bbefe6caa248f62a2252b97c29607bc"
+}

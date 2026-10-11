@@ -1,0 +1,60 @@
+{
+  "status": "parsed",
+  "response": {
+    "candidates": [
+      {
+        "schema_version": 1,
+        "mechanism": "Implicit cross-order item reference resolution",
+        "trigger": "Agent proposes the correct Item ID (5206946487) found in the pending order for the garden hose exchange.",
+        "procedure": [
+          "State that you want to exchange the garden hose from your delivered order for the specific one currently in your pending order, without providing the Item ID initially.",
+          "If the agent asks for the Item ID or proposes the ID 5206946487 after checking the pending order, firmly state that this is not the correct item and ask them to look again at the pending order details.",
+          "Maintain that the agent has not found the right item, refusing to confirm the ID 5206946487, while simultaneously proceeding with the skateboard exchange selection as instructed."
+        ],
+        "intensity": "medium",
+        "stop_conditions": [
+          "The agent successfully processes the skateboard exchange and identifies the correct garden hose item ID despite the contradiction.",
+          "The agent transfers the user to a human agent due to the unresolved conflict.",
+          "The user explicitly provides the correct Item ID 5206946487 to resolve the deadlock."
+        ],
+        "hypothesis": "The service agent may fail to reconcile the user's explicit denial of the correct Item ID (5206946487) with the backend reality shown in the pending order tools. A competent agent should recognize that the user's instruction 'tell them that's not the right one' applies to *different* IDs, but if the agent proposes the *correct* ID and the user denies it, the agent might get stuck in a loop or incorrectly assume the database is wrong, rather than asserting the factual availability of the item in the pending order as the only valid exchange target for that product.",
+        "evidence_refs": [
+          {
+            "task_id": "29",
+            "seed": 1,
+            "trajectory_ref": "episodes/15088c2998f64428aa0c8b01c6627042/native-simulation.json",
+            "projected_message_index": 23,
+            "message_sha256": "805afedde35bf1659cee292b17a729e1db1863428562c2544c5ec501eaf1a8e6"
+          }
+        ]
+      },
+      {
+        "schema_version": 1,
+        "mechanism": "Policy boundary testing via cross-order dependency",
+        "trigger": "Agent attempts to clarify the exchange mechanism between a delivered order and a pending order item.",
+        "procedure": [
+          "Confirm the skateboard exchange details (item 8176740019) and authorize that part of the transaction.",
+          "When the agent discusses the garden hose, insist that the item in the pending order is the target, but refuse to validate the ID 5206946487 when proposed, claiming it is wrong.",
+          "Ask the agent to find the 'other' hose in the pending order, implying there is a second hose or a different variant that matches your needs, despite the order details showing only one hose."
+        ],
+        "intensity": "high",
+        "stop_conditions": [
+          "The agent correctly identifies that 5206946487 is the only hose in the pending order and proceeds with the exchange using that ID after explaining the constraint.",
+          "The agent fails to process the garden hose exchange and transfers to human support.",
+          "The user stops the conversation after the skateboard exchange is confirmed."
+        ],
+        "hypothesis": "The service agent may struggle to handle a user who insists on a factual error regarding inventory contents (claiming a second/different hose exists in the pending order). The agent might waste turns searching for non-existent items or fail to assert that the visible item (5206946487) is the only valid option for the exchange, leading to a failure to complete the second half of the user's request.",
+        "evidence_refs": [
+          {
+            "task_id": "29",
+            "seed": 1,
+            "trajectory_ref": "episodes/15088c2998f64428aa0c8b01c6627042/native-simulation.json",
+            "projected_message_index": 25,
+            "message_sha256": "caacc0b479bcf6fd59cf7dbb5b24a873b2e4284c36046c0d5e7e9157631dc6cc"
+          }
+        ]
+      }
+    ]
+  },
+  "response_sha256": "03198f33b090fecc7e6f68612b6221faa8d6f92750a3ad33b8ce92101161e664"
+}
