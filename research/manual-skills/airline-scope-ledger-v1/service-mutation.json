@@ -1,0 +1,79 @@
+{
+  "analysis": "Human-authored scope/constraint repair; not an automatically evolved or promoted skill.",
+  "semantic_family": "transaction_consent_scope",
+  "target_cluster_id": "human-observed-scope-ledger-v1",
+  "operation": "add",
+  "target_skill_id": null,
+  "skill": {
+    "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+    "guidance": "Maintain a compact internal per-operation ledger from observed conversation and tool results: affected booking, requested fields, conditions, quoted incremental cost and payment/refund method, and the exact scope of the latest consent. A side question does not erase pending goals or transfer their conditions. Immediately before a write, match its booking and changed fields to that ledger. A yes to one quoted option authorizes only that option, not another upgrade or every remaining request. Do not add an unrequested prerequisite when the requested action is already eligible. Check a stated cap against the complete requested package, including pending fees; do not silently treat a generic yes as revoking that cap. If a new quote conflicts with the cap or consent scope, ask one precise clarification before writing. State the affected booking, actual changes, cost and payment/refund consequences when requesting approval. Reuse an existing explicit approval when those details are unchanged; ask again only for a materially changed or ambiguous action. If conditions do not hold, explain that and offer only applicable alternatives without changing the user goal. Use only public policy, observed user statements and tool results; do not infer hidden budgets, invent policy exceptions, or expose this internal ledger. Resolve the original information question at its actual query time and then return to all pending goals.",
+    "activation_signature": {
+      "positive_conditions": [
+        "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+      ],
+      "negative_conditions": [
+        "There is no pending state-changing operation."
+      ],
+      "interaction_phase": [
+        "option_quote",
+        "authorization",
+        "before_write"
+      ]
+    }
+  },
+  "evidence_task_ids": [
+    "7",
+    "12"
+  ],
+  "protected_success_task_ids": [
+    "15"
+  ],
+  "root_cause_hypothesis": "Service can execute a second upgrade outside the latest specific consent, or lose a previously stated package cap. Customer fidelity in the archived example is disputed; it motivates a diagnostic, not discovery credit.",
+  "evidence_refs": [
+    {
+      "task_id": "7",
+      "seed": 1,
+      "trajectory_ref": "episodes/b88c7f003dc44916a016e5f4d9f13c8b/native-simulation.json",
+      "projected_message_index": 7,
+      "message_sha256": "badd341e384048f9d27277137b290d25f5b6a0ecad0e4284319102e704f84cce"
+    },
+    {
+      "task_id": "7",
+      "seed": 1,
+      "trajectory_ref": "episodes/b88c7f003dc44916a016e5f4d9f13c8b/native-simulation.json",
+      "projected_message_index": 12,
+      "message_sha256": "ea4b389b7050db8bac967c1f0fb2f62333f215738178b3f2c2ab94b87cb43410"
+    },
+    {
+      "task_id": "12",
+      "seed": 1,
+      "trajectory_ref": "episodes/f9ab54d9f9024f91b88552d1c45aec7b/native-simulation.json",
+      "projected_message_index": 7,
+      "message_sha256": "c98b6bd56abf1450e0d59ef8c29295420037ede3bf2118699064dbc2ada35f1a"
+    },
+    {
+      "task_id": "15",
+      "seed": 1,
+      "trajectory_ref": "episodes/21b00a3db7aa4010affd50099bde09ab/native-simulation.json",
+      "projected_message_index": 15,
+      "message_sha256": "391835443c5eeb354ce086a7aac17234618f6240ec29cb8f2aa8912747a2cc52"
+    },
+    {
+      "task_id": "15",
+      "seed": 1,
+      "trajectory_ref": "episodes/21b00a3db7aa4010affd50099bde09ab/native-simulation.json",
+      "projected_message_index": 16,
+      "message_sha256": "54dd2d59fe0c3bdacbcea9502cd6c3d9f23ad7e3576364c54cf8811f6cd65ec1"
+    },
+    {
+      "task_id": "15",
+      "seed": 1,
+      "trajectory_ref": "episodes/21b00a3db7aa4010affd50099bde09ab/native-simulation.json",
+      "projected_message_index": 17,
+      "message_sha256": "091ba48728a7ebd5cd83ab65aa63ded1e1cbe588e33ea5d884e61aa80a3ccb2d"
+    }
+  ],
+  "expected_effect": "Fewer extra writes and cap-conflicting writes without repeated confirmations or changes to native scores.",
+  "regression_risk": "Extra clarification or conservative interpretation can hurt completion; inspect activation and unchanged successful operations.",
+  "substantive_delta_from_prior": "Reconcile per-operation scope and pending constraints before write instead of a generic policy reminder."
+}

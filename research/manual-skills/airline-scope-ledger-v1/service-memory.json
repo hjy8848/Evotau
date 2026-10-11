@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "skills": [
+    {
+      "skill_id": "skill-0001",
+      "trigger": "A write operation is pending while multiple user requests, a conditional option, a stated spending limit, or an intervening information question makes the exact consent scope easy to confuse.",
+      "guidance": "Maintain a compact internal per-operation ledger from observed conversation and tool results: affected booking, requested fields, conditions, quoted incremental cost and payment/refund method, and the exact scope of the latest consent. A side question does not erase pending goals or transfer their conditions. Immediately before a write, match its booking and changed fields to that ledger. A yes to one quoted option authorizes only that option, not another upgrade or every remaining request. Do not add an unrequested prerequisite when the requested action is already eligible. Check a stated cap against the complete requested package, including pending fees; do not silently treat a generic yes as revoking that cap. If a new quote conflicts with the cap or consent scope, ask one precise clarification before writing. State the affected booking, actual changes, cost and payment/refund consequences when requesting approval. Reuse an existing explicit approval when those details are unchanged; ask again only for a materially changed or ambiguous action. If conditions do not hold, explain that and offer only applicable alternatives without changing the user goal. Use only public policy, observed user statements and tool results; do not infer hidden budgets, invent policy exceptions, or expose this internal ledger. Resolve the original information question at its actual query time and then return to all pending goals.",
+      "activation_signature": {
+        "positive_conditions": [
+          "A pending write has multiple requested operations, conditional consent or a stated cost constraint, or an information detour interrupted its approval."
+        ],
+        "negative_conditions": [
+          "There is no pending state-changing operation."
+        ],
+        "interaction_phase": [
+          "option_quote",
+          "authorization",
+          "before_write"
+        ]
+      }
+    }
+  ]
+}
