@@ -500,31 +500,11 @@ class V2Providers:
     @_schema_checked
     def customers(self, context, count):
         if self.customer_policy is not None:
-            from .customer_evolution import CUSTOMER_SKILL_PROMPT
+            from .customer_evolution import customer_evolver_prompt
             from .evolution_context import enforce_mutation_context_budget
             inputs = {**context, "requested_candidates": count,
                       "customer_evolution": self.customer_policy}
-            prompt = CUSTOMER_SKILL_PROMPT
-            name = "evotau_customer_skill_evolver_v1"
-            if "operator_family_hint" in inputs:
-                prompt += ("\nUse operator_family_hint as a search direction, never a closed mechanism schema. "
-                           "open_exploration permits novel lawful procedures beyond known arm families. "
-                           "repair_context is E-only observational evidence from an earlier promoted Service. "
-                           "No repair pair means ordinary exploration; do not invent repair discoveries.")
-                name = "evotau_customer_skill_evolver_rc_bandit_v1"
-            if "open_repair_search" in inputs:
-                from .open_repair_search import PROTOCOL as OPEN_PROTOCOL
-                if inputs["open_repair_search"]["protocol_version"] != OPEN_PROTOCOL or "operator_family_hint" in inputs:
-                    raise ValueError("conflicting open search identity")
-                prompt = prompt.replace(
-                    "Explore truthful information disclosure timing, organization of EXISTING multi-step requests,\n"
-                    "conditional confirmation and cost explanations, reasonable urgency/persistence, or correction\n"
-                    "after actual errors. These are examples, not an enumeration of allowable mechanisms.\n", "")
-                prompt += ("\nUse open_repair_search evidence to propose any materially distinct lawful interaction procedure. "
-                           "No direction taxonomy applies. State the concrete unproven exploration hypothesis and "
-                           "material distinction in hypothesis. Ordinary exploration has no repair-related reward. "
-                           "Repair evidence describes observations, never causal proof. Preserve the exact existing schema.")
-                name = "evotau_customer_open_repair_search_v1"
+            prompt, name = customer_evolver_prompt(self.customer_policy, inputs)
             enforce_mutation_context_budget(inputs, prompt, min(self.customer_policy["max_context_tokens"], inputs.get("open_repair_search", {}).get("max_context_tokens", self.customer_policy["max_context_tokens"])))
             result = self.call(prompt, inputs, name)
             if (set(result) != {"candidates"} or not isinstance(result["candidates"], list)
