@@ -1,0 +1,504 @@
+I001 [*] Import block is un-sorted or un-formatted
+ --> experiments/execution/20261007-inferai-resume-supervisor.py:2:1
+  |
+1 |   """Supervise the authorized live resume; one explicit Pro-to-GPT continuation, no retry loop."""
+2 | / from pathlib import Path
+3 | | import datetime,hashlib,json,os,shutil,subprocess,sys,time
+4 | | import yaml
+  | |___________^
+5 |   ROOT=Path('/Users/spring/RSI/Evotau-alternating')
+6 |   FROZEN=Path('/Users/spring/.cache/evotau/frozen-runtime-965497fcfd0260fd')
+  |
+help: Organize imports
+   |
+1  | """Supervise the authorized live resume; one explicit Pro-to-GPT continuation, no retry loop."""
+2  + import datetime
+3  + import hashlib
+4  + import json
+5  + import os
+6  + import shutil
+7  + import subprocess
+8  + import sys
+9  + import time
+10 | from pathlib import Path
+   - import datetime,hashlib,json,os,shutil,subprocess,sys,time
+11 +
+12 | import yaml
+13 +
+14 | ROOT=Path('/Users/spring/RSI/Evotau-alternating')
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/20261007-inferai-resume-supervisor.py:12:1
+   |
+10 |   STATUS=Path('/tmp/evotau-inferai-resume-supervisor.json')
+11 |   sys.path.insert(0,str(FROZEN/'src'))
+12 | / from evotau.alternating_manifest import AlternatingManifest
+13 | | from evotau.alternating_run import load_alternating_tasks
+14 | | from evotau.budget import RequestBudget
+15 | | from evotau.tau_episode_runner import TauBenchEpisodeRunner
+16 | | from evotau.tau_provenance import capture_code_provenance
+   | |_________________________________________________________^
+17 |
+18 |   def read(p):return json.loads(p.read_text())
+   |
+help: Organize imports
+   |
+17 |
+18 +
+19 | def read(p):return json.loads(p.read_text())
+   |
+
+UP017 [*] Use `datetime.UTC` alias
+  --> experiments/execution/20261007-inferai-resume-supervisor.py:20:68
+   |
+18 | def read(p):return json.loads(p.read_text())
+19 | def write(p,d):p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+20 | def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'pid':os.getpid(),'status':state…
+   |                                                                    ^^^^^^^^^^^^^^^^^^^^^
+21 | def git(*args):return subprocess.check_output(['git',*args],cwd=ROOT,text=True).strip()
+   |
+help: Convert to `datetime.UTC` alias
+   |
+19 | def write(p,d):p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+   - def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'pid':os.getpid(),'status':state,'experiment_id':RUN,**extra})
+20 + def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.UTC).isoformat(),'pid':os.getpid(),'status':state,'experiment_id':RUN,**extra})
+21 | def git(*args):return subprocess.check_output(['git',*args],cwd=ROOT,text=True).strip()
+   |
+
+PLW1510 `subprocess.run` without explicit `check` argument
+  --> experiments/execution/20261007-inferai-resume-supervisor.py:43:5
+   |
+41 |  (arc/'README.md').write_text(report)
+42 |  for account in ('openai-api-key','openai-gpt-api-key'):
+43 |   c=subprocess.run(['security','find-generic-password','-s','inferaiapi.com/v1','-a',account,'-w'],capture_output=True)
+   |     ^^^^^^^^^^^^^^
+44 |   if c.returncode==0 and c.stdout.strip():
+45 |    assert all(c.stdout.strip() not in f.read_bytes() for f in arc.rglob('*') if f.is_file())
+   |
+help: Add explicit `check=False`
+
+SIM115 Use a context manager for opening files
+   --> experiments/execution/20261007-inferai-resume-supervisor.py:107:6
+    |
+105 | sys.argv=['evotau.alternating_run' ''')
+106 |  launchpath=Path('/tmp/evotau-retail-gpt-fallback-launch.py');launchpath.write_text(launcher)
+107 |  log=open('/tmp/evotau-retail-gpt-fallback.log','ab')
+    |      ^^^^
+108 |  process=subprocess.Popen([PYTHON,str(launchpath)],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+109 |  return new,process
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> experiments/execution/20261007-qwen37plus-artifact-resume-launch.py:2:1
+  |
+1 |   """Current runtime invocation with sanitized wire observation; no request rewriting."""
+2 | / from pathlib import Path
+3 | | from datetime import datetime, UTC
+4 | | from time import perf_counter
+5 | | import json, os, runpy, subprocess, sys, threading, uuid
+  | |________________________________________________________^
+6 |
+7 |   ROOT=Path('/Users/spring/RSI/Evotau-alternating')
+  |
+help: Organize imports
+   |
+1  | """Current runtime invocation with sanitized wire observation; no request rewriting."""
+2  + import json
+3  + import os
+4  + import runpy
+5  + import subprocess
+6  + import sys
+7  + import threading
+8  + import uuid
+9  + from datetime import UTC, datetime
+10 | from pathlib import Path
+   - from datetime import datetime, UTC
+11 | from time import perf_counter
+   - import json, os, runpy, subprocess, sys, threading, uuid
+12 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/20261007-qwen37plus-artifact-resume-launch.py:24:1
+   |
+22 |   os.chdir(ROOT)
+23 |   Path("/tmp/evotau-qwen37plus-process.pid").write_text(str(os.getpid()))
+24 | / import httpx
+25 | | from evotau.provider_diagnostics import response_metadata, safe_error
+   | |_____________________________________________________________________^
+26 |   send_original=httpx.Client.send
+27 |   wire_lock=threading.Lock()
+   |
+help: Organize imports
+   |
+24 | import httpx
+25 +
+26 | from evotau.provider_diagnostics import response_metadata, safe_error
+27 +
+28 | send_original=httpx.Client.send
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/20261007-qwen37plus-artifact-resume-launch.py:29:1
+   |
+27 | wire_lock=threading.Lock()
+28 | sys.path.insert(0,str(ROOT/'experiments/execution'))
+29 | from inferai_transport_pacing import SlidingWindowPacer
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+30 | pacer=SlidingWindowPacer(max_requests=30,window_seconds=60.1)
+   |
+help: Organize imports
+   |
+29 | from inferai_transport_pacing import SlidingWindowPacer
+30 +
+31 | pacer=SlidingWindowPacer(max_requests=30,window_seconds=60.1)
+   |
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+  --> experiments/execution/20261007-qwen37plus-artifact-resume-launch.py:35:5
+   |
+33 |       event['at']=datetime.now(UTC).isoformat()
+34 |       event['thread']=threading.current_thread().name
+35 | /     with wire_lock:
+36 | |         # run_from_config already froze manifest before first request.
+37 | |         with (OUTPUT/'actual-provider-http.jsonl').open('a',encoding='utf-8') as stream:
+   | |________________________________________________________________________________________^
+38 |               stream.write(json.dumps(event,ensure_ascii=False)+'\n')
+   |
+help: Combine `with` statements
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+  --> experiments/execution/20261007-qwen37plus-artifact-resume-launch.py:79:13
+   |
+77 |               except ValueError:
+78 |                   json_valid=False
+79 | /             with wire_lock:
+80 | |                 with (OUTPUT/'nl-evaluator-visible-responses.jsonl').open('a',encoding='utf-8') as stream:
+   | |__________________________________________________________________________________________________________^
+81 |                       stream.write(json.dumps({'event_id':event_id,'response_id':payload.get('id'),'visible_content':safe_content,'jso…
+82 |       metadata=response_metadata(payload)
+   |
+help: Combine `with` statements
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> experiments/execution/20261007-qwen37plus-artifact-resume-supervisor.py:2:1
+  |
+1 |   """Supervise the authorized live resume; one explicit Pro-to-GPT continuation, no retry loop."""
+2 | / from pathlib import Path
+3 | | import datetime,hashlib,json,os,shutil,subprocess,sys,time
+4 | | import yaml
+  | |___________^
+5 |   ROOT=Path('/Users/spring/RSI/Evotau-alternating')
+6 |   FROZEN=ROOT
+  |
+help: Organize imports
+   |
+1  | """Supervise the authorized live resume; one explicit Pro-to-GPT continuation, no retry loop."""
+2  + import datetime
+3  + import hashlib
+4  + import json
+5  + import os
+6  + import shutil
+7  + import subprocess
+8  + import sys
+9  + import time
+10 | from pathlib import Path
+   - import datetime,hashlib,json,os,shutil,subprocess,sys,time
+11 +
+12 | import yaml
+13 +
+14 | ROOT=Path('/Users/spring/RSI/Evotau-alternating')
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/20261007-qwen37plus-artifact-resume-supervisor.py:12:1
+   |
+10 |   STATUS=Path('/tmp/evotau-qwen37plus-supervisor.json')
+11 |   sys.path.insert(0,str(FROZEN/'src'))
+12 | / from evotau.alternating_manifest import AlternatingManifest
+13 | | from evotau.alternating_run import load_alternating_tasks
+14 | | from evotau.budget import RequestBudget
+15 | | from evotau.tau_episode_runner import TauBenchEpisodeRunner
+16 | | from evotau.tau_provenance import capture_code_provenance
+   | |_________________________________________________________^
+17 |
+18 |   def read(p):return json.loads(p.read_text())
+   |
+help: Organize imports
+   |
+17 |
+18 +
+19 | def read(p):return json.loads(p.read_text())
+   |
+
+UP017 [*] Use `datetime.UTC` alias
+  --> experiments/execution/20261007-qwen37plus-artifact-resume-supervisor.py:20:68
+   |
+18 | def read(p):return json.loads(p.read_text())
+19 | def write(p,d):p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+20 | def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'pid':os.getpid(),'status':state…
+   |                                                                    ^^^^^^^^^^^^^^^^^^^^^
+21 | def git(*args):return subprocess.check_output(['git',*args],cwd=ROOT,text=True).strip()
+   |
+help: Convert to `datetime.UTC` alias
+   |
+19 | def write(p,d):p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+   - def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'pid':os.getpid(),'status':state,'experiment_id':RUN,**extra})
+20 + def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.UTC).isoformat(),'pid':os.getpid(),'status':state,'experiment_id':RUN,**extra})
+21 | def git(*args):return subprocess.check_output(['git',*args],cwd=ROOT,text=True).strip()
+   |
+
+PLW1510 `subprocess.run` without explicit `check` argument
+  --> experiments/execution/20261007-qwen37plus-artifact-resume-supervisor.py:46:5
+   |
+44 |  (arc/'README.md').write_text(report)
+45 |  for account in ('openai-api-key','openai-gpt-api-key'):
+46 |   c=subprocess.run(['security','find-generic-password','-s','inferaiapi.com/v1','-a',account,'-w'],capture_output=True)
+   |     ^^^^^^^^^^^^^^
+47 |   if c.returncode==0 and c.stdout.strip():
+48 |    assert all(c.stdout.strip() not in f.read_bytes() for f in arc.rglob('*') if f.is_file())
+   |
+help: Add explicit `check=False`
+
+SIM115 Use a context manager for opening files
+   --> experiments/execution/20261007-qwen37plus-artifact-resume-supervisor.py:113:6
+    |
+111 | sys.argv=['evotau.alternating_run' ''')
+112 |  launchpath=Path('/tmp/evotau-qwen37plus-gpt-fallback-launch.py');launchpath.write_text(launcher)
+113 |  log=open('/tmp/evotau-qwen37plus-gpt-fallback.log','ab')
+    |      ^^^^
+114 |  process=subprocess.Popen([PYTHON,str(launchpath)],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+115 |  return new,process
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> experiments/execution/20261007-qwen37plus-launch.py:2:1
+  |
+1 |   """Current runtime invocation with sanitized wire observation; no request rewriting."""
+2 | / from pathlib import Path
+3 | | from datetime import datetime, UTC
+4 | | from time import perf_counter
+5 | | import json, os, runpy, subprocess, sys, threading, uuid
+  | |________________________________________________________^
+6 |
+7 |   ROOT=Path('/Users/spring/RSI/Evotau-alternating')
+  |
+help: Organize imports
+   |
+1  | """Current runtime invocation with sanitized wire observation; no request rewriting."""
+2  + import json
+3  + import os
+4  + import runpy
+5  + import subprocess
+6  + import sys
+7  + import threading
+8  + import uuid
+9  + from datetime import UTC, datetime
+10 | from pathlib import Path
+   - from datetime import datetime, UTC
+11 | from time import perf_counter
+   - import json, os, runpy, subprocess, sys, threading, uuid
+12 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/20261007-qwen37plus-launch.py:24:1
+   |
+22 |   os.chdir(ROOT)
+23 |   Path("/tmp/evotau-qwen37plus-process.pid").write_text(str(os.getpid()))
+24 | / import httpx
+25 | | from evotau.provider_diagnostics import response_metadata, safe_error
+   | |_____________________________________________________________________^
+26 |   send_original=httpx.Client.send
+27 |   wire_lock=threading.Lock()
+   |
+help: Organize imports
+   |
+24 | import httpx
+25 +
+26 | from evotau.provider_diagnostics import response_metadata, safe_error
+27 +
+28 | send_original=httpx.Client.send
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/20261007-qwen37plus-launch.py:29:1
+   |
+27 | wire_lock=threading.Lock()
+28 | sys.path.insert(0,str(ROOT/'experiments/execution'))
+29 | from inferai_transport_pacing import SlidingWindowPacer
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+30 | pacer=SlidingWindowPacer(max_requests=30,window_seconds=60.1)
+   |
+help: Organize imports
+   |
+29 | from inferai_transport_pacing import SlidingWindowPacer
+30 +
+31 | pacer=SlidingWindowPacer(max_requests=30,window_seconds=60.1)
+   |
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+  --> experiments/execution/20261007-qwen37plus-launch.py:35:5
+   |
+33 |       event['at']=datetime.now(UTC).isoformat()
+34 |       event['thread']=threading.current_thread().name
+35 | /     with wire_lock:
+36 | |         # run_from_config already froze manifest before first request.
+37 | |         with (OUTPUT/'actual-provider-http.jsonl').open('a',encoding='utf-8') as stream:
+   | |________________________________________________________________________________________^
+38 |               stream.write(json.dumps(event,ensure_ascii=False)+'\n')
+   |
+help: Combine `with` statements
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+  --> experiments/execution/20261007-qwen37plus-launch.py:79:13
+   |
+77 |               except ValueError:
+78 |                   json_valid=False
+79 | /             with wire_lock:
+80 | |                 with (OUTPUT/'nl-evaluator-visible-responses.jsonl').open('a',encoding='utf-8') as stream:
+   | |__________________________________________________________________________________________________________^
+81 |                       stream.write(json.dumps({'event_id':event_id,'response_id':payload.get('id'),'visible_content':safe_content,'jso…
+82 |       metadata=response_metadata(payload)
+   |
+help: Combine `with` statements
+
+I001 [*] Import block is un-sorted or un-formatted
+ --> experiments/execution/20261007-qwen37plus-supervisor.py:2:1
+  |
+1 |   """Supervise the authorized live resume; one explicit Pro-to-GPT continuation, no retry loop."""
+2 | / from pathlib import Path
+3 | | import datetime,hashlib,json,os,shutil,subprocess,sys,time
+4 | | import yaml
+  | |___________^
+5 |   ROOT=Path('/Users/spring/RSI/Evotau-alternating')
+6 |   FROZEN=ROOT
+  |
+help: Organize imports
+   |
+1  | """Supervise the authorized live resume; one explicit Pro-to-GPT continuation, no retry loop."""
+2  + import datetime
+3  + import hashlib
+4  + import json
+5  + import os
+6  + import shutil
+7  + import subprocess
+8  + import sys
+9  + import time
+10 | from pathlib import Path
+   - import datetime,hashlib,json,os,shutil,subprocess,sys,time
+11 +
+12 | import yaml
+13 +
+14 | ROOT=Path('/Users/spring/RSI/Evotau-alternating')
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/20261007-qwen37plus-supervisor.py:12:1
+   |
+10 |   STATUS=Path('/tmp/evotau-qwen37plus-supervisor.json')
+11 |   sys.path.insert(0,str(FROZEN/'src'))
+12 | / from evotau.alternating_manifest import AlternatingManifest
+13 | | from evotau.alternating_run import load_alternating_tasks
+14 | | from evotau.budget import RequestBudget
+15 | | from evotau.tau_episode_runner import TauBenchEpisodeRunner
+16 | | from evotau.tau_provenance import capture_code_provenance
+   | |_________________________________________________________^
+17 |
+18 |   def read(p):return json.loads(p.read_text())
+   |
+help: Organize imports
+   |
+17 |
+18 +
+19 | def read(p):return json.loads(p.read_text())
+   |
+
+UP017 [*] Use `datetime.UTC` alias
+  --> experiments/execution/20261007-qwen37plus-supervisor.py:20:68
+   |
+18 | def read(p):return json.loads(p.read_text())
+19 | def write(p,d):p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+20 | def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'pid':os.getpid(),'status':state…
+   |                                                                    ^^^^^^^^^^^^^^^^^^^^^
+21 | def git(*args):return subprocess.check_output(['git',*args],cwd=ROOT,text=True).strip()
+   |
+help: Convert to `datetime.UTC` alias
+   |
+19 | def write(p,d):p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+   - def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'pid':os.getpid(),'status':state,'experiment_id':RUN,**extra})
+20 + def status(state,**extra):write(STATUS,{'at':datetime.datetime.now(datetime.UTC).isoformat(),'pid':os.getpid(),'status':state,'experiment_id':RUN,**extra})
+21 | def git(*args):return subprocess.check_output(['git',*args],cwd=ROOT,text=True).strip()
+   |
+
+PLW1510 `subprocess.run` without explicit `check` argument
+  --> experiments/execution/20261007-qwen37plus-supervisor.py:46:5
+   |
+44 |  (arc/'README.md').write_text(report)
+45 |  for account in ('openai-api-key','openai-gpt-api-key'):
+46 |   c=subprocess.run(['security','find-generic-password','-s','inferaiapi.com/v1','-a',account,'-w'],capture_output=True)
+   |     ^^^^^^^^^^^^^^
+47 |   if c.returncode==0 and c.stdout.strip():
+48 |    assert all(c.stdout.strip() not in f.read_bytes() for f in arc.rglob('*') if f.is_file())
+   |
+help: Add explicit `check=False`
+
+SIM115 Use a context manager for opening files
+   --> experiments/execution/20261007-qwen37plus-supervisor.py:113:6
+    |
+111 | sys.argv=['evotau.alternating_run' ''')
+112 |  launchpath=Path('/tmp/evotau-qwen37plus-gpt-fallback-launch.py');launchpath.write_text(launcher)
+113 |  log=open('/tmp/evotau-qwen37plus-gpt-fallback.log','ab')
+    |      ^^^^
+114 |  process=subprocess.Popen([PYTHON,str(launchpath)],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+115 |  return new,process
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/inferai_transport_pacing.py:6:1
+   |
+ 4 |   No retry, payload modification, cache access or fitness logic lives here.
+ 5 |   """
+ 6 | / from collections import deque
+ 7 | | from threading import Lock
+ 8 | | from time import monotonic, sleep
+   | |_________________________________^
+ 9 |
+10 |   class SlidingWindowPacer:
+   |
+help: Organize imports
+   |
+9  |
+10 +
+11 | class SlidingWindowPacer:
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> experiments/execution/run-v2-gateway-evolver.py:2:1
+   |
+ 1 |   """Explicit mixed-provider launch: Keychain gateway auth, unchanged native runtime."""
+ 2 | / import importlib.util
+ 3 | | import json
+ 4 | | import subprocess
+ 5 | | import threading
+ 6 | | from datetime import UTC, datetime
+ 7 | | from pathlib import Path
+ 8 | | from time import perf_counter
+ 9 | | import httpx
+10 | | from evotau.provider_diagnostics import response_metadata, safe_error
+   | |_____________________________________________________________________^
+11 |
+12 |   ROOT = Path(__file__).resolve().parents[2]
+   |
+help: Organize imports
+   |
+8  | from time import perf_counter
+9  +
+10 | import httpx
+11 +
+12 | from evotau.provider_diagnostics import response_metadata, safe_error
+   |
+
+Found 27 errors.
+[*] 17 fixable with the `--fix` option.

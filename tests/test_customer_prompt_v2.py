@@ -139,3 +139,42 @@ def test_task_faithful_fixtures_through_schema_and_existing_trajectory_validator
     assert assess_trajectories(invalid, reject)["status"] == "invalid"
     # No local test purports to reproduce an LLM semantic judgement.
     assert json.dumps(parsed.to_dict())
+
+
+def test_pilot_configs_are_frozen_single_variable_pairs_without_V_H():
+    manifests, outputs, checkpoints = [], set(), set()
+    for seed in (1, 2):
+        normalized = []
+        for version in ("v1", "v2"):
+            raw = yaml.safe_load((ROOT / f"configs/airline-customer-prompt-ab-{version}-e10-k2-seed{seed}.yaml").read_text())
+            e = deepcopy(raw["experiment"])
+            m = AlternatingManifest.from_mapping(raw)
+            manifests.append(m.sha256)
+            assert not m.run_validation and not m.run_heldout
+            assert m.generations == 1 and m.customer_candidates == 2
+            assert m.evolution_fitness_seed == seed
+            assert m.initial_service_strategy == ""
+            assert len(m.evolution_task_ids) == 10
+            p = e["skill_evolution_v2"]["customer_evolution"]
+            assert p.pop("evolver_prompt_version") == version
+            assert p["trajectory_validator_version"] == "v2"
+            outputs.add(e.pop("output_path"))
+            checkpoints.add(e.pop("checkpoint_path"))
+            e.pop("id")
+            normalized.append(e)
+        assert normalized[0] == normalized[1]
+    assert len(set(manifests)) == len(outputs) == len(checkpoints) == 4
+
+
+def test_persisted_evolver_cache_is_version_specific(tmp_path, monkeypatch):
+    from test_evolver_recovery import provider as recorded_provider
+
+    p, budget, calls = recorded_provider(tmp_path, monkeypatch,
+                                         [{"candidates": [skill()]}, {"candidates": [skill()]}])
+    p.recovery = None
+    for version in ("v1", "v2"):
+        p.configure_customer({"customer_evolution": validate_customer_policy({"evolver_prompt_version": version})})
+        for _ in range(2):
+            assert p.customers({"task_interactions": []}, 1) == {"candidates": [skill()]}
+    # Two distinct frozen request identities; each reuses only its own recorded response.
+    assert len(calls) == budget.snapshot().attempts == 2
