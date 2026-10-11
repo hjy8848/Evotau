@@ -277,6 +277,44 @@ def cheap_screen(old, new, target_ids, protected_ids, *, max_regression_rate=0.0
     }
 
 
+def global_e_screen(old, new, target_ids=(), protected_ids=(), *,
+                    max_regression_rate=0.0, max_stuck_delta=0.0,
+                    regression_allowance=0):
+    """Observed overall E gain is eligibility for V, never a promotion verdict.
+
+    Reuse the legacy paired-cell and risk checks; target fixes remain diagnostic.
+    No task/seed is discarded and unknown outcomes cannot supply positive evidence.
+    """
+    result = cheap_screen(
+        old, new, target_ids, protected_ids,
+        max_regression_rate=max_regression_rate,
+        max_stuck_delta=max_stuck_delta,
+        regression_allowance=regression_allowance,
+    )
+    result["screen_protocol"] = "global_e_v1"
+    result["inference_scope"] = "observed_training_screen_only"
+    if result["reason"] == "uncertain_screen":
+        return {**result, "net_gain": None}
+    a = {(r.task_id, r.seed): r for r in old}
+    b = {(r.task_id, r.seed): r for r in new}
+    repaired = [k for k, r in a.items() if not r.task_success and b[k].task_success]
+    net_gain = len(repaired) - result["protected_regressions"]
+    passed = (
+        net_gain > 0
+        and result["protected_regressions"] <= max(
+            regression_allowance, max_regression_rate * len(result["protected_cells"])
+        )
+        and result["hard_regressions"] == 0
+        and result["stuck_count_delta"] / max(1, len(a)) <= max_stuck_delta
+    )
+    return {
+        **result, "passed": passed, "net_gain": net_gain,
+        "reason": "global_e_screen_passed" if passed else "screen_risk_or_no_global_gain",
+        "overall_fixed_cells": len(repaired),
+        "overall_fixed_cell_refs": [{"task_id": t, "seed": s} for t, s in repaired],
+    }
+
+
 def pass_power_k(records, k):
     """Unbiased pass^k estimate per task (all k trials succeed, without replacement)."""
     import math

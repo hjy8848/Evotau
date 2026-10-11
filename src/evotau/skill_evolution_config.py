@@ -149,6 +149,8 @@ def freeze_v2_policy(raw, models, model_args):
     for schedule in ("repair_seeds", "heldout_seeds"):
         if schedule in raw.get("evaluation", {}):
             policy["evaluation"][schedule] = []
+    if "screen_protocol" in raw.get("evaluation", {}):
+        policy["evaluation"]["screen_protocol"] = "target_fix_v1"
     if version == "analyst_skill_recovery_v4":
         from .evolver_recovery import DEFAULT_RECOVERY, validate_recovery_policy
         policy["evolver_recovery"] = deepcopy(DEFAULT_RECOVERY)
@@ -201,6 +203,11 @@ def freeze_v2_policy(raw, models, model_args):
         raise ValueError("unknown promotion protocol")
     if (version in ("direct_skill_v_validation_v2", "analyst_skill_v_validation_v3", "analyst_skill_recovery_v4")) != (evaluation["promotion_protocol"] == "v_primary"):
         raise ValueError("V-primary promotion requires its own algorithm version")
+    screen_protocol = evaluation.get("screen_protocol", "target_fix_v1")
+    if screen_protocol not in ("target_fix_v1", "global_e_v1"):
+        raise ValueError("unknown screen protocol")
+    if screen_protocol == "global_e_v1" and evaluation["promotion_protocol"] != "v_primary":
+        raise ValueError("global_e_v1 requires V-primary promotion")
     if type(evaluation["calibration_confirmed"]) is not bool:
         raise ValueError("calibration_confirmed must be boolean")
     if type(evaluation["allow_uncalibrated_launch"]) is not bool:

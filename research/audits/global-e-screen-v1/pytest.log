@@ -1,0 +1,85 @@
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+........................................................................ [ 38%]
+........................................................................ [ 51%]
+...........F............................................................ [ 63%]
+........................................................................ [ 76%]
+........................................................................ [ 89%]
+............................................................             [100%]
+=================================== FAILURES ===================================
+_________ test_frozen_morphology_treatments_resume_and_reject_changes __________
+
+tmp_path = PosixPath('/private/var/folders/3b/r2075jwj0s7cf56j2mnztpdm0000gn/T/pytest-of-spring/pytest-1000/test_frozen_morphology_treatme0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x16b9f73b0>
+
+    def test_frozen_morphology_treatments_resume_and_reject_changes(tmp_path, monkeypatch):
+        root = Path(__file__).resolve().parents[1]
+        directory = root / "experiments/execution"
+        monkeypatch.syspath_prepend(str(directory))
+        spec = importlib.util.spec_from_file_location(
+            "morphology", directory / "run-v2-activation-morphology-smoke.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        raw = yaml.safe_load(
+            (
+                root / "configs/skill-evolution-v2-activation-morphology-smoke.yaml"
+            ).read_text()
+        )
+        historic = root / raw["measurement_protocol"]["historical_source"]
+        source = tmp_path / "source.json"
+>       source.write_bytes(historic.read_bytes())
+                           ^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_morphology_launcher.py:31: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/pathlib.py:1019: in read_bytes
+    with self.open(mode='rb') as f:
+         ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/Users/spring/RSI/Evotau-global-screen/experiments/runs/evotau-retail-skillmemory-v1-qwen3-7-plus-runtime-v4-pro-e20-g2-p4-20261007/generation-0000-service-proposal.json')
+mode = 'rb', buffering = -1, encoding = None, errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/spring/RSI/Evotau-global-screen/experiments/runs/evotau-retail-skillmemory-v1-qwen3-7-plus-runtime-v4-pro-e20-g2-p4-20261007/generation-0000-service-proposal.json'
+
+../../.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/pathlib.py:1013: FileNotFoundError
+=============================== warnings summary ===============================
+tests/test_airline_v_primary.py::test_airline_pinned_split_loader_policy_tools_and_domain
+  /Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/tau2/voice/utils/audio_preprocessing.py:4: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+tests/test_audit_repairs.py::test_runner_model_args_reach_actual_tau_generate_and_http_payload
+  /Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/_service_logger.py:59: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop()
+
+tests/test_readiness_audit.py::test_real_tau_generate_collects_stream_inside_one_budgeted_request
+  /Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/model_response_utils.py:195: PydanticDeprecatedSince211: Accessing the 'model_computed_fields' attribute on the instance is deprecated. Instead, you should access this attribute from the model class. Deprecated in Pydantic V2.11 to be removed in V3.0.
+    or callable(getattr(delta, attr_name))
+
+tests/test_readiness_audit.py::test_real_tau_generate_collects_stream_inside_one_budgeted_request
+  /Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/model_response_utils.py:195: PydanticDeprecatedSince211: Accessing the 'model_fields' attribute on the instance is deprecated. Instead, you should access this attribute from the model class. Deprecated in Pydantic V2.11 to be removed in V3.0.
+    or callable(getattr(delta, attr_name))
+
+tests/test_readiness_audit.py::test_real_tau_generate_collects_stream_inside_one_budgeted_request
+  /Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/model_response_utils.py:153: PydanticDeprecatedSince211: Accessing the 'model_computed_fields' attribute on the instance is deprecated. Instead, you should access this attribute from the model class. Deprecated in Pydantic V2.11 to be removed in V3.0.
+    or callable(getattr(choice, attr_name))
+
+tests/test_readiness_audit.py::test_real_tau_generate_collects_stream_inside_one_budgeted_request
+  /Users/spring/RSI/Evotau/.venv/lib/python3.12/site-packages/litellm/litellm_core_utils/model_response_utils.py:153: PydanticDeprecatedSince211: Accessing the 'model_fields' attribute on the instance is deprecated. Instead, you should access this attribute from the model class. Deprecated in Pydantic V2.11 to be removed in V3.0.
+    or callable(getattr(choice, attr_name))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_morphology_launcher.py::test_frozen_morphology_treatments_resume_and_reject_changes
+1 failed, 563 passed, 6 warnings in 44.31s

@@ -15,7 +15,7 @@ from .evolution_archive import (
 from .evolution_artifacts import EvolutionJournal
 from .evolution_candidates import validate_direct_evidence, validate_mutation
 from .evolution_failures import episode_metrics, paired_effect, paired_failure_matrix
-from .evolution_gate import cheap_screen, evaluate_gate, pass_power_k
+from .evolution_gate import cheap_screen, evaluate_gate, global_e_screen, pass_power_k
 from .evolution_history import stagnation_state, summarize_effects
 from .records import EpisodeRecord, customer_strategy_id, service_strategy_id
 from .service_skills import (
@@ -26,6 +26,11 @@ from .service_skills import (
 )
 from .strategies import PromptStrategy
 from .tau_provenance import sha256_json
+
+
+def _screen_protocol(evaluation, frozen_targets):
+    """Discovery retains strict target semantics even in a global-E experiment."""
+    return "target_fix_v1" if frozen_targets else evaluation.get("screen_protocol", "target_fix_v1")
 
 
 def _candidate_outcome(callback, context):
@@ -886,6 +891,9 @@ def run_skill_evolution_v2(
                 customer,
                 proposed,
             )
+            # Frozen Discovery targets retain their original dedicated repair protocol.
+            screen_protocol = _screen_protocol(policy["evaluation"], frozen_targets)
+            screen_fn = global_e_screen if screen_protocol == "global_e_v1" else cheap_screen
             screen = stage(
                 g,
                 f"service_screen-{ident}-decision",
@@ -894,8 +902,10 @@ def run_skill_evolution_v2(
                     "new": [r.to_dict() for r in new],
                     "target": sorted(target),
                     "protected": sorted(protected | prior_fixed),
+                    **({"screen_protocol": screen_protocol}
+                       if "screen_protocol" in policy["evaluation"] else {}),
                 },
-                lambda: cheap_screen(old, new, target, protected | prior_fixed,
+                lambda: screen_fn(old, new, target, protected | prior_fixed,
                     max_regression_rate=policy["evaluation"]["screen_max_regression_rate"] if v_primary else 0.0,
                     regression_allowance=policy["evaluation"]["screen_regression_allowance"] if v_primary else 0,
                     max_stuck_delta=policy["evaluation"]["screen_max_stuck_delta"] if v_primary else 0.0),
